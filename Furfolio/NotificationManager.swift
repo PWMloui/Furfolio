@@ -27,12 +27,25 @@ class ModelContainerHolder: ObservableObject {
     }
 }
 
+// MARK: - ActiveSheet Enum
+
+/// Enum to control which modal sheet is shown.
+enum ActiveSheet: Identifiable {
+    case addOwner
+    case metricsDashboard
+    
+    var id: Int { hashValue }
+}
+
 // MARK: - FurfolioApp
 
 @main
 struct FurfolioApp: App {
     // Use a StateObject to hold the model container holder.
     @StateObject private var containerHolder = ModelContainerHolder()
+    
+    // New state to drive modal presentation.
+    @State private var activeSheet: ActiveSheet? = nil
 
     init() {
         configureNotifications()
@@ -42,11 +55,32 @@ struct FurfolioApp: App {
         WindowGroup {
             ContentView()
                 .modelContainer(containerHolder.modelContainer) // Pass the model container from the holder
+                // Listen for shortcut notifications and update the activeSheet state accordingly.
                 .onReceive(NotificationCenter.default.publisher(for: .addDogOwnerShortcut)) { _ in
-                    handleAddDogOwnerShortcut()
+                    activeSheet = .addOwner
+                    print("Add Dog Owner shortcut triggered, presenting AddOwnerView")
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .viewMetricsShortcut)) { _ in
-                    handleViewMetricsShortcut()
+                    activeSheet = .metricsDashboard
+                    print("View Metrics Dashboard shortcut triggered, presenting MetricsDashboardView")
+                }
+                // Present the appropriate sheet based on activeSheet.
+                .sheet(item: $activeSheet) { sheet in
+                    switch sheet {
+                    case .addOwner:
+                        // Let AddDogOwnerView handle insertion using its own @Environment(\.modelContext)
+                        AddDogOwnerView { ownerName, dogName, breed, contactInfo, address, notes, selectedImageData, birthdate in
+                            // In this closure you can perform any additional actions (if needed).
+                            // The actual insertion of the new DogOwner should be done inside AddDogOwnerView using its modelContext.
+                            print("New owner information received: \(ownerName), \(dogName), etc.")
+                        }
+                    case .metricsDashboard:
+                        MetricsDashboardView(
+                            dailyRevenues: [],
+                            appointments: [],
+                            charges: []
+                        )
+                    }
                 }
         }
         .commands {
@@ -93,6 +127,8 @@ struct FurfolioApp: App {
     
     /// Handles the "Add Dog Owner" shortcut action by posting a corresponding notification.
     private func handleAddDogOwnerShortcut() {
+        // In the updated version, this handler posts a notification,
+        // which is then caught by the .onReceive modifier to set activeSheet.
         NotificationCenter.default.post(name: .showAddOwnerSheet, object: nil)
         print("Posted showAddOwnerSheet notification")
     }
