@@ -46,6 +46,39 @@ struct DogOwnerRowView: View {
                     .foregroundColor(.orange)
                     .accessibilityLabel(Text("Loyalty status: \(dogOwner.loyaltyStatus)"))
             }
+
+            // 🎂 Birthday tag if pet's birthday is this month
+            if dogOwner.hasBirthdayThisMonth {
+                Text("🎂 Birthday")
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.purple.opacity(0.2))
+                    .cornerRadius(8)
+                    .foregroundColor(.purple)
+            }
+
+            // ⚠️ Retention Risk tag if owner hasn't had activity in 60+ days
+            if dogOwner.retentionRisk {
+                Text("⚠️ Retention Risk")
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.2))
+                    .cornerRadius(8)
+                    .foregroundColor(.orange)
+            }
+
+            // 💸 Top Spender tag if their total charge value is high
+            if let tag = dogOwner.lifetimeValueTag {
+                Text(tag)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.yellow.opacity(0.2))
+                    .cornerRadius(8)
+                    .foregroundColor(.yellow)
+            }
         }
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)

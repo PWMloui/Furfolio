@@ -225,7 +225,9 @@ struct AddDogOwnerView: View {
             isSaving = true
             feedbackGenerator.notificationOccurred(.success)
             let finalNotes = markAsInactive ? "[INACTIVE] \(notes)" : notes
-            onSave(ownerName, dogName, breed, contactInfo, address, finalNotes, selectedImageData, dogBirthdate)
+            // Normalize the birthday to the start of the day for consistent tracking/filtering
+            let normalizedBirthdate = Calendar.current.startOfDay(for: dogBirthdate)
+            onSave(ownerName, dogName, breed, contactInfo, address, finalNotes, selectedImageData, normalizedBirthdate)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 isSaving = false
                 dismiss()

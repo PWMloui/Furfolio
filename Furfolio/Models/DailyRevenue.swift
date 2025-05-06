@@ -203,4 +203,14 @@ final class DailyRevenue: Identifiable {
         }
         .sorted { $0.week < $1.week }
     }
+    /// Returns the number of appointments per hour across all provided appointments.
+    static func hourlyAppointmentFrequency(from appointments: [Appointment]) -> [Int: Int] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: appointments) {
+            calendar.component(.hour, from: $0.date)
+        }
+        return grouped.mapValues { $0.count }
+            .sorted { $0.key < $1.key }
+            .reduce(into: [Int: Int]()) { $0[$1.key] = $1.value }
+    }
 }

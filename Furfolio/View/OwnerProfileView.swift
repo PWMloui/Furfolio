@@ -104,6 +104,33 @@ struct OwnerProfileView: View {
             Text(dogOwner.ownerName)
                 .font(.title)
                 .bold()
+            // Engagement and retention indicators
+            VStack(alignment: .leading, spacing: 4) {
+                if dogOwner.hasBirthdayThisMonth {
+                    Text("🎂 Birthday Month")
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.purple.opacity(0.2))
+                        .cornerRadius(6)
+                        .foregroundColor(.purple)
+                }
+                if dogOwner.retentionRisk {
+                    Text("⚠️ Retention Risk")
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(6)
+                        .foregroundColor(.orange)
+                }
+                if let spenderTag = dogOwner.lifetimeValueTag {
+                    Text(spenderTag)
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.yellow.opacity(0.2))
+                        .cornerRadius(6)
+                        .foregroundColor(.yellow)
+                }
+            }
             contactInfoText
             addressText
         }

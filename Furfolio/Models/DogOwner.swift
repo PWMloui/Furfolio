@@ -312,6 +312,28 @@ final class DogOwner: Identifiable {
         }
         return tagList
     }
+
+    // MARK: - Pet Birthday Reminders
+    /// Returns true if the (primary) pet has a birthday in the current month.
+    var hasBirthdayThisMonth: Bool {
+        guard let birthdate = birthdate else { return false }
+        let now = Date()
+        return Calendar.current.component(.month, from: birthdate) == Calendar.current.component(.month, from: now)
+    }
+
+    // MARK: - Customer Retention Alerts
+    /// Returns true if the owner is at risk of churn (no activity in 60+ days).
+    var retentionRisk: Bool {
+        guard let last = lastActivityDate else { return true }
+        let sixtyDaysAgo = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? .distantPast
+        return last < sixtyDaysAgo
+    }
+
+    // MARK: - Customer Lifetime Value Tag
+    /// Returns a tag string if the owner's total charges are over $1000.
+    var lifetimeValueTag: String? {
+        return totalCharges > 1000 ? "💸 Top Spender" : nil
+    }
     
     // MARK: - Helper Methods
     

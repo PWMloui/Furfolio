@@ -81,9 +81,9 @@ struct FurfolioApp: App {
                         }
                     case .metricsDashboard:
                         MetricsDashboardView(
-                            dailyRevenues: [],
-                            appointments: [],
-                            charges: []
+                            dailyRevenues: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<DailyRevenue>()),
+                            appointments: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<Appointment>()),
+                            charges: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<Charge>())
                         )
                     }
                 }

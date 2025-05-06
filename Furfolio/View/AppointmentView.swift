@@ -23,6 +23,8 @@ struct AddAppointmentView: View {
     @State private var enableReminder = false
     @State private var linkChargeRecord = false  // Toggle for linking a charge record
 
+    @State private var appointmentDuration = 60
+
     @State private var beforePhotoData: Data? = nil
     @State private var afterPhotoData: Data? = nil
 
@@ -112,6 +114,15 @@ struct AddAppointmentView: View {
             }
             .pickerStyle(MenuPickerStyle())
             .accessibilityLabel(NSLocalizedString("Select service type", comment: "Accessibility label for service type picker"))
+            
+            Stepper(
+                value: $appointmentDuration,
+                in: 15...240,
+                step: 15
+            ) {
+                Text("Duration: \(appointmentDuration) minutes")
+            }
+            .accessibilityLabel("Appointment duration")
             
             VStack(alignment: .leading, spacing: 4) {
                 TextField(
@@ -296,6 +307,7 @@ struct AddAppointmentView: View {
             beforePhoto: beforePhotoData,
             afterPhoto: afterPhotoData
         )
+        newAppointment.durationMinutes = appointmentDuration
         
         // If linking a charge record is enabled, add logic here.
         if linkChargeRecord {

@@ -30,8 +30,8 @@ final class Charge: Identifiable {
     /// Optional additional notes.
     var notes: String?
     
-    /// Optional identifier linking this charge to an appointment.
-    var appointmentID: UUID?
+    /// Associated appointment, if any.
+    @Relationship(deleteRule: .nullify) var appointment: Appointment?
     
     // MARK: - Computed Properties
     
@@ -71,6 +71,15 @@ final class Charge: Identifiable {
         default:
             return "🥇 Loyal Client"
         }
+    }
+    
+    var lifetimeValue: Double {
+        guard let owner = dogOwner as? DogOwner else { return amount }
+        return owner.charges.reduce(0) { $0 + $1.amount }
+    }
+    
+    var topSpenderBadge: String? {
+        return lifetimeValue > 1000 ? "💸 Top Spender" : nil
     }
     
     /// Returns the preferred locale (from the current system settings).
@@ -125,7 +134,7 @@ final class Charge: Identifiable {
         dogOwner: DogOwner,
         notes: String? = nil,
         petBadges: [String] = [],
-        appointmentID: UUID? = nil
+        appointment: Appointment? = nil
     ) {
         self.id = UUID()
         self.date = date
@@ -134,7 +143,7 @@ final class Charge: Identifiable {
         self.dogOwner = dogOwner
         self.notes = notes
         self.petBadges = petBadges
-        self.appointmentID = appointmentID
+        self.appointment = appointment
     }
     
     // MARK: - Static Cached Formatters

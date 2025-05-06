@@ -46,6 +46,9 @@ final class Appointment: Identifiable {
     
     /// Optional appointment notes.
     var notes: String?
+
+    /// The duration of the appointment in minutes.
+    var durationMinutes: Int?
     
     /// Enum representing the status of the appointment.
     enum AppointmentStatus: String, Codable, CaseIterable {
@@ -142,6 +145,13 @@ final class Appointment: Identifiable {
     }
     
     /// Returns a relative time string until the appointment (e.g., "in 2 hours").
+    /// Formats the duration in a user-friendly string, e.g., "1h 30m" or "45m".
+    var durationFormatted: String {
+        guard let duration = durationMinutes else { return "—" }
+        let hours = duration / 60
+        let minutes = duration % 60
+        return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
+    }
     var relativeTimeUntil: String {
         let interval = date.timeIntervalSince(Date())
         switch interval {
@@ -266,5 +276,20 @@ final class Appointment: Identifiable {
             }
         }
         return NSLocalizedString("No significant behavioral issues noted.", comment: "Behavior analysis: Neutral")
+    }
+}
+
+// MARK: - Appointment Statistics & Utilities
+extension Appointment {
+    /// Calculates the average duration (in minutes) for appointments of a given service type.
+    static func averageDuration(for appointments: [Appointment], serviceType: ServiceType) -> Double {
+        let durations = appointments.filter { $0.serviceType == serviceType && $0.durationMinutes != nil }.map { Double($0.durationMinutes!) }
+        guard !durations.isEmpty else { return 0 }
+        return durations.reduce(0, +) / Double(durations.count)
+    }
+
+    /// Returns a dictionary of service type frequencies for the given appointments.
+    static func serviceTypeFrequency(for appointments: [Appointment]) -> [ServiceType: Int] {
+        Dictionary(grouping: appointments, by: \.serviceType).mapValues { $0.count }
     }
 }

@@ -91,6 +91,35 @@ struct AddChargeView: View {
                     .foregroundColor(.yellow)
                     .fontWeight(.semibold)
             }
+
+            // Enhanced UI: Show retention risk, birthday month, top spender badge
+            if dogOwner.retentionRisk {
+                HStack {
+                    Text("Status")
+                    Spacer()
+                    Text("⚠️ Retention Risk")
+                        .foregroundColor(.red)
+                        .fontWeight(.semibold)
+                }
+            }
+            if dogOwner.hasBirthdayThisMonth {
+                HStack {
+                    Text("Special")
+                    Spacer()
+                    Text("🎂 Birthday Month")
+                        .foregroundColor(.purple)
+                        .fontWeight(.semibold)
+                }
+            }
+            if let tag = dogOwner.lifetimeValueTag {
+                HStack {
+                    Text("Client Tag")
+                    Spacer()
+                    Text(tag)
+                        .foregroundColor(.blue)
+                        .fontWeight(.semibold)
+                }
+            }
         }
     }
 

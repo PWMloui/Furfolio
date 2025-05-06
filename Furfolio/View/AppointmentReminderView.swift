@@ -45,7 +45,13 @@ struct AppointmentReminderView: View {
                 // For each dog owner, display a reminder row if they have a next appointment.
                 ForEach(dogOwners) { owner in
                     if let nextAppointment = owner.nextAppointment {
-                        Section(header: Text("\(owner.ownerName) \(owner.loyaltyStatus)")) {
+                        let statusTags = [
+                            owner.hasBirthdayThisMonth ? "🎂 Birthday" : nil,
+                            owner.retentionRisk ? "⚠️ Retention Risk" : nil,
+                            owner.lifetimeValueTag
+                        ].compactMap { $0 }.joined(separator: " ")
+
+                        Section(header: Text("\(owner.ownerName) \(owner.loyaltyStatus) \(statusTags)")) {
                             reminderRow(for: nextAppointment, owner: owner)
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }

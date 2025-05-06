@@ -22,6 +22,7 @@ struct EditDogOwnerView: View {
     @State private var showValidationError = false
     @State private var showImageError = false
     @State private var markAsInactive = false
+    @State private var dogBirthdate: Date
 
     var dogOwner: DogOwner
     var onSave: (DogOwner) -> Void
@@ -37,6 +38,7 @@ struct EditDogOwnerView: View {
         _address = State(initialValue: dogOwner.address)
         _notes = State(initialValue: dogOwner.notes)
         _selectedImageData = State(initialValue: dogOwner.dogImage)
+        _dogBirthdate = State(initialValue: dogOwner.birthdate ?? Date())
         
         self.dogOwner = dogOwner
         self.onSave = onSave
@@ -52,6 +54,11 @@ struct EditDogOwnerView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                     dogImageSection()
                         .transition(.opacity)
+                    Section(header: Text("Dog Birthdate")) {
+                        DatePicker("Select Birthdate", selection: $dogBirthdate, displayedComponents: .date)
+                            .datePickerStyle(.compact)
+                            .accessibilityLabel("Dog Birthdate Picker")
+                    }
                     Section {
                         Toggle("Mark as Inactive", isOn: $markAsInactive)
                             .accessibilityLabel("Mark owner as inactive")
@@ -183,6 +190,7 @@ struct EditDogOwnerView: View {
             dogOwner.address = address
             dogOwner.notes = updatedNotes
             dogOwner.dogImage = selectedImageData
+            dogOwner.birthdate = Calendar.current.startOfDay(for: dogBirthdate)
             onSave(dogOwner)
             // Simulate a short delay to allow animations to complete
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

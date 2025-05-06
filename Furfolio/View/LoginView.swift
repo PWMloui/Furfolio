@@ -183,7 +183,7 @@ struct LoginView: View {
                     } else {
                         withAnimation {
                             isAuthenticated = false
-                            authenticationError = NSLocalizedString("Biometric authentication failed. Please try again.", comment: "Error message for failed biometric authentication")
+                            authenticationError = evaluateError?.localizedDescription ?? NSLocalizedString("Biometric authentication failed. Please try again.", comment: "Error message for failed biometric authentication")
                         }
                         feedbackGenerator.notificationOccurred(.error)
                     }

@@ -57,6 +57,10 @@ struct MetricsDashboardView: View {
                     // Popular Services
                     PopularServicesView(charges: charges)
                         .transition(.opacity)
+
+                    // Peak Hours Analytics
+                    PeakHoursChartView(appointments: appointments)
+                        .transition(.opacity)
                     
                     // Date Range Picker
                     DateRangePicker(selectedDateRange: $selectedDateRange,
@@ -416,5 +420,43 @@ struct RevenueSnapshotWidgetView: View {
         } else {
             return "➖ On par with last 7 days"
         }
+    }
+}
+
+// MARK: - Peak Hours Chart View
+
+struct PeakHoursChartView: View {
+    let appointments: [Appointment]
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Peak Booking Hours")
+                .font(.headline)
+            let hourData = DailyRevenue.hourlyAppointmentFrequency(from: appointments)
+            if hourData.isEmpty {
+                Text("No appointment time data available.")
+                    .foregroundColor(.gray)
+            } else {
+                Chart {
+                    ForEach(hourData.sorted(by: { $0.key < $1.key }), id: \.key) { hour, count in
+                        BarMark(
+                            x: .value("Hour", "\(hour):00"),
+                            y: .value("Appointments", count)
+                        )
+                        .foregroundStyle(Color.pink)
+                    }
+                }
+                .frame(height: 200)
+                .chartXAxis {
+                    AxisMarks(position: .bottom)
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading)
+                }
+            }
+        }
+        .padding()
+        .background(Color.pink.opacity(0.1))
+        .cornerRadius(8)
     }
 }
