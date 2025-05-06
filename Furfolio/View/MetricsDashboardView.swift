@@ -38,6 +38,9 @@ struct MetricsDashboardView: View {
                     // Total Revenue Summary
                     TotalRevenueView(revenue: totalRevenue(for: selectedDateRange))
                         .transition(.move(edge: .trailing))
+
+                    // Revenue Snapshot Summary
+                    RevenueSnapshotWidgetView(todayRevenue: todayRevenue(), averageRevenue: averageLast7DaysRevenue())
                     
                     // Revenue by Quarters
                     QuarterRevenueView(dailyRevenues: dailyRevenues)
@@ -124,6 +127,20 @@ struct MetricsDashboardView: View {
             }
     }
     
+    // MARK: - Revenue Snapshot Helpers
+
+    private func todayRevenue() -> Double {
+        let today = Calendar.current.startOfDay(for: Date())
+        return dailyRevenues.first(where: { Calendar.current.isDate($0.date, inSameDayAs: today) })?.totalAmount ?? 0
+    }
+
+    private func averageLast7DaysRevenue() -> Double {
+        let startDate = Calendar.current.date(byAdding: .day, value: -6, to: Date()) ?? Date()
+        let last7Days = dailyRevenues.filter { $0.date >= startDate && $0.date <= Date() }
+        guard !last7Days.isEmpty else { return 0 }
+        return last7Days.reduce(0) { $0 + $1.totalAmount } / Double(last7Days.count)
+    }
+
     // MARK: - Simulated Data Refresh
     
     private func simulateDataRefresh() async {
@@ -367,4 +384,37 @@ struct DateRangePicker: View {
 
 enum DateRange {
     case lastWeek, lastMonth, custom
+}
+
+// MARK: - Revenue Snapshot Widget View
+
+struct RevenueSnapshotWidgetView: View {
+    let todayRevenue: Double
+    let averageRevenue: Double
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Today's Revenue Snapshot")
+                .font(.headline)
+            Text(todayRevenue.formatted(.currency(code: Locale.current.currency?.identifier ?? "USD")))
+                .font(.title3)
+                .bold()
+            Text(snapshotStatus())
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color.cyan.opacity(0.1))
+        .cornerRadius(8)
+    }
+
+    private func snapshotStatus() -> String {
+        if todayRevenue > averageRevenue {
+            return "📈 Above average vs. last 7 days"
+        } else if todayRevenue < averageRevenue {
+            return "📉 Below average vs. last 7 days"
+        } else {
+            return "➖ On par with last 7 days"
+        }
+    }
 }

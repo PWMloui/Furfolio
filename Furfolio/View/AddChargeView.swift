@@ -29,6 +29,9 @@ struct AddChargeView: View {
                 Form {
                     chargeInformationSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                    
+                    ownerLoyaltySection()
+                        .transition(.opacity)
                 }
                 .navigationTitle(NSLocalizedString("Add Charge", comment: "Navigation title for Add Charge view"))
                 .toolbar { toolbarContent() }
@@ -69,6 +72,25 @@ struct AddChargeView: View {
             serviceTypePicker()
             chargeAmountInput()
             notesField()
+        }
+    }
+
+    @ViewBuilder
+    private func ownerLoyaltySection() -> some View {
+        Section(header: Text(NSLocalizedString("Owner Details", comment: "Header for owner details section"))) {
+            HStack {
+                Text(NSLocalizedString("Name", comment: "Label for owner's name"))
+                Spacer()
+                Text(dogOwner.ownerName)
+                    .foregroundColor(.secondary)
+            }
+            HStack {
+                Text(NSLocalizedString("Loyalty Status", comment: "Label for owner's loyalty status"))
+                Spacer()
+                Text(dogOwner.loyaltyStatus)
+                    .foregroundColor(.yellow)
+                    .fontWeight(.semibold)
+            }
         }
     }
 

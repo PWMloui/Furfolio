@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UserNotifications
+import PhotosUI
 
 struct AddAppointmentView: View {
     @Environment(\.dismiss) private var dismiss
@@ -22,17 +23,26 @@ struct AddAppointmentView: View {
     @State private var enableReminder = false
     @State private var linkChargeRecord = false  // Toggle for linking a charge record
 
+    @State private var beforePhotoData: Data? = nil
+    @State private var afterPhotoData: Data? = nil
+
     // For haptic feedback
     private let feedbackGenerator = UINotificationFeedbackGenerator()
     
     // For onboarding tooltip display
     @State private var showTooltip = false
 
+    @State private var beforePhotoItem: PhotosPickerItem? = nil
+    @State private var afterPhotoItem: PhotosPickerItem? = nil
+
     var body: some View {
         NavigationStack {
             ZStack {
                 Form {
                     appointmentDetailsSection()
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    
+                    photosSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     
                     // Optionally display conflict warning text inside the form.
@@ -141,6 +151,91 @@ struct AddAppointmentView: View {
     }
     
     @ViewBuilder
+    private func photosSection() -> some View {
+        Section(header: Text(NSLocalizedString("Photos", comment: "Section header for photos"))) {
+            VStack(alignment: .leading) {
+                Text(NSLocalizedString("Before Photo", comment: "Label for before photo picker"))
+                    .font(.headline)
+                HStack {
+                    if let data = beforePhotoData, let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .accessibilityLabel(NSLocalizedString("Before photo preview", comment: "Accessibility label for before photo preview"))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary, lineWidth: 1)
+                            .frame(width: 80, height: 80)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .foregroundColor(.secondary)
+                            )
+                            .accessibilityLabel(NSLocalizedString("No before photo selected", comment: "Accessibility label for no before photo"))
+                    }
+                    PhotosPicker(
+                        selection: $beforePhotoItem,
+                        matching: .images,
+                        photoLibrary: .shared()) {
+                            Text(NSLocalizedString("Select Before Photo", comment: "Button label for selecting before photo"))
+                    }
+                    .onChange(of: beforePhotoItem) { newItem in
+                        Task {
+                            if let item = newItem {
+                                if let data = try? await item.loadTransferable(type: Data.self) {
+                                    beforePhotoData = data
+                                }
+                            }
+                        }
+                    }
+                    .accessibilityLabel(NSLocalizedString("Select before photo", comment: "Accessibility label for before photo picker"))
+                }
+            }
+            
+            VStack(alignment: .leading) {
+                Text(NSLocalizedString("After Photo", comment: "Label for after photo picker"))
+                    .font(.headline)
+                HStack {
+                    if let data = afterPhotoData, let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .accessibilityLabel(NSLocalizedString("After photo preview", comment: "Accessibility label for after photo preview"))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary, lineWidth: 1)
+                            .frame(width: 80, height: 80)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .foregroundColor(.secondary)
+                            )
+                            .accessibilityLabel(NSLocalizedString("No after photo selected", comment: "Accessibility label for no after photo"))
+                    }
+                    PhotosPicker(
+                        selection: $afterPhotoItem,
+                        matching: .images,
+                        photoLibrary: .shared()) {
+                            Text(NSLocalizedString("Select After Photo", comment: "Button label for selecting after photo"))
+                    }
+                    .onChange(of: afterPhotoItem) { newItem in
+                        Task {
+                            if let item = newItem {
+                                if let data = try? await item.loadTransferable(type: Data.self) {
+                                    afterPhotoData = data
+                                }
+                            }
+                        }
+                    }
+                    .accessibilityLabel(NSLocalizedString("Select after photo", comment: "Accessibility label for after photo picker"))
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
     private func conflictWarningSection(_ conflictWarning: String) -> some View {
         Section {
             Text(conflictWarning)
@@ -197,7 +292,9 @@ struct AddAppointmentView: View {
             date: appointmentDate,
             dogOwner: dogOwner,
             serviceType: serviceType,
-            notes: appointmentNotes
+            notes: appointmentNotes,
+            beforePhoto: beforePhotoData,
+            afterPhoto: afterPhotoData
         )
         
         // If linking a charge record is enabled, add logic here.

@@ -18,6 +18,11 @@ class ModelContainerHolder: ObservableObject {
     let modelContainer: ModelContainer
     
     init() {
+        // Explicitly register the secure unarchive transformer to avoid deprecation warnings.
+        ValueTransformer.setValueTransformer(
+            NSSecureUnarchiveFromDataTransformer(),
+            forName: NSValueTransformerName("NSSecureUnarchiveFromDataTransformerName")
+        )
         do {
             let schema = try Schema([DogOwner.self, Charge.self, Appointment.self, DailyRevenue.self])
             self.modelContainer = try ModelContainer(for: schema)

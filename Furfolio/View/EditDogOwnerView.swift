@@ -21,6 +21,7 @@ struct EditDogOwnerView: View {
     @State private var isSaving = false
     @State private var showValidationError = false
     @State private var showImageError = false
+    @State private var markAsInactive = false
 
     var dogOwner: DogOwner
     var onSave: (DogOwner) -> Void
@@ -51,6 +52,10 @@ struct EditDogOwnerView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                     dogImageSection()
                         .transition(.opacity)
+                    Section {
+                        Toggle("Mark as Inactive", isOn: $markAsInactive)
+                            .accessibilityLabel("Mark owner as inactive")
+                    }
                 }
                 .navigationTitle("Edit Dog Owner")
                 .toolbar {
@@ -170,7 +175,15 @@ struct EditDogOwnerView: View {
             isSaving = true
             // Provide success haptic feedback
             feedbackGenerator.notificationOccurred(.success)
-            updateDogOwner()
+            let updatedNotes = markAsInactive ? "[INACTIVE] \(notes)" : notes
+            dogOwner.ownerName = ownerName
+            dogOwner.dogName = dogName
+            dogOwner.breed = breed
+            dogOwner.contactInfo = contactInfo
+            dogOwner.address = address
+            dogOwner.notes = updatedNotes
+            dogOwner.dogImage = selectedImageData
+            onSave(dogOwner)
             // Simulate a short delay to allow animations to complete
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 isSaving = false

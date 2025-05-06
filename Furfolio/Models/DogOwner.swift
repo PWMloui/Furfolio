@@ -54,7 +54,7 @@ final class DogOwner: Identifiable {
     var documentAttachments: [URL] = []
     
     // New: Record history/audit fields.
-    var createdDate: Date
+    var createdDate: Date?
     var updatedDate: Date?
     
     // MARK: - Initializer
@@ -86,6 +86,28 @@ final class DogOwner: Identifiable {
     }
     
     // MARK: - Computed Properties
+    /// The most recent activity date (appointment or charge) for this owner.
+    var lastActivityDate: Date? {
+        let allDates = (charges.map { $0.date } + appointments.map { $0.date }).sorted(by: >)
+        return allDates.first
+    }
+
+    /// Returns true if the owner has had no activity in the last 90 days.
+    var isInactive: Bool {
+        guard let last = lastActivityDate else { return true }
+        let ninetyDaysAgo = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantPast
+        return last < ninetyDaysAgo
+    }
+
+    /// Loyalty status based on total number of appointments.
+    var loyaltyStatus: String {
+        switch appointments.count {
+        case 0: return "New"
+        case 1: return "🐾 First Timer"
+        case 2...9: return "🔁 Monthly Regular"
+        default: return "🥇 Loyal Client"
+        }
+    }
     
     /// A combined title for display purposes. If additional pets are available, their names are included.
     var displayTitle: String {

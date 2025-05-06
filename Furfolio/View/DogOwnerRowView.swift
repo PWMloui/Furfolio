@@ -35,6 +35,17 @@ struct DogOwnerRowView: View {
                     .transition(.opacity)
                     .animation(.easeIn(duration: 0.3), value: dogOwner.isValidOwner)
             }
+            
+            if !dogOwner.loyaltyStatus.isEmpty && dogOwner.loyaltyStatus != "New" {
+                Text(dogOwner.loyaltyStatus)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.yellow.opacity(0.2))
+                    .cornerRadius(8)
+                    .foregroundColor(.orange)
+                    .accessibilityLabel(Text("Loyalty status: \(dogOwner.loyaltyStatus)"))
+            }
         }
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)

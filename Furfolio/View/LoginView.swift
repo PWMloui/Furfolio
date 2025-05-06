@@ -90,6 +90,20 @@ struct LoginView: View {
             .disabled(isLoading)
             .transition(.scale)
             
+            Button(action: {
+                withAnimation {
+                    isAuthenticated = true
+                    authenticationError = nil
+                }
+                feedbackGenerator.notificationOccurred(.success)
+            }) {
+                Text("Skip Login")
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
+                    .padding(.top, 8)
+            }
+            .accessibilityLabel("Skip Login Button")
+            
             // Authentication Error Message
             if let error = authenticationError {
                 Text(error)

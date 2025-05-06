@@ -30,6 +30,9 @@ struct ContentView: View {
     // State for selected dog owner
     @State private var selectedDogOwner: DogOwner?
     
+    @State private var selectedFilter: String = "All"
+    let filterOptions = ["All", "Active", "Inactive", "New"]
+    
     var body: some View {
         if isAuthenticated {
             NavigationSplitView {
@@ -196,6 +199,13 @@ struct ContentView: View {
     
     private var dogOwnersSection: some View {
         Section(header: Text("Dog Owners")) {
+            Picker("Filter", selection: $selectedFilter) {
+                ForEach(filterOptions, id: \.self) { option in
+                    Text(option)
+                }
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            
             let filteredDogOwners = filterDogOwners()
             if filteredDogOwners.isEmpty {
                 Text("No dog owners found.")
@@ -244,13 +254,24 @@ struct ContentView: View {
     
     private func filterDogOwners() -> [DogOwner] {
         let lowercasedSearchText = searchText.lowercased()
-        return dogOwners.filter { owner in
+        let filteredBySearch = dogOwners.filter { owner in
             searchText.isEmpty ||
             owner.ownerName.lowercased().contains(lowercasedSearchText) ||
             owner.dogName.lowercased().contains(lowercasedSearchText) ||
             owner.breed.lowercased().contains(lowercasedSearchText) ||
             owner.address.lowercased().contains(lowercasedSearchText) ||
             owner.notes.lowercased().contains(lowercasedSearchText)
+        }
+        
+        switch selectedFilter {
+        case "Active":
+            return filteredBySearch.filter { $0.isActive }
+        case "Inactive":
+            return filteredBySearch.filter { $0.isInactive }
+        case "New":
+            return filteredBySearch.filter { $0.appointments.isEmpty }
+        default:
+            return filteredBySearch
         }
     }
     
@@ -274,7 +295,11 @@ struct ContentView: View {
     private func deleteDogOwners(offsets: IndexSet) {
         withAnimation {
             offsets.forEach { index in
-                modelContext.delete(dogOwners[index])
+                let ownerToDelete = dogOwners[index]
+                if selectedDogOwner == ownerToDelete {
+                    selectedDogOwner = nil
+                }
+                modelContext.delete(ownerToDelete)
             }
         }
     }

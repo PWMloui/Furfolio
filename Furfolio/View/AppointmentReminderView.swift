@@ -45,7 +45,7 @@ struct AppointmentReminderView: View {
                 // For each dog owner, display a reminder row if they have a next appointment.
                 ForEach(dogOwners) { owner in
                     if let nextAppointment = owner.nextAppointment {
-                        Section(header: Text(owner.ownerName)) {
+                        Section(header: Text("\(owner.ownerName) \(owner.loyaltyStatus)")) {
                             reminderRow(for: nextAppointment, owner: owner)
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }

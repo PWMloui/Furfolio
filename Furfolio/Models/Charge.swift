@@ -44,6 +44,34 @@ final class Charge: Identifiable {
         \(notes != nil ? "Notes: \(notes!)" : "")
         """
     }
+
+    /// Returns a string emoji badge representing the customer's loyalty based on their total number of charges.
+    ///
+    /// - 🐾 First Timer: only 1 charge
+    /// - 🔁 Monthly Regular: 2–9 charges
+    /// - 🥇 Loyal Client: 10+ charges
+    ///
+    /// This property uses the associated dog owner's count of charges to determine the badge.
+    var loyaltyBadge: String {
+        // Count all charges for this dog owner, if available
+        // If the dogOwner has a charges property, use it; otherwise, fallback to 1
+        // (Assume DogOwner has a 'charges' property of type [Charge]?)
+        let totalCharges: Int
+        if let owner = dogOwner as? DogOwner, let allCharges = (owner as? AnyObject)?.value(forKey: "charges") as? [Charge] {
+            totalCharges = allCharges.count
+        } else {
+            // Fallback: assume at least this charge
+            totalCharges = 1
+        }
+        switch totalCharges {
+        case 1:
+            return "🐾 First Timer"
+        case 2...9:
+            return "🔁 Monthly Regular"
+        default:
+            return "🥇 Loyal Client"
+        }
+    }
     
     /// Returns the preferred locale (from the current system settings).
     var preferredLocale: Locale { Locale.current }

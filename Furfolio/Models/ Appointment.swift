@@ -84,6 +84,12 @@ final class Appointment: Identifiable {
         }
     }
     
+    /// Optional data for the before photo log.
+    var beforePhoto: Data?
+    
+    /// Optional data for the after photo log.
+    var afterPhoto: Data?
+    
     // MARK: - Initializer
     
     init(
@@ -97,7 +103,9 @@ final class Appointment: Identifiable {
         profileBadges: [String] = [],
         reminderOffset: Int = 30,
         chargeID: UUID? = nil,
-        status: AppointmentStatus = .confirmed
+        status: AppointmentStatus = .confirmed,
+        beforePhoto: Data? = nil,
+        afterPhoto: Data? = nil
     ) {
         self.id = UUID()
         self.date = date
@@ -111,6 +119,8 @@ final class Appointment: Identifiable {
         self.reminderOffset = reminderOffset
         self.chargeID = chargeID
         self.status = status
+        self.beforePhoto = beforePhoto
+        self.afterPhoto = afterPhoto
     }
     
     // MARK: - Computed Properties
@@ -193,7 +203,9 @@ final class Appointment: Identifiable {
                 profileBadges: profileBadges,
                 reminderOffset: reminderOffset,
                 chargeID: chargeID,
-                status: status
+                status: status,
+                beforePhoto: beforePhoto,
+                afterPhoto: afterPhoto
             )
             appointments.append(newAppointment)
             switch recurrenceFrequency {

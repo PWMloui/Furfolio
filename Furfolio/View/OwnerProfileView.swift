@@ -10,6 +10,9 @@ import SwiftUI
 struct OwnerProfileView: View {
     let dogOwner: DogOwner
 
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @State private var showDeleteConfirmation = false
     @State private var isEditing = false
     @State private var showAppointments = true
     @State private var showCharges = true
@@ -48,6 +51,14 @@ struct OwnerProfileView: View {
             }
             .navigationTitle(NSLocalizedString("Owner Profile", comment: "Title for Owner Profile view"))
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(role: .destructive, action: {
+                        showDeleteConfirmation = true
+                    }) {
+                        Image(systemName: "trash")
+                    }
+                    .accessibilityLabel("Delete Owner")
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         withAnimation {
@@ -75,6 +86,13 @@ struct OwnerProfileView: View {
             }
             .refreshable {
                 // Future: Insert logic to refresh/reload owner data if needed.
+            }
+            .confirmationDialog("Are you sure you want to delete this owner?", isPresented: $showDeleteConfirmation) {
+                Button("Delete", role: .destructive) {
+                    modelContext.delete(dogOwner)
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
     }

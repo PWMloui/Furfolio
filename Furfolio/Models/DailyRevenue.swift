@@ -69,6 +69,23 @@ final class DailyRevenue: Identifiable {
         Calendar.current.isDate(date, equalTo: Date(), toGranularity: .month)
     }
 
+    /// Snapshot category for Revenue Snapshot Widget.
+    var snapshotCategory: String {
+        let calendar = Calendar.current
+        let today = Date()
+        let startDate = calendar.date(byAdding: .day, value: -6, to: today) ?? today
+        let averageLast7Days = DailyRevenue.averageDailyRevenue(for: startDate...today, revenues: [])
+        // Since this property does not have access to all revenues, it should be set externally with context.
+        // For demonstration, comparing totalAmount (assumed today's revenue) with averageLast7Days.
+        if totalAmount > averageLast7Days {
+            return "📈 Above Average"
+        } else if totalAmount < averageLast7Days {
+            return "📉 Below Average"
+        } else {
+            return "➖ On Par"
+        }
+    }
+
     // MARK: - Methods
 
     /// Adds revenue to the total amount, ensuring the amount is non-negative.

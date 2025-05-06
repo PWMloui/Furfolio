@@ -23,6 +23,7 @@ struct AddDogOwnerView: View {
     @State private var selectedImageData: Data? = nil
     @State private var dogBirthdate: Date = Date() // Default to current date
     @State private var age: Int? = nil
+    @State private var markAsInactive = false
 
     // MARK: - UI States
     @State private var showErrorAlert = false
@@ -46,6 +47,10 @@ struct AddDogOwnerView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                     dogAgeSection()
                     dogImageSection()
+                    Section {
+                        Toggle("Mark as Inactive (optional)", isOn: $markAsInactive)
+                            .accessibilityLabel("Mark owner as inactive")
+                    }
                 }
                 .navigationTitle(NSLocalizedString("Add Dog Owner", comment: "Navigation title for Add Dog Owner view"))
                 .toolbar { toolbarContent() }
@@ -219,7 +224,8 @@ struct AddDogOwnerView: View {
         if validateFields() {
             isSaving = true
             feedbackGenerator.notificationOccurred(.success)
-            onSave(ownerName, dogName, breed, contactInfo, address, notes, selectedImageData, dogBirthdate)
+            let finalNotes = markAsInactive ? "[INACTIVE] \(notes)" : notes
+            onSave(ownerName, dogName, breed, contactInfo, address, finalNotes, selectedImageData, dogBirthdate)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 isSaving = false
                 dismiss()
