@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with advanced animations, haptic feedback, and enhanced user feedback.
+//  Updated on [Today's Date] with advanced animations, improved alert binding, modern async state handling, and enhanced accessibility.
 
 import SwiftUI
 import UserNotifications
@@ -17,9 +17,11 @@ struct AddAppointmentView: View {
     @State private var serviceType: Appointment.ServiceType = .basic
     @State private var appointmentNotes = ""
     @State private var conflictWarning: String? = nil
+    @State private var showConflictAlert = false
     @State private var isSaving = false
     @State private var enableReminder = false
-    
+    @State private var linkChargeRecord = false  // Toggle for linking a charge record
+
     // For haptic feedback
     private let feedbackGenerator = UINotificationFeedbackGenerator()
     
@@ -33,22 +35,26 @@ struct AddAppointmentView: View {
                     appointmentDetailsSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     
-                    if let conflictWarning = conflictWarning {
+                    // Optionally display conflict warning text inside the form.
+                    if let conflictWarning = conflictWarning, !conflictWarning.isEmpty {
                         conflictWarningSection(conflictWarning)
                     }
                 }
                 .navigationTitle(NSLocalizedString("Add Appointment", comment: "Navigation title for Add Appointment view"))
                 .toolbar { toolbarContent() }
-                .alert(
-                    NSLocalizedString("Conflict Detected", comment: "Alert title for conflict detection"),
-                    isPresented: .constant(conflictWarning != nil)
-                ) {
-                    Button(NSLocalizedString("OK", comment: "Alert confirmation button"), role: .cancel) {}
-                } message: {
-                    Text(conflictWarning ?? "")
+                // Dynamic alert when a conflict is detected.
+                .alert(isPresented: $showConflictAlert) {
+                    Alert(
+                        title: Text(NSLocalizedString("Conflict Detected", comment: "Alert title for conflict detection")),
+                        message: Text(conflictWarning ?? ""),
+                        dismissButton: .default(Text(NSLocalizedString("OK", comment: "Alert confirmation button")), action: {
+                            // Reset conflict warning after dismissal.
+                            conflictWarning = nil
+                        })
+                    )
                 }
                 
-                // Progress overlay while saving
+                // Progress overlay while saving.
                 if isSaving {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -59,19 +65,16 @@ struct AddAppointmentView: View {
                 }
             }
             .onAppear {
-                // Display a tooltip for onboarding when the view appears.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    withAnimation {
-                        showTooltip = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                        withAnimation {
-                            showTooltip = false
-                        }
-                    }
+                // Show an onboarding tooltip for a few seconds when the view appears.
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                    withAnimation { showTooltip = true }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000) // Show for 3 seconds
+                    withAnimation { showTooltip = false }
                 }
             }
         }
+        .accessibilityElement(children: .contain)
     }
     
     // MARK: - Sections
@@ -87,6 +90,7 @@ struct AddAppointmentView: View {
             .onChange(of: appointmentDate) { _ in
                 conflictWarning = nil
             }
+            .accessibilityLabel(NSLocalizedString("Select appointment date", comment: "Accessibility label for date picker"))
             
             Picker(
                 NSLocalizedString("Service Type", comment: "Picker for selecting service type"),
@@ -97,6 +101,7 @@ struct AddAppointmentView: View {
                 }
             }
             .pickerStyle(MenuPickerStyle())
+            .accessibilityLabel(NSLocalizedString("Select service type", comment: "Accessibility label for service type picker"))
             
             VStack(alignment: .leading, spacing: 4) {
                 TextField(
@@ -105,15 +110,15 @@ struct AddAppointmentView: View {
                 )
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .autocapitalization(.sentences)
-                .onChange(of: appointmentNotes) { _ in
-                    limitNotesLength()
-                }
+                .onChange(of: appointmentNotes) { _ in limitNotesLength() }
+                .accessibilityLabel(NSLocalizedString("Enter additional notes", comment: "Accessibility label for notes field"))
                 
                 if showTooltip && appointmentNotes.isEmpty {
                     Text(NSLocalizedString("Enter any extra details (max 250 characters)", comment: "Tooltip for additional notes"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .transition(.opacity)
+                        .accessibilityHidden(true)
                 }
             }
             
@@ -122,10 +127,16 @@ struct AddAppointmentView: View {
                 isOn: $enableReminder
             )
             .onChange(of: enableReminder) { isOn in
-                if isOn {
-                    requestNotificationPermission()
-                }
+                if isOn { requestNotificationPermission() }
             }
+            .accessibilityLabel(NSLocalizedString("Toggle to enable appointment reminder", comment: "Accessibility label for reminder toggle"))
+            
+            // Optional toggle to link a charge record.
+            Toggle(
+                NSLocalizedString("Link Charge Record", comment: "Toggle for linking a charge record"),
+                isOn: $linkChargeRecord
+            )
+            .accessibilityLabel(NSLocalizedString("Toggle to link a charge record", comment: "Accessibility label for charge record linking toggle"))
         }
     }
     
@@ -135,6 +146,7 @@ struct AddAppointmentView: View {
             Text(conflictWarning)
                 .foregroundColor(.red)
                 .italic()
+                .accessibilityLabel(NSLocalizedString("Conflict warning", comment: "Accessibility label for conflict warning"))
         }
     }
     
@@ -144,10 +156,9 @@ struct AddAppointmentView: View {
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
             Button(NSLocalizedString("Cancel", comment: "Cancel button")) {
-                withAnimation {
-                    dismiss()
-                }
+                withAnimation { dismiss() }
             }
+            .accessibilityLabel(NSLocalizedString("Cancel appointment creation", comment: "Accessibility label for cancel button"))
         }
         
         ToolbarItem(placement: .navigationBarTrailing) {
@@ -155,6 +166,7 @@ struct AddAppointmentView: View {
                 handleSave()
             }
             .disabled(!validateFields() || isSaving)
+            .accessibilityLabel(NSLocalizedString("Save appointment", comment: "Accessibility label for save button"))
         }
     }
     
@@ -167,11 +179,15 @@ struct AddAppointmentView: View {
             withAnimation(.easeInOut(duration: 0.3)) {
                 saveAppointment()
             }
-            // Simulate a short delay for saving actions (allowing animations to finish)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                isSaving = false
-                dismiss()
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
+                withAnimation {
+                    isSaving = false
+                    dismiss()
+                }
             }
+        } else {
+            showConflictAlert = true
         }
     }
     
@@ -183,6 +199,12 @@ struct AddAppointmentView: View {
             serviceType: serviceType,
             notes: appointmentNotes
         )
+        
+        // If linking a charge record is enabled, add logic here.
+        if linkChargeRecord {
+            // Placeholder: Implement charge record linking logic here.
+            print("Link Charge Record is enabled. Implement charge record linking logic here.")
+        }
         
         withAnimation {
             modelContext.insert(newAppointment)
@@ -215,10 +237,10 @@ struct AddAppointmentView: View {
     
     /// Ensures required fields are valid.
     private func validateFields() -> Bool {
-        appointmentDate > Date()
+        return appointmentDate > Date()
     }
     
-    /// Checks for conflicting appointments (within a 1-hour buffer).
+    /// Checks for conflicting appointments within a 1-hour buffer.
     private func checkConflicts() -> Bool {
         !dogOwner.appointments.contains {
             abs($0.date.timeIntervalSince(appointmentDate)) < 3600
@@ -239,11 +261,8 @@ struct AddAppointmentView: View {
         content.sound = .default
         
         guard let triggerDate = Calendar.current.date(byAdding: .minute, value: -30, to: appointment.date) else { return }
-        
-        let trigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate),
-            repeats: false
-        )
+        let triggerComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerComponents, repeats: false)
         
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -264,7 +283,6 @@ struct AddAppointmentView: View {
             if let error = error {
                 print("Notification permission error: \(error.localizedDescription)")
             }
-            
             if !granted {
                 enableReminder = false
                 print("User denied notification permissions.")

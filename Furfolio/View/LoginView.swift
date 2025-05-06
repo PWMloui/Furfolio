@@ -3,9 +3,10 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with enhanced animations, haptic feedback, and asynchronous login simulation.
+//  Updated on [Today's Date] with enhanced animations, haptic feedback, asynchronous login simulation, and biometric authentication.
 
 import SwiftUI
+import LocalAuthentication
 
 struct LoginView: View {
     @State private var username: String = ""
@@ -13,10 +14,10 @@ struct LoginView: View {
     @State private var isAuthenticated = false
     @State private var authenticationError: String? = nil
     @State private var isLoading = false
-    
+
     // Haptic feedback generator for login outcomes
     private let feedbackGenerator = UINotificationFeedbackGenerator()
-    
+
     var body: some View {
         VStack(spacing: 16) {
             // Title
@@ -67,6 +68,25 @@ struct LoginView: View {
             .background(Color.blue)
             .cornerRadius(8)
             .accessibilityLabel(NSLocalizedString("Login Button", comment: "Accessibility label for login button"))
+            .disabled(isLoading)
+            .transition(.scale)
+            
+            // Biometric Login Button
+            Button(action: {
+                biometricLogin()
+            }) {
+                HStack {
+                    Image(systemName: "faceid")
+                    Text(NSLocalizedString("Login with Face ID", comment: "Button label for biometric login"))
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding()
+            }
+            .background(Color.green)
+            .cornerRadius(8)
+            .accessibilityLabel(NSLocalizedString("Biometric Login Button", comment: "Accessibility label for biometric login button"))
             .disabled(isLoading)
             .transition(.scale)
             
@@ -124,6 +144,41 @@ struct LoginView: View {
             withAnimation {
                 isAuthenticated = false
                 authenticationError = NSLocalizedString("Invalid username or password. Please try again.", comment: "Error message for invalid login credentials")
+            }
+            feedbackGenerator.notificationOccurred(.error)
+        }
+    }
+    
+    /// Performs biometric authentication using Face ID / Touch ID.
+    private func biometricLogin() {
+        let context = LAContext()
+        var error: NSError?
+        
+        // Check if biometric authentication is available
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+            let reason = NSLocalizedString("Authenticate with Face ID to access your account.", comment: "Biometric authentication reason")
+            context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, evaluateError in
+                DispatchQueue.main.async {
+                    if success {
+                        // On success, set isAuthenticated to true
+                        withAnimation {
+                            isAuthenticated = true
+                            authenticationError = nil
+                        }
+                        feedbackGenerator.notificationOccurred(.success)
+                    } else {
+                        withAnimation {
+                            isAuthenticated = false
+                            authenticationError = NSLocalizedString("Biometric authentication failed. Please try again.", comment: "Error message for failed biometric authentication")
+                        }
+                        feedbackGenerator.notificationOccurred(.error)
+                    }
+                }
+            }
+        } else {
+            // If biometrics are not available, show an error message
+            withAnimation {
+                authenticationError = NSLocalizedString("Biometric authentication is not available on this device.", comment: "Error message for unavailable biometrics")
             }
             feedbackGenerator.notificationOccurred(.error)
         }

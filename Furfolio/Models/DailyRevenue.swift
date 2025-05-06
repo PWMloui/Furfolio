@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with caching, relative date display, and improved data handling.
+//
 
 import Foundation
 import SwiftData
@@ -14,20 +14,6 @@ final class DailyRevenue: Identifiable {
     @Attribute var date: Date
     var totalAmount: Double
     @Relationship(deleteRule: .cascade) var dogOwner: DogOwner // Relationship to DogOwner
-
-    // MARK: - Cached Formatters
-    private static let currencyFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = Locale.current.currency?.identifier ?? "USD"
-        return formatter
-    }()
-    
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter
-    }()
 
     // MARK: - Initializer
     init(date: Date, totalAmount: Double = 0.0, dogOwner: DogOwner) throws {
@@ -60,28 +46,25 @@ final class DailyRevenue: Identifiable {
 
     // MARK: - Computed Properties
 
-    /// Returns the total amount formatted as a localized currency string.
+    /// Formats the total amount as a localized currency string.
     var formattedTotal: String {
-        // Use the cached currency formatter
-        return DailyRevenue.currencyFormatter.string(from: NSNumber(value: totalAmount)) ?? "$\(totalAmount)"
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = Locale.current.currency?.identifier ?? "USD"
+        return formatter.string(from: NSNumber(value: totalAmount)) ?? "$\(totalAmount)"
     }
 
-    /// Returns the date formatted as a localized string (e.g., "MM/DD/YYYY").
+    /// Formats the date as a localized string.
     var formattedDate: String {
         date.formatted(.dateTime.month().day().year())
     }
-    
-    /// Returns a human-friendly relative date string (e.g., "2 days ago").
-    var relativeDateString: String {
-        DailyRevenue.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
-    }
 
-    /// Indicates whether the revenue is for today's date.
+    /// Checks if the revenue is for today's date.
     var isToday: Bool {
         Calendar.current.isDateInToday(date)
     }
 
-    /// Indicates whether the revenue is for the current month.
+    /// Checks if the revenue is for the current month.
     var isCurrentMonth: Bool {
         Calendar.current.isDate(date, equalTo: Date(), toGranularity: .month)
     }
@@ -89,18 +72,15 @@ final class DailyRevenue: Identifiable {
     // MARK: - Methods
 
     /// Adds revenue to the total amount, ensuring the amount is non-negative.
-    /// Logs the updated total for debugging purposes.
     func addRevenue(amount: Double) {
         guard amount >= 0 else { return }
         totalAmount += amount
-        print("Added \(amount). New total for \(formattedDate): \(totalAmount)")
     }
 
     /// Resets the total revenue to 0.0 if the stored date isn't today.
     func resetIfNotToday() {
         if !isToday {
             totalAmount = 0.0
-            print("Reset revenue for \(formattedDate) because it's not today.")
         }
     }
 
@@ -193,7 +173,7 @@ final class DailyRevenue: Identifiable {
         let calendar = Calendar.current
         let startOfYear = calendar.date(from: DateComponents(year: year))!
         let endOfYear = calendar.date(byAdding: .year, value: 1, to: startOfYear)!
-
+ 
         let filteredRevenues = revenues.filter { $0.date >= startOfYear && $0.date <= endOfYear }
         
         let groupedByWeek = Dictionary(grouping: filteredRevenues) {

@@ -3,12 +3,12 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with advanced animations, haptic feedback, and enhanced transitions.
+//  Updated on [Today's Date] with advanced animations, haptic feedback, enhanced transitions, customizable reminder offset, and rescheduling options.
 
 import SwiftUI
 import UserNotifications
 
-// Define a shared DateFormatter to be used globally
+// Define a shared DateFormatter to be used globally.
 private let globalAppointmentDateFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
@@ -21,12 +21,28 @@ struct AppointmentReminderView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
     
+    // Customizable reminder offset in hours (default is 24)
+    @State private var reminderOffset: Int = 24
+
     // Haptic feedback generator for notification events.
     private let feedbackGenerator = UINotificationFeedbackGenerator()
     
     var body: some View {
         NavigationStack {
             List {
+                // Global Reminder Settings Section
+                Section(header: Text(NSLocalizedString("Reminder Settings", comment: "Section header for reminder settings"))) {
+                    HStack {
+                        Text(String(format: NSLocalizedString("Remind me %d hours before appointment", comment: "Reminder offset label"), reminderOffset))
+                        Spacer()
+                        Stepper(value: $reminderOffset, in: 1...48) {
+                            Text("\(reminderOffset)h")
+                        }
+                        .accessibilityLabel(NSLocalizedString("Reminder offset stepper", comment: "Accessibility label for reminder offset stepper"))
+                    }
+                }
+                
+                // For each dog owner, display a reminder row if they have a next appointment.
                 ForEach(dogOwners) { owner in
                     if let nextAppointment = owner.nextAppointment {
                         Section(header: Text(owner.ownerName)) {
@@ -49,12 +65,27 @@ struct AppointmentReminderView: View {
             } message: {
                 Text(alertMessage)
             }
+            .onAppear {
+                // Register a notification category for interactive notifications.
+                let rescheduleAction = UNNotificationAction(
+                    identifier: "RESCHEDULE_ACTION",
+                    title: NSLocalizedString("Reschedule", comment: "Reschedule action title"),
+                    options: []
+                )
+                let category = UNNotificationCategory(
+                    identifier: "APPOINTMENT_REMINDER",
+                    actions: [rescheduleAction],
+                    intentIdentifiers: [],
+                    options: []
+                )
+                UNUserNotificationCenter.current().setNotificationCategories([category])
+            }
         }
     }
     
     // MARK: - Reminder Row
     
-    /// Generates a row for the reminder
+    /// Generates a row for an appointment reminder.
     private func reminderRow(for appointment: Appointment, owner: DogOwner) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             appointmentDetailsText(for: appointment)
@@ -65,13 +96,31 @@ struct AppointmentReminderView: View {
             
             reminderTimingText()
             
-            reminderButton(for: appointment, owner: owner)
+            // HStack with both Set and Resend Reminder buttons.
+            HStack(spacing: 16) {
+                Button(NSLocalizedString("Set Reminder", comment: "Button label to set reminder")) {
+                    scheduleAppointmentReminder(for: appointment, owner: owner)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canScheduleReminder(for: appointment))
+                .opacity(canScheduleReminder(for: appointment) ? 1.0 : 0.5)
+                .accessibilityLabel(NSLocalizedString("Set reminder button", comment: "Accessibility label for set reminder button"))
+                
+                Button(NSLocalizedString("Resend Reminder", comment: "Button label to resend reminder")) {
+                    scheduleAppointmentReminder(for: appointment, owner: owner)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canScheduleReminder(for: appointment))
+                .opacity(canScheduleReminder(for: appointment) ? 1.0 : 0.5)
+                .accessibilityLabel(NSLocalizedString("Resend reminder button", comment: "Accessibility label for resend reminder button"))
+            }
         }
         .padding(.vertical, 8)
     }
     
     // MARK: - Components
     
+    /// Displays appointment details.
     @ViewBuilder
     private func appointmentDetailsText(for appointment: Appointment) -> some View {
         Text(
@@ -83,6 +132,7 @@ struct AppointmentReminderView: View {
         .font(.subheadline)
     }
     
+    /// Displays appointment notes.
     @ViewBuilder
     private func appointmentNotesText(_ notes: String) -> some View {
         Text(
@@ -92,24 +142,15 @@ struct AppointmentReminderView: View {
         .foregroundColor(.secondary)
     }
     
+    /// Displays the reminder timing.
     @ViewBuilder
     private func reminderTimingText() -> some View {
-        Text(NSLocalizedString("Reminder: 24 hours before appointment", comment: "Reminder timing message"))
+        Text(String(format: NSLocalizedString("Reminder: %d hours before appointment", comment: "Reminder timing message"), reminderOffset))
             .font(.caption)
             .foregroundColor(.gray)
     }
     
-    @ViewBuilder
-    private func reminderButton(for appointment: Appointment, owner: DogOwner) -> some View {
-        Button(NSLocalizedString("Set Reminder", comment: "Button label to set reminder")) {
-            scheduleAppointmentReminder(for: appointment, owner: owner)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!canScheduleReminder(for: appointment))
-        .opacity(canScheduleReminder(for: appointment) ? 1.0 : 0.5)
-        .accessibilityLabel(NSLocalizedString("Set reminder button", comment: "Accessibility label for set reminder button"))
-    }
-    
+    /// Displays a message when no upcoming appointments exist.
     @ViewBuilder
     private func noUpcomingAppointmentsRow(for owner: DogOwner) -> some View {
         Text(
@@ -125,9 +166,10 @@ struct AppointmentReminderView: View {
     
     // MARK: - Reminder Scheduling
     
-    /// Schedules a notification reminder for the given appointment
+    /// Schedules a notification reminder for a given appointment.
     private func scheduleAppointmentReminder(for appointment: Appointment, owner: DogOwner) {
-        guard let triggerDate = Calendar.current.date(byAdding: .hour, value: -24, to: appointment.date),
+        // Calculate trigger date by subtracting the reminder offset (in hours) from the appointment date.
+        guard let triggerDate = Calendar.current.date(byAdding: .hour, value: -reminderOffset, to: appointment.date),
               triggerDate > Date() else {
             alertMessage = NSLocalizedString(
                 "The appointment is too soon to schedule a reminder.",
@@ -153,11 +195,10 @@ struct AppointmentReminderView: View {
             content.body += String(format: NSLocalizedString(" Notes: %@", comment: "Additional notes for appointment"), notes)
         }
         content.sound = .default
+        content.categoryIdentifier = "APPOINTMENT_REMINDER" // Set the notification category for interactive actions.
         
-        let trigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate),
-            repeats: false
-        )
+        let triggerComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerComponents, repeats: false)
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
@@ -174,7 +215,7 @@ struct AppointmentReminderView: View {
                         ),
                         error.localizedDescription
                     )
-                    self.feedbackGenerator.notificationOccurred(.error)
+                    feedbackGenerator.notificationOccurred(.error)
                 } else {
                     alertMessage = String(
                         format: NSLocalizedString(
@@ -183,7 +224,7 @@ struct AppointmentReminderView: View {
                         ),
                         owner.ownerName
                     )
-                    self.feedbackGenerator.notificationOccurred(.success)
+                    feedbackGenerator.notificationOccurred(.success)
                 }
                 showAlert = true
             }
@@ -192,9 +233,9 @@ struct AppointmentReminderView: View {
     
     // MARK: - Helper Methods
     
-    /// Checks if a reminder can be scheduled for the given appointment
+    /// Determines whether a reminder can be scheduled for the given appointment.
     private func canScheduleReminder(for appointment: Appointment) -> Bool {
-        guard let triggerDate = Calendar.current.date(byAdding: .hour, value: -24, to: appointment.date) else {
+        guard let triggerDate = Calendar.current.date(byAdding: .hour, value: -reminderOffset, to: appointment.date) else {
             return false
         }
         return triggerDate > Date()

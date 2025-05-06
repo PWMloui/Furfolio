@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with modern navigation, animations, and haptic feedback.
+//  Updated on [Today's Date] with modern navigation, animations, haptic feedback, extended pet details, and document attachment sections.
 
 import SwiftUI
 
@@ -24,9 +24,17 @@ struct OwnerProfileView: View {
                     ownerInfoSection()
                         .transition(.slide)
                     
-                    // Dog Info Section
+                    // Dog Info Section (includes primary dog info)
                     dogInfoSection()
                         .transition(.opacity)
+                    
+                    // Pet Details Section (if multiple pets are recorded)
+                    petDetailsSection()
+                        .transition(.move(edge: .leading))
+                    
+                    // Document Attachments Section (if any documents are attached)
+                    documentAttachmentsSection()
+                        .transition(.move(edge: .trailing))
                     
                     // Appointment History Section
                     appointmentHistorySection()
@@ -104,6 +112,58 @@ struct OwnerProfileView: View {
         .padding()
         .background(Color.blue.opacity(0.1))
         .cornerRadius(10)
+    }
+    
+    // MARK: - Pet Details Section
+    @ViewBuilder
+    private func petDetailsSection() -> some View {
+        if !dogOwner.pets.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(NSLocalizedString("Pet Details", comment: "Section header for pet details"))
+                    .font(.headline)
+                ForEach(dogOwner.pets) { pet in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String(format: NSLocalizedString("Name: %@", comment: "Pet name label"), pet.name))
+                        Text(String(format: NSLocalizedString("Breed: %@", comment: "Pet breed label"), pet.breed))
+                        if let petAge = pet.age {
+                            Text(String(format: NSLocalizedString("Age: %d years", comment: "Pet age label"), petAge))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        if let instructions = pet.specialInstructions, !instructions.isEmpty {
+                            Text(String(format: NSLocalizedString("Special Instructions: %@", comment: "Pet instructions label"), instructions))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding()
+            .background(Color.purple.opacity(0.1))
+            .cornerRadius(10)
+        }
+    }
+    
+    // MARK: - Document Attachments Section
+    @ViewBuilder
+    private func documentAttachmentsSection() -> some View {
+        if !dogOwner.documentAttachments.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(NSLocalizedString("Documents", comment: "Section header for documents"))
+                    .font(.headline)
+                ForEach(dogOwner.documentAttachments, id: \.self) { url in
+                    Link(destination: url) {
+                        Text(url.lastPathComponent)
+                            .font(.caption)
+                            .underline()
+                    }
+                }
+            }
+            .padding()
+            .background(Color.green.opacity(0.1))
+            .cornerRadius(10)
+        }
     }
     
     // MARK: - Appointment History Section

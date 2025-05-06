@@ -3,13 +3,16 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with advanced animations, haptic feedback, and onboarding enhancements.
+//  Updated on [Today's Date] with advanced animations, improved async handling, enhanced accessibility, and refined code structure.
 
 import SwiftUI
 import PhotosUI
 
 struct AddDogOwnerView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    // MARK: - Form Fields
     @State private var ownerName = ""
     @State private var dogName = ""
     @State private var breed = ""
@@ -18,19 +21,20 @@ struct AddDogOwnerView: View {
     @State private var notes = ""
     @State private var selectedImage: PhotosPickerItem? = nil
     @State private var selectedImageData: Data? = nil
+    @State private var dogBirthdate: Date = Date() // Default to current date
+    @State private var age: Int? = nil
+
+    // MARK: - UI States
     @State private var showErrorAlert = false
     @State private var imageValidationError = false
     @State private var isSaving = false
-    @State private var dogBirthdate: Date = Date() // Non-optional date with default value
-    @State private var age: Int? = nil
+    @State private var showTooltip = false
 
+    // Closure called on successful save; insertion is handled using modelContext.
     var onSave: (String, String, String, String, String, String, Data?, Date?) -> Void
 
-    // Haptic feedback generator for success notifications.
+    // Haptic feedback for successful actions.
     private let feedbackGenerator = UINotificationFeedbackGenerator()
-    
-    // For onboarding/tooltips.
-    @State private var showTooltip = false
 
     var body: some View {
         NavigationStack {
@@ -49,12 +53,12 @@ struct AddDogOwnerView: View {
                     NSLocalizedString("Missing Required Fields", comment: "Alert title for missing required fields"),
                     isPresented: $showErrorAlert
                 ) {
-                    Button(NSLocalizedString("OK", comment: "Button label for dismissing alert"), role: .cancel) {}
+                    Button(NSLocalizedString("OK", comment: "Dismiss alert button"), role: .cancel) {}
                 } message: {
                     Text(NSLocalizedString("Please fill out the required fields: Owner Name, Dog Name, and Breed.", comment: "Message for missing required fields"))
                 }
                 
-                // Progress overlay when saving is in progress.
+                // Overlay progress view when saving
                 if isSaving {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -65,23 +69,19 @@ struct AddDogOwnerView: View {
                 }
             }
             .onAppear {
-                // Display onboarding tooltip for 3 seconds.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    withAnimation {
-                        showTooltip = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                        withAnimation {
-                            showTooltip = false
-                        }
-                    }
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                    withAnimation { showTooltip = true }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000) // Show tooltip for 3 seconds
+                    withAnimation { showTooltip = false }
                 }
             }
         }
+        .accessibilityElement(children: .contain)
     }
     
     // MARK: - Form Sections
-    
+
     @ViewBuilder
     private func ownerInformationSection() -> some View {
         Section(header: sectionHeader(icon: "person.fill", title: "Owner Information")) {
@@ -107,6 +107,7 @@ struct AddDogOwnerView: View {
                 .onChange(of: dogBirthdate) { newValue in
                     age = calculateAge(from: newValue)
                 }
+                .accessibilityLabel(NSLocalizedString("Select dog's birthdate", comment: "Accessibility label for birthdate picker"))
             if let age = age {
                 Text("Dog Age: \(age) years")
                     .transition(.opacity)
@@ -122,9 +123,7 @@ struct AddDogOwnerView: View {
     private func notesField() -> some View {
         VStack(alignment: .leading, spacing: 4) {
             customTextField(placeholder: "Notes (Optional)", text: $notes)
-                .onChange(of: notes) { _ in
-                    limitNotesLength()
-                }
+                .onChange(of: notes) { _ in limitNotesLength() }
             if showTooltip && notes.isEmpty {
                 Text(NSLocalizedString("Enter any extra details (max 250 characters)", comment: "Tooltip for additional notes"))
                     .font(.caption)
@@ -172,7 +171,7 @@ struct AddDogOwnerView: View {
                 handleImageSelection(newValue)
             }
             .alert(NSLocalizedString("Invalid Image", comment: "Alert title for invalid image"), isPresented: $imageValidationError) {
-                Button(NSLocalizedString("OK", comment: "Button label for dismissing alert"), role: .cancel) {}
+                Button(NSLocalizedString("OK", comment: "Dismiss alert button"), role: .cancel) {}
             } message: {
                 Text(NSLocalizedString("Please select an image under 5MB with appropriate dimensions.", comment: "Message for invalid image size or dimensions"))
             }
@@ -184,22 +183,23 @@ struct AddDogOwnerView: View {
     @ToolbarContentBuilder
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
-            Button(NSLocalizedString("Cancel", comment: "Button label for cancel")) {
-                withAnimation {
-                    dismiss()
-                }
+            Button(NSLocalizedString("Cancel", comment: "Cancel button label")) {
+                withAnimation { dismiss() }
             }
+            .accessibilityLabel(NSLocalizedString("Cancel", comment: "Accessibility label for cancel button"))
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button(NSLocalizedString("Save", comment: "Button label for save")) {
+            Button(NSLocalizedString("Save", comment: "Save button label")) {
                 handleSave()
             }
             .disabled(isSaving || !validateFields())
+            .accessibilityLabel(NSLocalizedString("Save Dog Owner", comment: "Accessibility label for save button"))
         }
     }
     
     // MARK: - Utility Methods
     
+    /// Returns a section header view with an icon and title.
     private func sectionHeader(icon: String, title: String) -> some View {
         HStack {
             Image(systemName: icon)
@@ -207,14 +207,14 @@ struct AddDogOwnerView: View {
         }
     }
     
-    /// Custom text field component for reusability.
+    /// A reusable custom text field.
     private func customTextField(placeholder: String, text: Binding<String>, keyboardType: UIKeyboardType = .default) -> some View {
         TextField(NSLocalizedString(placeholder, comment: "Placeholder for \(placeholder)"), text: text)
             .keyboardType(keyboardType)
             .textFieldStyle(RoundedBorderTextFieldStyle())
     }
     
-    /// Handles saving the entered data, triggers haptic feedback, and dismisses the view.
+    /// Validates required fields and triggers the save process.
     private func handleSave() {
         if validateFields() {
             isSaving = true
@@ -249,14 +249,14 @@ struct AddDogOwnerView: View {
         return !ownerName.isEmpty && !dogName.isEmpty && !breed.isEmpty
     }
     
-    /// Limits the length of the notes to 250 characters.
+    /// Limits the length of the notes to a maximum of 250 characters.
     private func limitNotesLength() {
         if notes.count > 250 {
             notes = String(notes.prefix(250))
         }
     }
     
-    /// Validates the uploaded image for size and dimensions.
+    /// Validates the selected image based on file size and dimensions.
     private func isValidImage(data: Data) -> Bool {
         let maxSizeMB = 5.0
         let maxSizeBytes = maxSizeMB * 1024 * 1024
@@ -264,7 +264,7 @@ struct AddDogOwnerView: View {
         return image.size.width > 100 && image.size.height > 100
     }
     
-    /// Calculates the dog's age from the given birthdate.
+    /// Calculates the dog's age from the provided birthdate.
     private func calculateAge(from birthdate: Date) -> Int? {
         let calendar = Calendar.current
         let ageComponents = calendar.dateComponents([.year], from: birthdate, to: Date())

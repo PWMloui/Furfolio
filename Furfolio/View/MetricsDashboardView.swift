@@ -87,17 +87,28 @@ struct MetricsDashboardView: View {
         }
     }
     
+    // New: Calculate the end date based on the selected date range.
+    private func calculateEndDate(for range: DateRange) -> Date {
+        if range == .custom {
+            return customEndDate
+        }
+        return Date()
+    }
+    
     private func filteredRevenues(for range: DateRange) -> [DailyRevenue] {
         guard let startDate = calculateStartDate(for: range) else { return dailyRevenues }
+        let endDate = calculateEndDate(for: range)
         // Animate the filtering when date range changes.
-        return dailyRevenues.filter { $0.date >= startDate && $0.date <= customEndDate }
+        return dailyRevenues.filter { $0.date >= startDate && $0.date <= endDate }
     }
     
     private func totalRevenue(for range: DateRange) -> Double {
         guard let startDate = calculateStartDate(for: range) else {
             return charges.reduce(0) { $0 + $1.amount }
         }
-        return charges.filter { $0.date >= startDate }.reduce(0) { $0 + $1.amount }
+        let endDate = calculateEndDate(for: range)
+        return charges.filter { $0.date >= startDate && $0.date <= endDate }
+                      .reduce(0) { $0 + $1.amount }
     }
     
     private func upcomingAppointments() -> [Appointment] {
@@ -333,7 +344,6 @@ struct DateRangePicker: View {
                 Text(NSLocalizedString("Custom", comment: "Custom date range option")).tag(DateRange.custom)
             }
             .pickerStyle(SegmentedPickerStyle())
-            .padding(.top)
             .onChange(of: selectedDateRange) { _ in
                 isCustomDateRangeActive = selectedDateRange == .custom
             }

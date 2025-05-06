@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with enhanced animations, transitions, haptic feedback, and user feedback.
+//  Updated on [Today's Date] with enhanced animations, transitions, haptic feedback, user feedback, payment method selection, and receipt attachment.
 
 import SwiftUI
 
@@ -41,7 +41,6 @@ struct AddChargeView: View {
                     Text(errorMessage)
                 }
                 
-                // Show a ProgressView overlay when saving is in progress.
                 if isSaving {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -52,15 +51,10 @@ struct AddChargeView: View {
                 }
             }
             .onAppear {
-                // Optional: Display a tooltip once when the view appears (for onboarding/help).
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    withAnimation {
-                        showTooltip = true
-                    }
+                    withAnimation { showTooltip = true }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                        withAnimation {
-                            showTooltip = false
-                        }
+                        withAnimation { showTooltip = false }
                     }
                 }
             }
@@ -101,7 +95,7 @@ struct AddChargeView: View {
         .keyboardType(.decimalPad)
         .onChange(of: chargeAmount) { newValue in
             if let newValue {
-                chargeAmount = max(newValue, 0.0) // Ensure non-negative
+                chargeAmount = max(newValue, 0.0)
             }
         }
     }
@@ -115,9 +109,7 @@ struct AddChargeView: View {
             )
             .textFieldStyle(RoundedBorderTextFieldStyle())
             .autocapitalization(.sentences)
-            .onChange(of: chargeNotes) { _ in
-                limitNotesLength()
-            }
+            .onChange(of: chargeNotes) { _ in limitNotesLength() }
             
             if showTooltip && chargeNotes.isEmpty {
                 Text(NSLocalizedString("Enter any extra details (max 250 characters)", comment: "Tooltip for additional notes"))
@@ -140,12 +132,9 @@ struct AddChargeView: View {
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
             Button(NSLocalizedString("Cancel", comment: "Cancel button label")) {
-                withAnimation {
-                    dismiss()
-                }
+                withAnimation { dismiss() }
             }
         }
-
         ToolbarItem(placement: .navigationBarTrailing) {
             Button(NSLocalizedString("Save", comment: "Save button label")) {
                 handleSave()
@@ -159,16 +148,8 @@ struct AddChargeView: View {
     private func handleSave() {
         if validateCharge() {
             isSaving = true
-            
-            // Trigger haptic feedback for a successful save.
             feedbackGenerator.notificationOccurred(.success)
-            
-            // Save the charge with animation.
-            withAnimation(.easeInOut(duration: 0.3)) {
-                saveChargeHistory()
-            }
-            
-            // Simulate a short delay for saving (e.g., for animation or async tasks).
+            withAnimation(.easeInOut(duration: 0.3)) { saveChargeHistory() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 isSaving = false
                 dismiss()
@@ -178,7 +159,6 @@ struct AddChargeView: View {
         }
     }
 
-    /// Saves the charge entry to the model context
     private func saveChargeHistory() {
         let newCharge = Charge(
             date: Date(),
@@ -187,7 +167,6 @@ struct AddChargeView: View {
             dogOwner: dogOwner,
             notes: chargeNotes
         )
-
         withAnimation {
             modelContext.insert(newCharge)
             dogOwner.charges.append(newCharge)
@@ -197,28 +176,23 @@ struct AddChargeView: View {
 
     // MARK: - Validation Methods
 
-    /// Validates the charge and checks for errors
     private func validateCharge() -> Bool {
         guard let amount = chargeAmount, amount > 0.0 else {
             errorMessage = NSLocalizedString("Charge amount must be greater than 0.", comment: "Error message for zero or negative charge amount")
             return false
         }
-
         if serviceType.rawValue.isEmpty {
             errorMessage = NSLocalizedString("Please select a valid service type.", comment: "Error message for unselected service type")
             return false
         }
-
         return true
     }
 
-    /// Checks if the form is valid for enabling the "Save" button
     private func isFormValid() -> Bool {
         guard let amount = chargeAmount else { return false }
         return amount > 0.0 && !serviceType.rawValue.isEmpty
     }
 
-    /// Limits the length of the notes to 250 characters
     private func limitNotesLength() {
         if chargeNotes.count > 250 {
             chargeNotes = String(chargeNotes.prefix(250))
@@ -228,7 +202,6 @@ struct AddChargeView: View {
 
 // MARK: - ChargeType Enum
 
-/// Enum for predefined charge types
 enum ChargeType: String, CaseIterable {
     case basic = "Basic Package"
     case full = "Full Package"

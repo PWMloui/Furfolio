@@ -1,5 +1,5 @@
 //
-//  FurfolioApp.swift
+//  NotificationManager.swift
 //  Furfolio
 //
 //  Created by mac on 12/20/24.

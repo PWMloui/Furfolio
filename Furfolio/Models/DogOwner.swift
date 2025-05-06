@@ -3,16 +3,32 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with enhancements for personalization, asynchronous processing, and improved feedback.
+//  Updated on [Today's Date] with enhancements for personalization, asynchronous processing, extended pet information, attachments, and record history.
 
 import SwiftData
 import Foundation
 import UIKit
 
+// MARK: - Nested Pet Model
+struct Pet: Codable, Identifiable {
+    var id: UUID = UUID()
+    var name: String
+    var breed: String
+    var birthdate: Date?
+    var specialInstructions: String?
+    
+    /// Returns the pet's age in years, if available.
+    var age: Int? {
+        guard let birthdate = birthdate else { return nil }
+        return Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year
+    }
+}
+
 @Model
 final class DogOwner: Identifiable {
     @Attribute(.unique) var id: UUID
     var ownerName: String
+    // Retain primary pet fields for backward compatibility
     var dogName: String
     var breed: String
     var contactInfo: String
@@ -20,8 +36,26 @@ final class DogOwner: Identifiable {
     @Attribute(.externalStorage) var dogImage: Data? // Store large data externally
     var notes: String
     var birthdate: Date? // Optional birthdate for the dog
+
+    // Relationships
     @Relationship(deleteRule: .cascade) var appointments: [Appointment] = []
     @Relationship(deleteRule: .cascade) var charges: [Charge] = []
+    
+    // New: Extended pet information as an array of Pet models.
+    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
+    var pets: [Pet] = []
+    
+    // New: Additional owner information as an array of strings.
+    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
+    var emergencyContacts: [String] = []
+    
+    // New: Document attachments (e.g., scanned forms, records) stored as URLs.
+    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
+    var documentAttachments: [URL] = []
+    
+    // New: Record history/audit fields.
+    var createdDate: Date
+    var updatedDate: Date?
     
     // MARK: - Initializer
     init(
@@ -32,7 +66,9 @@ final class DogOwner: Identifiable {
         address: String,
         dogImage: Data? = nil,
         notes: String = "",
-        birthdate: Date? = nil
+        birthdate: Date? = nil,
+        emergencyContacts: [String] = [],
+        documentAttachments: [URL] = []
     ) {
         self.id = UUID()
         self.ownerName = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -43,16 +79,26 @@ final class DogOwner: Identifiable {
         self.dogImage = dogImage
         self.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         self.birthdate = birthdate
+        self.emergencyContacts = emergencyContacts
+        self.documentAttachments = documentAttachments
+        self.createdDate = Date()
+        self.updatedDate = nil
     }
     
     // MARK: - Computed Properties
     
-    /// A combined title for display purposes (used in headers or transitions).
+    /// A combined title for display purposes. If additional pets are available, their names are included.
     var displayTitle: String {
-        "\(ownerName) - \(dogName)"
+        let petNames: String
+        if !pets.isEmpty {
+            petNames = pets.map { $0.name }.joined(separator: ", ")
+        } else {
+            petNames = dogName
+        }
+        return "\(ownerName) - \(petNames)"
     }
     
-    /// Returns the dog's birthdate formatted as "MM/DD/YYYY", or "Unknown" if not provided.
+    /// Returns the dog's (or primary pet's) birthdate formatted as "MM/DD/YYYY", or "Unknown" if not provided.
     var formattedBirthdate: String {
         guard let birthdate = birthdate else { return NSLocalizedString("Unknown", comment: "Birthdate unknown") }
         return birthdate.formatted(.dateTime.month().day().year())
@@ -89,8 +135,13 @@ final class DogOwner: Identifiable {
                appointments.contains { $0.date >= thirtyDaysAgo }
     }
     
+    /// A searchable text that includes all key owner and pet details.
     var searchableText: String {
-        "\(ownerName) \(dogName) \(breed) \(contactInfo) \(address) \(notes)"
+        var baseText = "\(ownerName) \(dogName) \(breed) \(contactInfo) \(address) \(notes)"
+        if !emergencyContacts.isEmpty {
+            baseText.append(" " + emergencyContacts.joined(separator: " "))
+        }
+        return baseText
     }
     
     var dogUIImage: UIImage? {
@@ -176,7 +227,7 @@ final class DogOwner: Identifiable {
         print("Appointment added on \(newAppointment.formattedDate)")
     }
     
-    /// Updates the owner's information with trimmed input and logs the update for UI feedback.
+    /// Updates the owner's information with trimmed input, updates the record history, and logs the update for UI feedback.
     func updateInfo(
         ownerName: String,
         dogName: String,
@@ -193,6 +244,7 @@ final class DogOwner: Identifiable {
         self.address = address.trimmingCharacters(in: .whitespacesAndNewlines)
         self.dogImage = dogImage
         self.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.updatedDate = Date()
         print("Owner info updated for \(displayTitle)")
     }
     
