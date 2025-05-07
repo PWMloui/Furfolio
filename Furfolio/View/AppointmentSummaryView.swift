@@ -32,22 +32,28 @@ struct AppointmentSummaryView: View {
 
                 if !appointment.dogOwner.loyaltyProgressTag.isEmpty {
                     let progress = appointment.dogOwner.loyaltyProgressTag
-                    HStack {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("Loyalty Reward")
-                            .fontWeight(.semibold)
-                        Spacer()
+                            .font(.headline)
                         Text(progress)
+                            .font(.subheadline)
+                            .padding(6)
+                            .background(Color.green.opacity(0.1))
+                            .cornerRadius(8)
                             .foregroundColor(.green)
                     }
                 }
 
                 if !appointment.dogOwner.behaviorTrendBadge.isEmpty {
                     let badge = appointment.dogOwner.behaviorTrendBadge
-                    HStack {
-                        Text("Behavior")
-                            .fontWeight(.semibold)
-                        Spacer()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Behavior Trend")
+                            .font(.headline)
                         Text(badge)
+                            .font(.subheadline)
+                            .padding(6)
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(8)
                             .foregroundColor(.orange)
                     }
                 }

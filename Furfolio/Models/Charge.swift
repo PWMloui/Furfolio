@@ -269,4 +269,19 @@ final class Charge: Identifiable {
             totals[month] = totalAmount
         }
     }
+
+    /// Groups charges for a given owner by (month, year) tuple.
+    static func chargesForOwnerGroupedByMonthYear(_ owner: DogOwner, from charges: [Charge]) -> [DateComponents: [Charge]] {
+        chargesForOwner(owner, from: charges).reduce(into: [DateComponents: [Charge]]()) { grouped, charge in
+            let components = Calendar.current.dateComponents([.month, .year], from: charge.date)
+            grouped[components, default: []].append(charge)
+        }
+    }
+
+    /// Calculates total revenue grouped by month and year for a given owner.
+    static func totalRevenueGroupedByMonthYear(for owner: DogOwner, from charges: [Charge]) -> [DateComponents: Double] {
+        chargesForOwnerGroupedByMonthYear(owner, from: charges).reduce(into: [DateComponents: Double]()) { totals, entry in
+            totals[entry.key] = entry.value.reduce(0) { $0 + $1.amount }
+        }
+    }
 }

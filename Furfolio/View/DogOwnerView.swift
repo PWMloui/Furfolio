@@ -242,7 +242,17 @@ struct AddDogOwnerView: View {
         if validateFields() {
             isSaving = true
             feedbackGenerator.notificationOccurred(.success)
-            let finalNotes = markAsInactive ? "[INACTIVE] \(notes)" : notes
+            // Support for manual and future auto-inactive tagging
+            let autoInactiveTag = "[AUTO-INACTIVE]"
+            let manualInactiveTag = "[INACTIVE]"
+            let inactiveNoteTag: String
+            if markAsInactive {
+                inactiveNoteTag = manualInactiveTag
+            } else {
+                // Placeholder logic for auto-inactive; real logic should evaluate appointment history if available
+                inactiveNoteTag = "" 
+            }
+            let finalNotes = inactiveNoteTag.isEmpty ? notes : "\(inactiveNoteTag) \(notes)"
             // Normalize the birthday to the start of the day for consistent tracking/filtering
             let normalizedBirthdate = Calendar.current.startOfDay(for: dogBirthdate)
             onSave(ownerName, dogName, breed, contactInfo, address, finalNotes, selectedImageData, normalizedBirthdate)

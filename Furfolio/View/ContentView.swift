@@ -217,7 +217,7 @@ struct ContentView: View {
                         OwnerProfileView(dogOwner: dogOwner)
                             .transition(.opacity)
                     } label: {
-                        DogOwnerRowView(dogOwner: dogOwner)
+                        DogOwnerRowView(selectedOwner: $selectedDogOwner, dogOwner: dogOwner)
                     }
                 }
                 .onDelete(perform: deleteDogOwners)
@@ -322,15 +322,23 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
             // Loyalty and behavior badges
-            if !owner.loyaltyProgressTag.isEmpty {
-                Text(owner.loyaltyProgressTag)
-                    .font(.caption2)
-                    .foregroundColor(.green)
-            }
-            if !owner.behaviorTrendBadge.isEmpty {
-                Text(owner.behaviorTrendBadge)
-                    .font(.caption2)
-                    .foregroundColor(.orange)
+            HStack(spacing: 8) {
+                if !owner.loyaltyProgressTag.isEmpty {
+                    Label(owner.loyaltyProgressTag, systemImage: "star.fill")
+                        .font(.caption2)
+                        .padding(6)
+                        .background(Color.green.opacity(0.15))
+                        .cornerRadius(6)
+                        .foregroundColor(.green)
+                }
+                if !owner.behaviorTrendBadge.isEmpty {
+                    Label(owner.behaviorTrendBadge, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .padding(6)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(6)
+                        .foregroundColor(.orange)
+                }
             }
         }
         .padding(.vertical, 4)

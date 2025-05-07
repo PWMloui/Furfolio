@@ -18,16 +18,28 @@ class ModelContainerHolder: ObservableObject {
     let modelContainer: ModelContainer
     
     init() {
-        // Explicitly register the secure unarchive transformer to avoid deprecation warnings.
+        // Register secure unarchive transformer to avoid deprecation warnings
         ValueTransformer.setValueTransformer(
             NSSecureUnarchiveFromDataTransformer(),
-            forName: NSValueTransformerName("NSSecureUnarchiveFromDataTransformerName")
+            forName: NSValueTransformerName("NSSecureUnarchiveFromData")
         )
+
         do {
             let schema = try Schema([DogOwner.self, Charge.self, Appointment.self, DailyRevenue.self])
             self.modelContainer = try ModelContainer(for: schema)
         } catch {
-            fatalError("Failed to initialize ModelContainer: \(error.localizedDescription)")
+            print("⚠️ ModelContainer initialization failed. This might be caused by corrupted data or schema changes.")
+            print("Error: \(error)")
+
+            // Fallback for development: in-memory configuration to avoid crash
+            do {
+                let schema = try Schema([DogOwner.self, Charge.self, Appointment.self, DailyRevenue.self])
+                let config = ModelConfiguration(isStoredInMemoryOnly: true)
+                self.modelContainer = try ModelContainer(for: schema, configurations: [config])
+                print("✅ Loaded fallback in-memory model container")
+            } catch {
+                fatalError("❌ Failed fallback initialization: \(error.localizedDescription)")
+            }
         }
     }
 }

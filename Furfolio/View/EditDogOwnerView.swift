@@ -200,7 +200,19 @@ struct EditDogOwnerView: View {
             isSaving = true
             // Provide success haptic feedback
             feedbackGenerator.notificationOccurred(.success)
-            let updatedNotes = markAsInactive ? "[INACTIVE] \(notes)" : notes
+            let autoInactiveTag = "[AUTO-INACTIVE]"
+            let manualInactiveTag = "[INACTIVE]"
+
+            let inactiveTag: String
+            if markAsInactive {
+                inactiveTag = manualInactiveTag
+            } else if shouldBeAutoInactive() {
+                inactiveTag = autoInactiveTag
+            } else {
+                inactiveTag = ""
+            }
+
+            let updatedNotes = inactiveTag.isEmpty ? notes : "\(inactiveTag) \(notes)"
             dogOwner.ownerName = ownerName
             dogOwner.dogName = dogName
             dogOwner.breed = breed
@@ -278,5 +290,11 @@ struct EditDogOwnerView: View {
         } else {
             return "😐 Neutral"
         }
+    }
+    // Detects if the owner should be automatically marked as inactive (mock logic)
+    private func shouldBeAutoInactive() -> Bool {
+        guard let lastAppointment = dogOwner.appointments.map(\.date).max() else { return false }
+        let ninetyDaysAgo = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantPast
+        return lastAppointment < ninetyDaysAgo
     }
 }

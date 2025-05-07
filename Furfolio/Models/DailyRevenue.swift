@@ -117,14 +117,8 @@ final class DailyRevenue: Identifiable {
         Calendar.current.isDate(date, equalTo: Date(), toGranularity: .month)
     }
 
-    /// Snapshot category for Revenue Snapshot Widget.
-    var snapshotCategory: String {
-        let calendar = Calendar.current
-        let today = Date()
-        let startDate = calendar.date(byAdding: .day, value: -6, to: today) ?? today
-        let averageLast7Days = DailyRevenue.averageDailyRevenue(for: startDate...today, revenues: [])
-        // Since this property does not have access to all revenues, it should be set externally with context.
-        // For demonstration, comparing totalAmount (assumed today's revenue) with averageLast7Days.
+    /// Snapshot category for Revenue Snapshot Widget based on external average context.
+    func snapshotCategory(averageLast7Days: Double) -> String {
         if totalAmount > averageLast7Days {
             return "📈 Above Average"
         } else if totalAmount < averageLast7Days {
@@ -260,5 +254,20 @@ final class DailyRevenue: Identifiable {
         return grouped.mapValues { $0.count }
             .sorted { $0.key < $1.key }
             .reduce(into: [Int: Int]()) { $0[$1.key] = $1.value }
+    }
+    /// Calculates the average revenue per day for the current month.
+    static func averageMonthlyRevenue(for month: Int, year: Int, revenues: [DailyRevenue]) -> Double {
+        let calendar = Calendar.current
+        guard let startOfMonth = calendar.date(from: DateComponents(year: year, month: month)),
+              let endOfMonth = calendar.date(byAdding: .month, value: 1, to: startOfMonth)?.addingTimeInterval(-1) else {
+            return 0.0
+        }
+
+        let days = calendar.dateComponents([.day], from: startOfMonth, to: endOfMonth).day ?? 0
+        guard days > 0 else { return 0.0 }
+
+        let filtered = revenues.filter { $0.date >= startOfMonth && $0.date <= endOfMonth }
+        let total = filtered.reduce(0) { $0 + $1.totalAmount }
+        return total / Double(days + 1)
     }
 }

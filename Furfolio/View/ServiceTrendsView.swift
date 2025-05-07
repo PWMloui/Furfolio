@@ -30,7 +30,7 @@ struct ServiceTrendsView: View {
                     .foregroundColor(.gray)
             } else {
                 Chart {
-                    ForEach(Appointment.ServiceType.allCases, id: \..self) { type in
+                    ForEach(Appointment.ServiceType.allCases, id: \.self) { type in
                         if let count = serviceFrequency[type] {
                             BarMark(
                                 x: .value("Service Type", type.localized),
@@ -56,6 +56,20 @@ struct ServiceTrendsView: View {
                 Text("🔴 Dashed line shows average appointments per service.")
                     .font(.caption2)
                     .foregroundColor(.gray)
+                
+                if let mostPopular = serviceFrequency.max(by: { $0.value < $1.value }),
+                   let leastPopular = serviceFrequency.min(by: { $0.value < $1.value }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("📈 Most Booked: \(mostPopular.key.localized) (\(mostPopular.value))")
+                            .font(.subheadline)
+                            .foregroundColor(.green)
+
+                        Text("📉 Least Booked: \(leastPopular.key.localized) (\(leastPopular.value))")
+                            .font(.subheadline)
+                            .foregroundColor(.orange)
+                    }
+                    .padding(.top, 8)
+                }
             }
         }
         .padding()

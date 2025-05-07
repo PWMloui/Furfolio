@@ -92,15 +92,18 @@ final class Appointment: Identifiable {
     }
     
     /// Optional data for the before photo log.
+    @Attribute(.transformable(by: NSSecureUnarchiveFromDataTransformer.self))
     var beforePhoto: Data?
     
     /// Optional data for the after photo log.
+    @Attribute(.transformable(by: NSSecureUnarchiveFromDataTransformer.self))
     var afterPhoto: Data?
     
     /// Loyalty points tracking the number of visits.
     var loyaltyPoints: Int = 0
     
     /// Behavior notes log with timeline-based mood entries and tags.
+    @Attribute(.transformable(by: NSSecureUnarchiveFromDataTransformer.self))
     var behaviorLog: [String] = []
     
     // MARK: - Initializer

@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with advanced animations, modern navigation, and improved interactivity.
+//  Updated on 2025-05-07 with advanced animations, modern navigation, and improved interactivity.
 
 import SwiftUI
 import Charts
@@ -169,6 +169,29 @@ struct ClientEngagementSummaryView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Client Engagement Highlights")
                 .font(.headline)
+
+            // Visual tag summary for high-value metrics
+            HStack(spacing: 12) {
+                if loyalClientCount() >= 5 {
+                    Label("Top Loyalty", systemImage: "rosette")
+                        .padding(6)
+                        .background(Color.green.opacity(0.2))
+                        .cornerRadius(6)
+                }
+                if behaviorFlagCount() >= 5 {
+                    Label("Behavior Alerts", systemImage: "exclamationmark.triangle.fill")
+                        .padding(6)
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(6)
+                }
+                if firstTimersCount() > 3 {
+                    Label("New Client Spike", systemImage: "sparkles")
+                        .padding(6)
+                        .background(Color.blue.opacity(0.2))
+                        .cornerRadius(6)
+                }
+            }
+            .font(.caption)
 
             HStack {
                 Text("🎁 Loyal Clients")

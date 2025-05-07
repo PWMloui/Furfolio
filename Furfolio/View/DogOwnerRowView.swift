@@ -8,6 +8,10 @@
 import SwiftUI
 
 struct DogOwnerRowView: View {
+    @Environment(\.modelContext) private var modelContext
+    @State private var showingEditSheet = false
+    @State private var showDeleteAlert = false
+    @Binding var selectedOwner: DogOwner?
     let dogOwner: DogOwner
 
     var body: some View {
@@ -86,6 +90,7 @@ struct DogOwnerRowView: View {
             // Provide haptic feedback upon tapping the row.
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
+            selectedOwner = dogOwner
         }
         .onAppear {
             // Optional: Use onAppear to trigger any additional animations or state changes.
@@ -93,15 +98,25 @@ struct DogOwnerRowView: View {
                 // Additional state changes for animations can be placed here if needed.
             }
         }
-        // Swipe actions for quick editing.
-        .swipeActions(edge: .trailing) {
-            Button {
-                // Quick Edit action: Replace this print statement with navigation to an edit view.
-                print("Edit tapped for \(dogOwner.ownerName)")
-            } label: {
-                Label("Edit", systemImage: "pencil")
+        // Context menu for editing and deleting.
+        .contextMenu {
+            Button("Edit") {
+                showingEditSheet = true
             }
-            .tint(.blue)
+            Button("Delete", role: .destructive) {
+                showDeleteAlert = true
+            }
+        }
+        .sheet(isPresented: $showingEditSheet) {
+            EditDogOwnerView(dogOwner: dogOwner, onSave: { _ in
+                // Refresh logic or confirmation can go here if needed
+            })
+        }
+        .alert("Delete Dog Owner?", isPresented: $showDeleteAlert) {
+            Button("Delete", role: .destructive) {
+                modelContext.delete(dogOwner)
+            }
+            Button("Cancel", role: .cancel) { }
         }
     }
     

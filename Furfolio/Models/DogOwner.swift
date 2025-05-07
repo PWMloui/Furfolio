@@ -42,15 +42,15 @@ final class DogOwner: Identifiable {
     @Relationship(deleteRule: .cascade) var charges: [Charge] = []
     
     // New: Extended pet information as an array of Pet models.
-    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
+    @Attribute(.transformable(by: NSSecureUnarchiveFromDataTransformer.self))
     var pets: [Pet] = []
     
     // New: Additional owner information as an array of strings.
-    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
+    @Attribute(.transformable(by: NSSecureUnarchiveFromDataTransformer.self))
     var emergencyContacts: [String] = []
     
     // New: Document attachments (e.g., scanned forms, records) stored as URLs.
-    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
+    @Attribute(.transformable(by: NSSecureUnarchiveFromDataTransformer.self))
     var documentAttachments: [URL] = []
     
     // New: Record history/audit fields.

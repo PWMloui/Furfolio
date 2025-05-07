@@ -22,12 +22,13 @@ struct RetentionTrackerView: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(retentionRisks) { owner in
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Text(owner.ownerName)
                                     .font(.headline)
+
                                 if let tag = owner.lifetimeValueTag {
-                                    Text(tag)
+                                    Label(tag, systemImage: "dollarsign.circle")
                                         .font(.caption2)
                                         .padding(6)
                                         .background(Color.yellow.opacity(0.2))
@@ -46,34 +47,36 @@ struct RetentionTrackerView: View {
                                     .foregroundColor(.gray)
                             }
 
-                            if owner.hasBirthdayThisMonth {
-                                Text("🎂 Birthday Month")
-                                    .font(.caption2)
-                                    .padding(6)
-                                    .background(Color.purple.opacity(0.2))
-                                    .cornerRadius(6)
-                                    .foregroundColor(.purple)
-                            }
-                            
-                            if !owner.loyaltyProgressTag.isEmpty {
-                                Text(owner.loyaltyProgressTag)
-                                    .font(.caption2)
-                                    .padding(6)
-                                    .background(Color.green.opacity(0.2))
-                                    .cornerRadius(6)
-                                    .foregroundColor(.green)
-                            }
+                            HStack(spacing: 8) {
+                                if owner.hasBirthdayThisMonth {
+                                    Label("🎂 Birthday Month", systemImage: "gift")
+                                        .font(.caption2)
+                                        .padding(6)
+                                        .background(Color.purple.opacity(0.2))
+                                        .cornerRadius(6)
+                                        .foregroundColor(.purple)
+                                }
 
-                            if !owner.behaviorTrendBadge.isEmpty {
-                                Text(owner.behaviorTrendBadge)
-                                    .font(.caption2)
-                                    .padding(6)
-                                    .background(Color.orange.opacity(0.2))
-                                    .cornerRadius(6)
-                                    .foregroundColor(.orange)
+                                if !owner.loyaltyProgressTag.isEmpty {
+                                    Label(owner.loyaltyProgressTag, systemImage: "star.fill")
+                                        .font(.caption2)
+                                        .padding(6)
+                                        .background(Color.green.opacity(0.2))
+                                        .cornerRadius(6)
+                                        .foregroundColor(.green)
+                                }
+
+                                if !owner.behaviorTrendBadge.isEmpty {
+                                    Label(owner.behaviorTrendBadge, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption2)
+                                        .padding(6)
+                                        .background(Color.orange.opacity(0.2))
+                                        .cornerRadius(6)
+                                        .foregroundColor(.orange)
+                                }
                             }
                         }
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 8)
                     }
                 }
             }

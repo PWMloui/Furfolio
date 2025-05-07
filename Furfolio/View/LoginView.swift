@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with enhanced animations, haptic feedback, asynchronous login simulation, and biometric authentication.
+//  Updated on 2025-05-07 with enhanced animations, haptic feedback, asynchronous login simulation, biometric authentication, and new business tips.
 
 import SwiftUI
 import LocalAuthentication
@@ -210,6 +210,8 @@ struct LoginView: View {
             Text("• Track 🐾 loyalty rewards for returning clients.")
             Text("• Log 🧠 pet behavior like calmness or anxiety.")
             Text("• See 📅 appointment trends and revenue snapshots.")
+            Text("• 🕒 View peak booking hours to optimize staff scheduling.")
+            Text("• 💤 Follow up with clients who haven’t visited in 90+ days.")
         }
         .padding()
         .background(Color(UIColor.tertiarySystemBackground))

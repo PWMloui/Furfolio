@@ -51,26 +51,23 @@ struct OwnerProfileView: View {
             }
             .navigationTitle(NSLocalizedString("Owner Profile", comment: "Title for Owner Profile view"))
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(role: .destructive, action: {
-                        showDeleteConfirmation = true
-                    }) {
-                        Image(systemName: "trash")
-                    }
-                    .accessibilityLabel("Delete Owner")
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        withAnimation {
-                            isEditing.toggle()
-                            let generator = UINotificationFeedbackGenerator()
-                            generator.notificationOccurred(.success)
+                    Menu {
+                        Button {
+                            isEditing = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
                         }
-                    }) {
-                        Image(systemName: "pencil")
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                             .font(.title2)
                     }
-                    .accessibilityLabel(NSLocalizedString("Edit Owner Profile", comment: "Accessibility label for Edit Owner Profile button"))
+                    .accessibilityLabel("More Options")
                 }
             }
             .sheet(isPresented: $isEditing) {

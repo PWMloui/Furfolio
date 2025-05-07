@@ -57,4 +57,31 @@ struct ClientStats {
         }
         return Array(badges.prefix(3))
     }
+    /// Returns the average duration of all appointments in minutes.
+    var averageAppointmentDuration: Int {
+        let durations = owner.appointments.map { $0.estimatedDurationMinutes }
+        guard !durations.isEmpty else { return 0 }
+        let total = durations.reduce(0) { $0 + ($1 ?? 0) }
+        return total / durations.count
+    }
+
+    /// Returns the most common service type the owner has booked.
+    var mostFrequentService: String {
+        let grouped = Dictionary(grouping: owner.appointments, by: { $0.serviceType.rawValue })
+        let sorted = grouped.sorted { $0.value.count > $1.value.count }
+        return sorted.first?.key ?? "N/A"
+    }
+
+    /// Revenue this client has brought in over the last 30 days.
+    var revenueLast30Days: Double {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
+        return owner.charges.filter { $0.date >= cutoff }
+                            .reduce(0) { $0 + $1.amount }
+    }
+
+    /// The most recent appointment date.
+    var lastAppointmentDate: Date? {
+        owner.appointments.map { $0.date }.max()
+    }
+
 }

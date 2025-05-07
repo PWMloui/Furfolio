@@ -238,8 +238,11 @@ struct AddChargeView: View {
             type: Charge.ServiceType(rawValue: serviceType.rawValue) ?? .custom,
             amount: chargeAmount ?? 0.0,
             dogOwner: dogOwner,
-            notes: chargeNotes
+            notes: chargeNotes,
+            appointment: nil
         )
+        // Placeholder: If you want to associate this charge with an appointment in the future,
+        // add logic here to set newCharge.appointment = appointment
         withAnimation {
             modelContext.insert(newCharge)
             dogOwner.charges.append(newCharge)

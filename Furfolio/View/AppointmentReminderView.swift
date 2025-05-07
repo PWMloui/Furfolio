@@ -91,7 +91,6 @@ struct AppointmentReminderView: View {
     
     // MARK: - Reminder Row
     
-    /// Generates a row for an appointment reminder.
     private func reminderRow(for appointment: Appointment, owner: DogOwner) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             appointmentDetailsText(for: appointment)
@@ -100,20 +99,18 @@ struct AppointmentReminderView: View {
                 appointmentNotesText(notes)
             }
 
-            // Loyalty progress tag
             if !owner.loyaltyProgressTag.isEmpty {
                 Text("Loyalty: \(owner.loyaltyProgressTag)")
                     .font(.caption2)
                     .foregroundColor(.green)
             }
 
-            // Behavior badge
             if !owner.behaviorTrendBadge.isEmpty {
                 Text("Behavior: \(owner.behaviorTrendBadge)")
                     .font(.caption2)
                     .foregroundColor(.orange)
             }
-            
+
             if let estimatedMinutes = appointment.estimatedDurationMinutes {
                 Text("Est. Duration: \(estimatedMinutes) mins")
                     .font(.caption2)
@@ -132,10 +129,9 @@ struct AppointmentReminderView: View {
                     }
                 }
             }
-            
+
             reminderTimingText()
-            
-            // HStack with both Set and Resend Reminder buttons.
+
             HStack(spacing: 16) {
                 Button(NSLocalizedString("Set Reminder", comment: "Button label to set reminder")) {
                     scheduleAppointmentReminder(for: appointment, owner: owner)
@@ -144,7 +140,7 @@ struct AppointmentReminderView: View {
                 .disabled(!canScheduleReminder(for: appointment))
                 .opacity(canScheduleReminder(for: appointment) ? 1.0 : 0.5)
                 .accessibilityLabel(NSLocalizedString("Set reminder button", comment: "Accessibility label for set reminder button"))
-                
+
                 Button(NSLocalizedString("Resend Reminder", comment: "Button label to resend reminder")) {
                     scheduleAppointmentReminder(for: appointment, owner: owner)
                 }
@@ -155,6 +151,8 @@ struct AppointmentReminderView: View {
             }
         }
         .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .transition(.opacity.combined(with: .slide))
     }
     
     // MARK: - Components

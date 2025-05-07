@@ -333,10 +333,18 @@ struct AddAppointmentView: View {
         )
         newAppointment.durationMinutes = appointmentDuration
         
-        // If linking a charge record is enabled, add logic here.
+        // If linking a charge record is enabled, create and link the charge.
         if linkChargeRecord {
-            // Placeholder: Implement charge record linking logic here.
-            print("Link Charge Record is enabled. Implement charge record linking logic here.")
+            let charge = Charge(
+                date: appointmentDate,
+                type: .custom,
+                amount: 0.0,
+                dogOwner: dogOwner,
+                notes: "Linked to appointment on \(appointmentDate.formatted(date: .abbreviated, time: .shortened))",
+                appointment: newAppointment
+            )
+            dogOwner.charges.append(charge)
+            modelContext.insert(charge)
         }
         
         withAnimation {

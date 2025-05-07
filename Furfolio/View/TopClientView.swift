@@ -18,35 +18,56 @@ struct TopClientsView: View {
         List {
             Section(header: Text("Top Clients by Lifetime Value")) {
                 ForEach(topClients) { owner in
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text(owner.ownerName)
                                 .font(.headline)
+
                             if let tag = owner.lifetimeValueTag {
-                                Text(tag)
+                                Label(tag, systemImage: "dollarsign.circle")
                                     .font(.caption2)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 4)
+                                    .padding(6)
                                     .background(Color.yellow.opacity(0.2))
                                     .cornerRadius(6)
                                     .foregroundColor(.orange)
                             }
+
+                            if owner.hasBirthdayThisMonth {
+                                Label("🎂 Birthday Month", systemImage: "gift")
+                                    .font(.caption2)
+                                    .padding(6)
+                                    .background(Color.purple.opacity(0.2))
+                                    .cornerRadius(6)
+                                    .foregroundColor(.purple)
+                            }
                         }
+
                         Text("$\(owner.totalCharges, specifier: "%.2f") spent")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
+
                         Text("\(owner.appointments.count) appointments")
                             .font(.caption)
                             .foregroundColor(.gray)
-                        if !owner.loyaltyProgressTag.isEmpty {
-                            Text(owner.loyaltyProgressTag)
-                                .font(.caption2)
-                                .foregroundColor(.green)
-                        }
-                        if !owner.behaviorTrendBadge.isEmpty {
-                            Text(owner.behaviorTrendBadge)
-                                .font(.caption2)
-                                .foregroundColor(.orange)
+
+                        HStack(spacing: 8) {
+                            if !owner.loyaltyProgressTag.isEmpty {
+                                Label(owner.loyaltyProgressTag, systemImage: "star.fill")
+                                    .font(.caption2)
+                                    .padding(6)
+                                    .background(Color.green.opacity(0.2))
+                                    .cornerRadius(6)
+                                    .foregroundColor(.green)
+                            }
+
+                            if !owner.behaviorTrendBadge.isEmpty {
+                                Label(owner.behaviorTrendBadge, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .padding(6)
+                                    .background(Color.orange.opacity(0.2))
+                                    .cornerRadius(6)
+                                    .foregroundColor(.orange)
+                            }
                         }
                     }
                     .padding(.vertical, 6)

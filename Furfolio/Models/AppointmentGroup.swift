@@ -53,4 +53,8 @@ struct AppointmentGroup {
             }
         }
     }
+    /// Groups appointments by service type (e.g., Full, Basic).
+    static func byServiceType(_ appointments: [Appointment]) -> [String: [Appointment]] {
+        Dictionary(grouping: appointments) { $0.serviceType.rawValue }
+    }
 }
