@@ -38,7 +38,7 @@ struct ServiceAnalytics {
         var results: [Appointment.ServiceType: Double] = [:]
 
         for charge in charges {
-            if let appt = charge.appointment, let type = mapping[appt] {
+            if let appointment = charge.appointment, let type = mapping[appointment] {
                 results[type, default: 0] += charge.amount
             }
         }

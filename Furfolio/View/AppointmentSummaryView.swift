@@ -30,6 +30,50 @@ struct AppointmentSummaryView: View {
                     }
                 }
 
+                if !appointment.dogOwner.loyaltyProgressTag.isEmpty {
+                    let progress = appointment.dogOwner.loyaltyProgressTag
+                    HStack {
+                        Text("Loyalty Reward")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text(progress)
+                            .foregroundColor(.green)
+                    }
+                }
+
+                if !appointment.dogOwner.behaviorTrendBadge.isEmpty {
+                    let badge = appointment.dogOwner.behaviorTrendBadge
+                    HStack {
+                        Text("Behavior")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text(badge)
+                            .foregroundColor(.orange)
+                    }
+                }
+
+                if let estimated = appointment.estimatedDurationMinutes {
+                    HStack {
+                        Text("Estimated Duration")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text("\(estimated) mins")
+                            .foregroundColor(.blue)
+                    }
+                }
+
+                if !appointment.behaviorLog.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Behavior Log")
+                            .font(.headline)
+                        ForEach(appointment.behaviorLog.prefix(5), id: \.self) { entry in
+                            Text("• \(entry)")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Notes")
                         .font(.headline)
@@ -86,4 +130,3 @@ struct AppointmentSummaryView: View {
         }
     }
 }
-

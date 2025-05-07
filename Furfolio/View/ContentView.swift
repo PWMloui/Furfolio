@@ -321,6 +321,17 @@ struct ContentView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+            // Loyalty and behavior badges
+            if !owner.loyaltyProgressTag.isEmpty {
+                Text(owner.loyaltyProgressTag)
+                    .font(.caption2)
+                    .foregroundColor(.green)
+            }
+            if !owner.behaviorTrendBadge.isEmpty {
+                Text(owner.behaviorTrendBadge)
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
         }
         .padding(.vertical, 4)
     }

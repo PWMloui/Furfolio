@@ -51,6 +51,16 @@ struct AddDogOwnerView: View {
                         Toggle("Mark as Inactive (optional)", isOn: $markAsInactive)
                             .accessibilityLabel("Mark owner as inactive")
                     }
+                    Section {
+                        let staticVisitCount = 3
+                        let remaining = max(0, 10 - staticVisitCount)
+                        HStack {
+                            Text("Loyalty Progress")
+                            Spacer()
+                            Text(remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath")
+                                .foregroundColor(.green)
+                        }
+                    }
                 }
                 .navigationTitle(NSLocalizedString("Add Dog Owner", comment: "Navigation title for Add Dog Owner view"))
                 .toolbar { toolbarContent() }
@@ -102,6 +112,14 @@ struct AddDogOwnerView: View {
             customTextField(placeholder: "Dog Name", text: $dogName)
             customTextField(placeholder: "Breed", text: $breed)
             notesField()
+            if !notes.isEmpty {
+                HStack {
+                    Text("Behavior Tag")
+                    Spacer()
+                    Text(computedBehaviorBadge)
+                        .foregroundColor(.orange)
+                }
+            }
         }
     }
     
@@ -277,5 +295,18 @@ struct AddDogOwnerView: View {
         let calendar = Calendar.current
         let ageComponents = calendar.dateComponents([.year], from: birthdate, to: Date())
         return ageComponents.year
+    }
+    // MARK: - Behavior Badge Helper
+    private var computedBehaviorBadge: String {
+        let lowercased = notes.lowercased()
+        if lowercased.contains("calm") || lowercased.contains("friendly") {
+            return "🟢 Calm"
+        } else if lowercased.contains("aggressive") || lowercased.contains("bite") {
+            return "🔴 Aggressive"
+        } else if lowercased.contains("anxious") || lowercased.contains("timid") {
+            return "🟠 Anxious"
+        } else {
+            return "😐 Neutral"
+        }
     }
 }

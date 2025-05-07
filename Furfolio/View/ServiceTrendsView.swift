@@ -1,5 +1,3 @@
-
-
 //
 //  ServiceTrendsView.swift
 //  Furfolio
@@ -14,6 +12,11 @@ struct ServiceTrendsView: View {
 
     var serviceFrequency: [Appointment.ServiceType: Int] {
         Appointment.serviceTypeFrequency(for: appointments)
+    }
+    
+    var averageAppointments: Double {
+        let total = serviceFrequency.values.reduce(0, +)
+        return serviceFrequency.isEmpty ? 0 : Double(total) / Double(serviceFrequency.count)
     }
 
     var body: some View {
@@ -36,11 +39,23 @@ struct ServiceTrendsView: View {
                             .foregroundStyle(by: .value("Service", type.localized))
                         }
                     }
+                    RuleMark(y: .value("Average", averageAppointments))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
+                        .foregroundStyle(Color.red)
+                        .annotation(position: .top, alignment: .leading) {
+                            Text("Avg: \(Int(averageAppointments))")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading)
                 }
                 .frame(height: 250)
+                
+                Text("🔴 Dashed line shows average appointments per service.")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
             }
         }
         .padding()
@@ -50,4 +65,3 @@ struct ServiceTrendsView: View {
         .navigationTitle("Service Trends")
     }
 }
-

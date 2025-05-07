@@ -119,6 +119,24 @@ struct EditDogOwnerView: View {
             customTextField(placeholder: "Dog Name", text: $dogName)
             customTextField(placeholder: "Breed", text: $breed)
             notesField()
+            if !notes.isEmpty {
+                HStack {
+                    Text("Behavior Tag")
+                    Spacer()
+                    Text(computedBehaviorBadge)
+                        .foregroundColor(.orange)
+                }
+            }
+
+            // Simulate loyalty reward badge based on 4 prior visits
+            let simulatedVisits = 4
+            let remaining = max(0, 10 - simulatedVisits)
+            HStack {
+                Text("Loyalty Progress")
+                Spacer()
+                Text(remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath")
+                    .foregroundColor(.green)
+            }
         }
     }
 
@@ -247,5 +265,18 @@ struct EditDogOwnerView: View {
         let maxSizeBytes = maxSizeMB * 1024 * 1024
         guard data.count <= Int(maxSizeBytes), let image = UIImage(data: data) else { return false }
         return image.size.width > 100 && image.size.height > 100
+    }
+
+    private var computedBehaviorBadge: String {
+        let lowercased = notes.lowercased()
+        if lowercased.contains("calm") || lowercased.contains("friendly") {
+            return "🟢 Calm"
+        } else if lowercased.contains("aggressive") || lowercased.contains("bite") {
+            return "🔴 Aggressive"
+        } else if lowercased.contains("anxious") || lowercased.contains("timid") {
+            return "🟠 Anxious"
+        } else {
+            return "😐 Neutral"
+        }
     }
 }

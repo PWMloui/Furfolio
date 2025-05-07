@@ -334,6 +334,27 @@ final class DogOwner: Identifiable {
     var lifetimeValueTag: String? {
         return totalCharges > 1000 ? "💸 Top Spender" : nil
     }
+
+    /// Returns a loyalty progress tag like “🏆 3 more to free bath” or reward earned.
+    var loyaltyProgressTag: String {
+        let remaining = max(0, 10 - appointments.count)
+        return remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath"
+    }
+
+    /// Summarizes recurring behavior patterns from notes for badge tagging.
+    var behaviorTrendBadge: String {
+        let notesList = (appointments.map { $0.notes?.lowercased() ?? "" } + [notes.lowercased()])
+        let combined = notesList.joined(separator: " ")
+
+        if combined.contains("aggressive") || combined.contains("bite") {
+            return "🔴 Aggressive"
+        } else if combined.contains("anxious") || combined.contains("timid") {
+            return "🟠 Anxious"
+        } else if combined.contains("calm") || combined.contains("friendly") {
+            return "🟢 Calm"
+        }
+        return "😐 Neutral"
+    }
     
     // MARK: - Helper Methods
     

@@ -38,6 +38,16 @@ struct TopClientsView: View {
                         Text("\(owner.appointments.count) appointments")
                             .font(.caption)
                             .foregroundColor(.gray)
+                        if !owner.loyaltyProgressTag.isEmpty {
+                            Text(owner.loyaltyProgressTag)
+                                .font(.caption2)
+                                .foregroundColor(.green)
+                        }
+                        if !owner.behaviorTrendBadge.isEmpty {
+                            Text(owner.behaviorTrendBadge)
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
                     }
                     .padding(.vertical, 6)
                 }

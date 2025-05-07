@@ -130,6 +130,24 @@ struct OwnerProfileView: View {
                         .cornerRadius(6)
                         .foregroundColor(.yellow)
                 }
+                // Loyalty reward progress
+                if !dogOwner.loyaltyProgressTag.isEmpty {
+                    Text(dogOwner.loyaltyProgressTag)
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.green.opacity(0.2))
+                        .cornerRadius(6)
+                        .foregroundColor(.green)
+                }
+                // Behavior trend badge
+                if !dogOwner.behaviorTrendBadge.isEmpty {
+                    Text(dogOwner.behaviorTrendBadge)
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(6)
+                        .foregroundColor(.orange)
+                }
             }
             contactInfoText
             addressText

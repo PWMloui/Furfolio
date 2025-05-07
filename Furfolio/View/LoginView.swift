@@ -122,6 +122,10 @@ struct LoginView: View {
                     .accessibilityLabel(NSLocalizedString("Success Message", comment: "Accessibility label for success message"))
                     .transition(.opacity)
             }
+            
+            if !isAuthenticated {
+                businessTipsSection()
+            }
         }
         .padding()
         .accessibilityElement(children: .combine)
@@ -196,5 +200,20 @@ struct LoginView: View {
             }
             feedbackGenerator.notificationOccurred(.error)
         }
+    }
+    
+    @ViewBuilder
+    private func businessTipsSection() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("💡 Furfolio Tips")
+                .font(.headline)
+            Text("• Track 🐾 loyalty rewards for returning clients.")
+            Text("• Log 🧠 pet behavior like calmness or anxiety.")
+            Text("• See 📅 appointment trends and revenue snapshots.")
+        }
+        .padding()
+        .background(Color(UIColor.tertiarySystemBackground))
+        .cornerRadius(10)
+        .transition(.opacity)
     }
 }

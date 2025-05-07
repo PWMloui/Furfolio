@@ -54,6 +54,54 @@ final class DailyRevenue: Identifiable {
         return formatter.string(from: NSNumber(value: totalAmount)) ?? "$\(totalAmount)"
     }
 
+    /// Returns a tag for daily revenue milestone (e.g. rewards or goals).
+    var dailyRewardTag: String? {
+        switch totalAmount {
+        case 0..<100:
+            return nil
+        case 100..<250:
+            return "🏅 Goal Met"
+        case 250..<500:
+            return "🎯 Great Day"
+        case 500...:
+            return "🚀 Record Breaker"
+        default:
+            return nil
+        }
+    }
+
+    /// Bonus loyalty points earned based on daily revenue milestones.
+    var earnedLoyaltyPoints: Int {
+        switch totalAmount {
+        case 0..<100:
+            return 0
+        case 100..<250:
+            return 1
+        case 250..<500:
+            return 2
+        case 500...:
+            return 3
+        default:
+            return 0
+        }
+    }
+
+    /// Computed badge showing loyalty progress and revenue thresholds.
+    var loyaltyBadge: String {
+        switch totalAmount {
+        case 0..<100:
+            return "🔸 Starter"
+        case 100..<250:
+            return "🔹 Loyal"
+        case 250..<500:
+            return "⭐️ Super Loyal"
+        case 500...:
+            return "🏆 VIP"
+        default:
+            return "🔸 Starter"
+        }
+    }
+
     /// Formats the date as a localized string.
     var formattedDate: String {
         date.formatted(.dateTime.month().day().year())

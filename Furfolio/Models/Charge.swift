@@ -81,6 +81,13 @@ final class Charge: Identifiable {
     var topSpenderBadge: String? {
         return lifetimeValue > 1000 ? "💸 Top Spender" : nil
     }
+
+    /// Returns a tag showing progress toward a reward (e.g. free bath).
+    var loyaltyProgressTag: String? {
+        let totalVisits = (dogOwner as? DogOwner)?.charges.count ?? 1
+        let remaining = max(0, 10 - totalVisits)
+        return remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath"
+    }
     
     /// Returns the preferred locale (from the current system settings).
     var preferredLocale: Locale { Locale.current }
@@ -180,6 +187,19 @@ final class Charge: Identifiable {
             return NSLocalizedString("Behavioral analysis: Pet showed signs of aggression.", comment: "Behavioral analysis result")
         }
         return NSLocalizedString("Behavioral analysis: No significant behavioral notes.", comment: "Behavioral analysis result")
+    }
+
+    /// Returns a badge emoji based on behavioral notes.
+    var behaviorBadge: String {
+        guard let notes = notes?.lowercased() else { return "😐 Neutral" }
+        if notes.contains("calm") || notes.contains("good") {
+            return "🟢 Calm"
+        } else if notes.contains("aggressive") || notes.contains("bite") {
+            return "🔴 Aggressive"
+        } else if notes.contains("anxious") || notes.contains("nervous") {
+            return "🟠 Anxious"
+        }
+        return "😐 Neutral"
     }
     
     func isInMonth(_ month: Int, year: Int) -> Bool {

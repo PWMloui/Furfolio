@@ -92,6 +92,28 @@ struct AddChargeView: View {
                     .fontWeight(.semibold)
             }
 
+            // Loyalty reward progress
+            if !dogOwner.loyaltyProgressTag.isEmpty {
+                let progress = dogOwner.loyaltyProgressTag
+                HStack {
+                    Text("Loyalty Reward")
+                    Spacer()
+                    Text(progress)
+                        .foregroundColor(.green)
+                        .fontWeight(.semibold)
+                }
+            }
+            // Behavior badge
+            if !dogOwner.behaviorTrendBadge.isEmpty {
+                HStack {
+                    Text("Behavior")
+                    Spacer()
+                    Text(dogOwner.behaviorTrendBadge)
+                        .foregroundColor(.orange)
+                        .fontWeight(.semibold)
+                }
+            }
+
             // Enhanced UI: Show retention risk, birthday month, top spender badge
             if dogOwner.retentionRisk {
                 HStack {

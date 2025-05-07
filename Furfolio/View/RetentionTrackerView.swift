@@ -54,6 +54,24 @@ struct RetentionTrackerView: View {
                                     .cornerRadius(6)
                                     .foregroundColor(.purple)
                             }
+                            
+                            if !owner.loyaltyProgressTag.isEmpty {
+                                Text(owner.loyaltyProgressTag)
+                                    .font(.caption2)
+                                    .padding(6)
+                                    .background(Color.green.opacity(0.2))
+                                    .cornerRadius(6)
+                                    .foregroundColor(.green)
+                            }
+
+                            if !owner.behaviorTrendBadge.isEmpty {
+                                Text(owner.behaviorTrendBadge)
+                                    .font(.caption2)
+                                    .padding(6)
+                                    .background(Color.orange.opacity(0.2))
+                                    .cornerRadius(6)
+                                    .foregroundColor(.orange)
+                            }
                         }
                         .padding(.vertical, 6)
                     }
@@ -63,4 +81,3 @@ struct RetentionTrackerView: View {
         .navigationTitle("Retention Tracker")
     }
 }
-

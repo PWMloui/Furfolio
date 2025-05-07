@@ -49,6 +49,10 @@ final class Appointment: Identifiable {
 
     /// The duration of the appointment in minutes.
     var durationMinutes: Int?
+
+    /// Optional estimated time for the appointment in minutes (used for planning).
+    @Attribute
+    var estimatedDurationMinutes: Int?
     
     /// Enum representing the status of the appointment.
     enum AppointmentStatus: String, Codable, CaseIterable {
@@ -92,6 +96,12 @@ final class Appointment: Identifiable {
     
     /// Optional data for the after photo log.
     var afterPhoto: Data?
+    
+    /// Loyalty points tracking the number of visits.
+    var loyaltyPoints: Int = 0
+    
+    /// Behavior notes log with timeline-based mood entries and tags.
+    var behaviorLog: [String] = []
     
     // MARK: - Initializer
     
@@ -152,6 +162,15 @@ final class Appointment: Identifiable {
         let minutes = duration % 60
         return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
     }
+
+    /// Display-friendly text for estimated duration.
+    var estimatedDurationDisplay: String {
+        if let minutes = estimatedDurationMinutes {
+            return "\(minutes) mins"
+        } else {
+            return "—"
+        }
+    }
     var relativeTimeUntil: String {
         let interval = date.timeIntervalSince(Date())
         switch interval {
@@ -189,6 +208,12 @@ final class Appointment: Identifiable {
         """
     }
     
+    /// Visits until reward progress tag.
+    var rewardProgressTag: String? {
+        let remaining = max(0, 10 - loyaltyPoints)
+        return remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath"
+    }
+    
     // MARK: - Methods
     
     /// Checks for conflicts with another appointment using a default buffer of 60 minutes.
@@ -217,6 +242,7 @@ final class Appointment: Identifiable {
                 beforePhoto: beforePhoto,
                 afterPhoto: afterPhoto
             )
+            newAppointment.loyaltyPoints = self.loyaltyPoints + 1
             appointments.append(newAppointment)
             switch recurrenceFrequency {
             case .daily:
@@ -264,6 +290,22 @@ final class Appointment: Identifiable {
     func addBadge(_ badge: String) {
         guard !profileBadges.contains(badge) else { return }
         profileBadges.append(badge)
+    }
+    
+    /// Updates behavior badges based on behavior log trends.
+    func updateBehaviorBadge() {
+        let moods = behaviorLog.map { $0.lowercased() }
+        if moods.filter({ $0.contains("calm") }).count >= 3 {
+            addBadge("🟢 Calm Pet")
+        } else if moods.filter({ $0.contains("bite") || $0.contains("aggressive") }).count >= 2 {
+            addBadge("🔴 Aggressive Behavior")
+        }
+    }
+    
+    /// Logs a new behavior entry and updates badges accordingly.
+    func logBehavior(_ entry: String) {
+        behaviorLog.append(entry)
+        updateBehaviorBadge()
     }
     
     /// Analyzes behavioral notes to provide a localized summary.

@@ -30,4 +30,27 @@ struct AppointmentGroup {
             formatter.string(from: $0.date)
         }
     }
+    /// Groups appointments by dominant behavior tag based on behaviorLog content.
+    static func byBehaviorBadge(_ appointments: [Appointment]) -> [String: [Appointment]] {
+        Dictionary(grouping: appointments) { appointment in
+            if appointment.behaviorLog.contains(where: { $0.lowercased().contains("calm") }) {
+                return "🟢 Calm"
+            } else if appointment.behaviorLog.contains(where: { $0.lowercased().contains("bite") || $0.lowercased().contains("aggressive") }) {
+                return "🔴 Aggressive"
+            } else {
+                return "😐 Neutral"
+            }
+        }
+    }
+
+    /// Groups appointments by loyalty reward status (earned or in progress).
+    static func byLoyaltyRewardStatus(_ appointments: [Appointment]) -> [String: [Appointment]] {
+        Dictionary(grouping: appointments) { appointment in
+            if appointment.loyaltyPoints >= 10 {
+                return "🎁 Reward Earned"
+            } else {
+                return "🏆 Progressing"
+            }
+        }
+    }
 }

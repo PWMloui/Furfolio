@@ -62,6 +62,10 @@ struct MetricsDashboardView: View {
                     PeakHoursChartView(appointments: appointments)
                         .transition(.opacity)
                     
+                    // Client Engagement Summary
+                    ClientEngagementSummaryView(appointments: appointments, charges: charges)
+                        .transition(.move(edge: .bottom))
+                    
                     // Date Range Picker
                     DateRangePicker(selectedDateRange: $selectedDateRange,
                                     isCustomDateRangeActive: $isCustomDateRangeActive,
@@ -152,6 +156,65 @@ struct MetricsDashboardView: View {
         // Simulate a network/data refresh delay.
         try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
         isRefreshing = false
+    }
+}
+
+// MARK: - Client Engagement Summary View
+
+struct ClientEngagementSummaryView: View {
+    let appointments: [Appointment]
+    let charges: [Charge]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Client Engagement Highlights")
+                .font(.headline)
+
+            HStack {
+                Text("🎁 Loyal Clients")
+                Spacer()
+                Text("\(loyalClientCount())")
+                    .bold()
+                    .foregroundColor(.green)
+            }
+
+            HStack {
+                Text("🐾 First Timers")
+                Spacer()
+                Text("\(firstTimersCount())")
+                    .bold()
+                    .foregroundColor(.blue)
+            }
+
+            HStack {
+                Text("🧠 Behavior Flags")
+                Spacer()
+                Text("\(behaviorFlagCount())")
+                    .bold()
+                    .foregroundColor(.orange)
+            }
+        }
+        .padding()
+        .background(Color.indigo.opacity(0.1))
+        .cornerRadius(8)
+    }
+
+    private func loyalClientCount() -> Int {
+        let grouped = Dictionary(grouping: charges) { $0.dogOwner.id }
+        return grouped.values.filter { $0.count >= 10 }.count
+    }
+
+    private func firstTimersCount() -> Int {
+        let grouped = Dictionary(grouping: charges) { $0.dogOwner.id }
+        return grouped.values.filter { $0.count == 1 }.count
+    }
+
+    private func behaviorFlagCount() -> Int {
+        let keywords = ["aggressive", "bite", "anxious", "muzzle", "timid"]
+        return charges.filter { charge in
+            guard let notes = charge.notes?.lowercased() else { return false }
+            return keywords.contains { notes.contains($0) }
+        }.count
     }
 }
 

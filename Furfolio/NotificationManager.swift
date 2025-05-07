@@ -80,11 +80,24 @@ struct FurfolioApp: App {
                             print("New owner information received: \(ownerName), \(dogName), etc.")
                         }
                     case .metricsDashboard:
-                        MetricsDashboardView(
-                            dailyRevenues: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<DailyRevenue>()),
-                            appointments: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<Appointment>()),
-                            charges: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<Charge>())
-                        )
+                        NavigationStack {
+                            MetricsDashboardView(
+                                dailyRevenues: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<DailyRevenue>()),
+                                appointments: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<Appointment>()),
+                                charges: try! containerHolder.modelContainer.mainContext.fetch(FetchDescriptor<Charge>())
+                            )
+                            .navigationTitle("Dashboard Insights")
+                            .toolbar {
+                                ToolbarItem(placement: .status) {
+                                    VStack(alignment: .trailing) {
+                                        Text("🏆 Loyalty Active")
+                                            .font(.caption2)
+                                        Text("🧠 Behavior Tracking On")
+                                            .font(.caption2)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
         }

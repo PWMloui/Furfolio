@@ -158,6 +158,30 @@ struct AddAppointmentView: View {
                 isOn: $linkChargeRecord
             )
             .accessibilityLabel(NSLocalizedString("Toggle to link a charge record", comment: "Accessibility label for charge record linking toggle"))
+
+            // Loyalty reward progress and behavior trend badge
+            if !dogOwner.loyaltyProgressTag.isEmpty {
+                HStack {
+                    Text("Loyalty Progress")
+                    Spacer()
+                    Text(dogOwner.loyaltyProgressTag)
+                        .foregroundColor(.green)
+                        .font(.caption)
+                        .bold()
+                }
+                .padding(.top, 4)
+            }
+
+            if !dogOwner.behaviorTrendBadge.isEmpty {
+                HStack {
+                    Text("Behavior")
+                    Spacer()
+                    Text(dogOwner.behaviorTrendBadge)
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                        .bold()
+                }
+            }
         }
     }
     

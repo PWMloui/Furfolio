@@ -99,6 +99,39 @@ struct AppointmentReminderView: View {
             if let notes = appointment.notes, !notes.isEmpty {
                 appointmentNotesText(notes)
             }
+
+            // Loyalty progress tag
+            if !owner.loyaltyProgressTag.isEmpty {
+                Text("Loyalty: \(owner.loyaltyProgressTag)")
+                    .font(.caption2)
+                    .foregroundColor(.green)
+            }
+
+            // Behavior badge
+            if !owner.behaviorTrendBadge.isEmpty {
+                Text("Behavior: \(owner.behaviorTrendBadge)")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
+            
+            if let estimatedMinutes = appointment.estimatedDurationMinutes {
+                Text("Est. Duration: \(estimatedMinutes) mins")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+            }
+
+            if !appointment.behaviorLog.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Behavior Log:")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    ForEach(appointment.behaviorLog.prefix(3), id: \.self) { logEntry in
+                        Text("• \(logEntry)")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                }
+            }
             
             reminderTimingText()
             

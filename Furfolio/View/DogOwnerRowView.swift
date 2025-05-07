@@ -161,6 +161,19 @@ struct DogOwnerRowView: View {
                     .italic()
                     .lineLimit(2)
             }
+
+            // Loyalty progress and behavior trend badges
+            if !dogOwner.loyaltyProgressTag.isEmpty {
+                Text("Loyalty: \(dogOwner.loyaltyProgressTag)")
+                    .font(.caption2)
+                    .foregroundColor(.green)
+            }
+
+            if !dogOwner.behaviorTrendBadge.isEmpty {
+                Text("Behavior: \(dogOwner.behaviorTrendBadge)")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
         }
     }
     
