@@ -208,7 +208,7 @@ final class Charge: Identifiable, Hashable {
     /// Fetches charges for a specific owner in reverse chronological order.
     static func fetch(for owner: DogOwner, in context: ModelContext) -> [Charge] {
         let descriptor = FetchDescriptor<Charge>(
-            predicate: #Predicate { $0.dogOwner.id == owner.id },
+            predicate: #Predicate { $0.dogOwner == owner },
             sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
         )
         return (try? context.fetch(descriptor)) ?? []

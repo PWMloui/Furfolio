@@ -54,7 +54,7 @@ final class DogAllergyProfile: Identifiable, Hashable {
 
   /// Severity level of the allergy.
   @Attribute
-  var severity: AllergySeverity = .mild
+  var severity: AllergySeverity = AllergySeverity.mild
 
   /// Optional notes about the allergy.
   @Attribute
