@@ -5,9 +5,14 @@
 //  Created by mac on 12/20/24.
 //  Updated on [Today's Date] with modern navigation, animations, and haptic feedback.
 
+
 import SwiftUI
 import PhotosUI
 
+// TODO: Move validation and save logic into a dedicated ViewModel; use FormValidator and ImageValidator for input checks.
+
+@MainActor
+/// View for editing an existing DogOwner, with fields for owner & dog info, images, and inactive status.
 struct EditDogOwnerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var ownerName: String
@@ -23,6 +28,13 @@ struct EditDogOwnerView: View {
     @State private var showImageError = false
     @State private var markAsInactive = false
     @State private var dogBirthdate: Date
+
+    /// Shared date formatter for birthdate display.
+    private static let dateFormatter: DateFormatter = {
+      let fmt = DateFormatter()
+      fmt.dateStyle = .medium
+      return fmt
+    }()
 
     var dogOwner: DogOwner
     var onSave: (DogOwner) -> Void
@@ -64,6 +76,7 @@ struct EditDogOwnerView: View {
                             .accessibilityLabel("Mark owner as inactive")
                     }
                 }
+                .listStyle(.insetGrouped)
                 .navigationTitle("Edit Dog Owner")
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
@@ -106,6 +119,7 @@ struct EditDogOwnerView: View {
 
     // MARK: - Form Sections
 
+    /// Builds the section for editing owner name, contact info, and address.
     private func ownerInformationSection() -> some View {
         Section(header: Text("Owner Information")) {
             customTextField(placeholder: "Owner Name", text: $ownerName)
@@ -114,6 +128,7 @@ struct EditDogOwnerView: View {
         }
     }
 
+    /// Builds the section for editing dog name, breed, notes, and loyalty tags.
     private func dogInformationSection() -> some View {
         Section(header: Text("Dog Information")) {
             customTextField(placeholder: "Dog Name", text: $dogName)
@@ -140,6 +155,7 @@ struct EditDogOwnerView: View {
         }
     }
 
+    /// Builds the section for selecting and validating the dog image.
     private func dogImageSection() -> some View {
         Section(header: Text("Dog Image")) {
             PhotosPicker(
@@ -174,6 +190,7 @@ struct EditDogOwnerView: View {
         }
     }
 
+    /// Builds the notes input field with character limit enforcement.
     private func notesField() -> some View {
         VStack(alignment: .leading) {
             customTextField(placeholder: "Notes (Optional)", text: $notes)
@@ -186,6 +203,7 @@ struct EditDogOwnerView: View {
         }
     }
 
+    /// Custom text field with rounded style and keyboard configuration.
     private func customTextField(placeholder: String, text: Binding<String>, keyboardType: UIKeyboardType = .default) -> some View {
         TextField(placeholder, text: text)
             .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -195,6 +213,7 @@ struct EditDogOwnerView: View {
 
     // MARK: - Save Handling
 
+    /// Validates inputs, updates the model, and provides haptic feedback during save.
     private func handleSave() {
         if validateFields() {
             isSaving = true
@@ -234,7 +253,7 @@ struct EditDogOwnerView: View {
         }
     }
 
-    /// Updates the `DogOwner` object and calls the `onSave` closure.
+    /// Applies user edits to the DogOwner and invokes onSave closure.
     private func updateDogOwner() {
         dogOwner.ownerName = ownerName
         dogOwner.dogName = dogName
@@ -248,6 +267,7 @@ struct EditDogOwnerView: View {
 
     // MARK: - Helper Methods
 
+    /// Loads and validates the selected image asynchronously.
     private func handleImageSelection(_ newValue: PhotosPickerItem?) {
         Task {
             if let newValue, let data = try? await newValue.loadTransferable(type: Data.self) {
@@ -263,9 +283,18 @@ struct EditDogOwnerView: View {
     }
 
     private func validateFields() -> Bool {
-        return !ownerName.isEmpty && !dogName.isEmpty && !breed.isEmpty
+      do {
+        try FormValidator.validateRequired(ownerName, fieldName: "Owner Name")
+        try FormValidator.validateRequired(dogName, fieldName: "Dog Name")
+        try FormValidator.validateRequired(breed, fieldName: "Breed")
+        return true
+      } catch {
+        showValidationError = true
+        return false
+      }
     }
 
+    /// Truncates notes to a maximum of 250 characters.
     private func limitNotesLength() {
         if notes.count > 250 {
             notes = String(notes.prefix(250))
@@ -273,12 +302,10 @@ struct EditDogOwnerView: View {
     }
 
     private func isValidImage(data: Data) -> Bool {
-        let maxSizeMB = 5.0
-        let maxSizeBytes = maxSizeMB * 1024 * 1024
-        guard data.count <= Int(maxSizeBytes), let image = UIImage(data: data) else { return false }
-        return image.size.width > 100 && image.size.height > 100
+      return ImageValidator.isAcceptableImage(data)
     }
 
+    /// Computes an emoji badge based on keywords in the notes.
     private var computedBehaviorBadge: String {
         let lowercased = notes.lowercased()
         if lowercased.contains("calm") || lowercased.contains("friendly") {
@@ -292,6 +319,7 @@ struct EditDogOwnerView: View {
         }
     }
     // Detects if the owner should be automatically marked as inactive (mock logic)
+    /// Determines if the owner should be auto-marked inactive based on last appointment date.
     private func shouldBeAutoInactive() -> Bool {
         guard let lastAppointment = dogOwner.appointments.map(\.date).max() else { return false }
         let ninetyDaysAgo = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantPast

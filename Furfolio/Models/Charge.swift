@@ -3,285 +3,246 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with performance, scalability, and documentation enhancements.
+//  Updated on Jun 21, 2025 — added totalByType(_:), fetchTotalsByType(in:), and behaviorBadge.
+//
 
 import Foundation
+// TODO: Centralize transformer registration in PersistenceController and move formatting logic to a ViewModel or FormatterService.
 import SwiftData
+import SwiftUI
 
+@MainActor
+/// Model representing a financial charge for a service, linked to a dog owner and optional appointment.
 @Model
-final class Charge: Identifiable {
-    // MARK: - Properties
+final class Charge: Identifiable, Hashable {
     
-    /// Unique identifier for the charge.
-    @Attribute(.unique) var id: UUID
+    // MARK: – Transformer Names
+    private static let stringArrayTransformerName = "StringArrayTransformer"
     
-    /// Date when the charge is recorded.
-    var date: Date
+  // MARK: – Persistent Properties
+  @Attribute                   var id: UUID = UUID()
+  @Attribute                   var date: Date
+  @Attribute                   var serviceType: ServiceType
+  /// The charged amount; must be non-negative.
+  @Attribute                   var amount: Double
+  @Attribute                   var paymentMethod: PaymentMethod
+  /// Optional notes for the charge.
+  @Attribute                   var notes: String?
+  @Relationship(deleteRule: .nullify)
+  var dogOwner: DogOwner
+  @Relationship(deleteRule: .nullify)
+  var appointment: Appointment?
+  @Attribute(.transformable(by: Charge.stringArrayTransformerName))
+  var petBadges: [String] = []
+  @Attribute                   var createdAt: Date = Date.now
+  @Attribute                   var updatedAt: Date?
     
-    /// Service type for the charge.
-    var type: ServiceType
-    
-    /// Raw charge amount before discount and tax adjustments.
-    var amount: Double
-    
-    /// Associated dog owner.
-    @Relationship(deleteRule: .nullify) var dogOwner: DogOwner
-    
-    /// Optional additional notes.
-    var notes: String?
-    
-    /// Associated appointment, if any.
-    @Relationship(deleteRule: .nullify) var appointment: Appointment?
-    
-    // MARK: - Computed Properties
-    
-    /// Returns a summary description of the charge.
-    var description: String {
-        """
-        Charge on \(formattedDate):
-        Service: \(type.localized)
-        Amount: \(formattedAmount)
-        \(notes != nil ? "Notes: \(notes!)" : "")
-        """
+    /// Designated initializer for Charge model.
+    init(
+        id: UUID = UUID(),
+        date: Date,
+        serviceType: ServiceType,
+        amount: Double,
+        paymentMethod: PaymentMethod,
+        notes: String? = nil,
+        dogOwner: DogOwner,
+        appointment: Appointment? = nil,
+        petBadges: [String] = [],
+        createdAt: Date = Date.now,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.serviceType = serviceType
+        self.amount = max(0, amount)
+        self.paymentMethod = paymentMethod
+        self.notes = notes
+        self.dogOwner = dogOwner
+        self.appointment = appointment
+        self.petBadges = petBadges
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 
-    /// Returns a string emoji badge representing the customer's loyalty based on their total number of charges.
-    ///
-    /// - 🐾 First Timer: only 1 charge
-    /// - 🔁 Monthly Regular: 2–9 charges
-    /// - 🥇 Loyal Client: 10+ charges
-    ///
-    /// This property uses the associated dog owner's count of charges to determine the badge.
-    var loyaltyBadge: String {
-        // Count all charges for this dog owner, if available
-        // If the dogOwner has a charges property, use it; otherwise, fallback to 1
-        // (Assume DogOwner has a 'charges' property of type [Charge]?)
-        let totalCharges: Int
-        if let owner = dogOwner as? DogOwner, let allCharges = (owner as? AnyObject)?.value(forKey: "charges") as? [Charge] {
-            totalCharges = allCharges.count
-        } else {
-            // Fallback: assume at least this charge
-            totalCharges = 1
-        }
-        switch totalCharges {
-        case 1:
-            return "🐾 First Timer"
-        case 2...9:
-            return "🔁 Monthly Regular"
-        default:
-            return "🥇 Loyal Client"
-        }
-    }
-    
-    var lifetimeValue: Double {
-        guard let owner = dogOwner as? DogOwner else { return amount }
-        return owner.charges.reduce(0) { $0 + $1.amount }
-    }
-    
-    var topSpenderBadge: String? {
-        return lifetimeValue > 1000 ? "💸 Top Spender" : nil
-    }
-
-    /// Returns a tag showing progress toward a reward (e.g. free bath).
-    var loyaltyProgressTag: String? {
-        let totalVisits = (dogOwner as? DogOwner)?.charges.count ?? 1
-        let remaining = max(0, 10 - totalVisits)
-        return remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath"
-    }
-    
-    /// Returns the preferred locale (from the current system settings).
-    var preferredLocale: Locale { Locale.current }
-    
-    /// Returns the charge amount formatted as a currency string.
-    var formattedAmount: String {
-        Self.currencyFormatter.locale = preferredLocale
-        return Self.currencyFormatter.string(from: NSNumber(value: amount)) ?? "\(Self.currencyFormatter.currencySymbol ?? "$")\(amount)"
-    }
-    
-    /// Returns the charge date formatted as "MM/DD/YYYY".
-    var formattedDate: String {
-        date.formatted(.dateTime.month().day().year())
-    }
-    
-    /// Returns a human-friendly relative date string (e.g. "2 days ago").
-    var relativeDateString: String {
-        Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
-    }
-    
-    /// Returns true if the charge date is before today.
-    var isOverdue: Bool {
-        date < Calendar.current.startOfDay(for: Date())
-    }
-    
-    // MARK: - Enumerations
-    
-    /// Enumeration representing available service types.
-    enum ServiceType: String, Codable, CaseIterable {
-        case basic = "Basic Package"
-        case full = "Full Package"
+    // MARK: – Enumerations
+    enum ServiceType: String, Codable, CaseIterable, Identifiable {
+        case basic  = "Basic Package"
+        case full   = "Full Package"
         case custom = "Custom Package"
         
-        var localized: String {
-            NSLocalizedString(self.rawValue, comment: "Localized description of \(self.rawValue)")
-        }
+        var id: String { rawValue }
+        var localized: String { NSLocalizedString(rawValue, comment: "") }
+    }
+    enum PaymentMethod: String, Codable, CaseIterable, Identifiable {
+        case cash   = "Cash"
+        case credit = "Credit Card"
+        case debit  = "Debit Card"
+        case zelle  = "Zelle"
+        
+        var id: String { rawValue }
+        var localized: String { NSLocalizedString(rawValue, comment: "") }
     }
     
-    // MARK: - Array Attribute with Transformer
-    
-    /// Stores profile badges securely as an array of strings.
-    @Attribute(.transformable(by: NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue))
-    var petBadges: [String] = []
-    
-    // MARK: - Initializer
-    
-    init(
-        date: Date,
-        type: ServiceType,
-        amount: Double,
-        dogOwner: DogOwner,
-        notes: String? = nil,
-        petBadges: [String] = [],
-        appointment: Appointment? = nil
-    ) {
-        self.id = UUID()
-        self.date = date
-        self.type = type
-        self.amount = max(0, amount) // Prevent negative charges.
-        self.dogOwner = dogOwner
-        self.notes = notes
-        self.petBadges = petBadges
-        self.appointment = appointment
+  // MARK: – Static Formatters
+  /// Shared currency formatter for amount display.
+  private static let currencyFormatter: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .currency
+    f.locale = .current
+    return f
+  }()
+  /// Shared relative date formatter for human-readable dates.
+  private static let relativeFormatter: RelativeDateTimeFormatter = {
+    let f = RelativeDateTimeFormatter()
+    f.unitsStyle = .full
+    return f
+  }()
+  /// Shared formatter for full date and time display.
+  private static let dateTimeFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .medium
+    f.timeStyle = .short
+    return f
+  }()
+
+  // MARK: – Computed Properties
+  /// Returns the amount formatted as a currency string.
+  @Transient
+  var formattedAmount: String {
+    Self.currencyFormatter.string(from: NSNumber(value: amount))
+      ?? "\(Self.currencyFormatter.currencySymbol ?? "$")\(amount)"
+  }
+
+  /// Returns the localized payment method string.
+  @Transient
+  var formattedPaymentMethod: String {
+    paymentMethod.localized
+  }
+
+  /// Returns the charge date formatted for display.
+  @Transient
+  var formattedDate: String {
+    Self.dateTimeFormatter.string(from: date)
+  }
+
+  /// Returns a human-readable relative date string (e.g., "2 days ago").
+  @Transient
+  var relativeDate: String {
+    Self.relativeFormatter.localizedString(for: date, relativeTo: Date.now)
+  }
+
+  /// Indicates whether the charge date is before today’s start.
+  @Transient
+  var isOverdue: Bool {
+    date < Calendar.current.startOfDay(for: Date.now)
+  }
+
+  /// Derives a behavior badge emoji based on associated notes.
+  @Transient
+  var behaviorBadge: String {
+    let noteText = notes ?? ""
+    let badge = BadgeEngine.behaviorBadge(from: noteText)
+    return badge.description
+  }
+
+  /// Combines key charge details into a single summary string.
+  @Transient
+  var summary: String {
+    let base = "\(formattedDate) • \(serviceType.localized) • \(formattedAmount) • \(formattedPaymentMethod)"
+    if let n = notes?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty {
+      return base + " • Notes: \(n)"
     }
+    return base
+  }
     
-    // MARK: - Static Cached Formatters
-    
-    private static var currencyFormatter: NumberFormatter {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.locale = Locale.current
-        return formatter
-    }
-    
-    private static var relativeDateFormatter: RelativeDateTimeFormatter {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter
-    }
-    
-    // MARK: - Methods
-    
-    /// Adds a badge if it is not already present.
+    // MARK: – Actions
+    /// Adds a badge to the charge if not already present and updates updatedAt.
     func addBadge(_ badge: String) {
         guard !petBadges.contains(badge) else { return }
         petBadges.append(badge)
+        updatedAt = Date.now
+    }
+    /// Updates the charge’s amount and notes, enforcing non-negative amount, and updates updatedAt.
+    func update(amount: Double? = nil, notes: String? = nil) {
+        if let amt = amount { self.amount = max(0, amt) }
+        if let n = notes?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            self.notes = n
+        }
+        updatedAt = Date.now
     }
     
-    /// Analyzes the notes to generate a behavioral insight.
-    func analyzeBehavior() -> String {
-        guard let notes = notes?.lowercased() else {
-            return NSLocalizedString("Behavioral analysis: No significant behavioral notes.", comment: "Behavioral analysis result")
-        }
-        if notes.contains("anxious") {
-            return NSLocalizedString("Behavioral analysis: Pet is anxious during appointments.", comment: "Behavioral analysis result")
-        } else if notes.contains("aggressive") {
-            return NSLocalizedString("Behavioral analysis: Pet showed signs of aggression.", comment: "Behavioral analysis result")
-        }
-        return NSLocalizedString("Behavioral analysis: No significant behavioral notes.", comment: "Behavioral analysis result")
+    // MARK: – Static Create & Fetch
+    /// Creates and inserts a new Charge entity into the given context.
+    @discardableResult
+    static func create(
+        date: Date = Date.now,
+        serviceType: ServiceType,
+        amount: Double,
+        paymentMethod: PaymentMethod,
+        notes: String? = nil,
+        dogOwner: DogOwner,
+        petBadges: [String] = [],
+        appointment: Appointment? = nil,
+        in context: ModelContext
+    ) -> Charge {
+        let charge = Charge(
+            date: date,
+            serviceType: serviceType,
+            amount: max(0, amount),
+            paymentMethod: paymentMethod,
+            notes: notes?.trimmingCharacters(in: .whitespacesAndNewlines),
+            dogOwner: dogOwner,
+            appointment: appointment,
+            petBadges: petBadges
+        )
+        context.insert(charge)
+        return charge
     }
+    /// Fetches all charges in reverse chronological order.
+    static func fetchAll(in context: ModelContext) -> [Charge] {
+        let descriptor = FetchDescriptor<Charge>(
+            sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    /// Fetches charges for a specific owner in reverse chronological order.
+    static func fetch(for owner: DogOwner, in context: ModelContext) -> [Charge] {
+        let descriptor = FetchDescriptor<Charge>(
+            predicate: #Predicate { $0.dogOwner.id == owner.id },
+            sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    // MARK: – New: Totals by Service Type
+    /// Aggregates total amounts by service type from the provided charges.
+    static func totalByType(_ charges: [Charge]) -> [ServiceType: Double] {
+        Dictionary(grouping: charges, by: \.serviceType)
+            .mapValues { group in group.reduce(0) { $0 + $1.amount } }
+    }
+    /// Fetches all charges and returns totals by service type.
+    static func fetchTotalsByType(in context: ModelContext) -> [ServiceType: Double] {
+        totalByType(fetchAll(in: context))
+    }
+    
+    // MARK: – Hashable
+    static func ==(lhs: Charge, rhs: Charge) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    
+}
 
-    /// Returns a badge emoji based on behavioral notes.
-    var behaviorBadge: String {
-        guard let notes = notes?.lowercased() else { return "😐 Neutral" }
-        if notes.contains("calm") || notes.contains("good") {
-            return "🟢 Calm"
-        } else if notes.contains("aggressive") || notes.contains("bite") {
-            return "🔴 Aggressive"
-        } else if notes.contains("anxious") || notes.contains("nervous") {
-            return "🟠 Anxious"
-        }
-        return "😐 Neutral"
-    }
-    
-    func isInMonth(_ month: Int, year: Int) -> Bool {
-        let calendar = Calendar.current
-        let chargeMonth = calendar.component(.month, from: date)
-        let chargeYear = calendar.component(.year, from: date)
-        return chargeMonth == month && chargeYear == year
-    }
-    
-    // MARK: - Static Methods for Revenue and Charge Grouping
-    
-    static func totalByType(charges: [Charge]) -> [ServiceType: Double] {
-        charges.reduce(into: [ServiceType: Double]()) { totals, charge in
-            totals[charge.type, default: 0] += charge.amount
-        }
-    }
-    
-    static func totalRevenue(forMonth month: Int, year: Int, charges: [Charge]) -> Double {
-        charges.filter { $0.isInMonth(month, year: year) }
-               .reduce(0) { $0 + $1.amount }
-    }
-    
-    static func chargesForOwner(_ owner: DogOwner, from charges: [Charge]) -> [Charge] {
-        charges.filter { $0.dogOwner.id == owner.id }
-    }
-    
-    static func overdueCharges(from charges: [Charge]) -> [Charge] {
-        charges.filter { $0.isOverdue }
-    }
-    
-    static func categorizeByType(_ charges: [Charge]) -> [ServiceType: [Charge]] {
-        charges.reduce(into: [ServiceType: [Charge]]()) { categorized, charge in
-            categorized[charge.type, default: []].append(charge)
-        }
-    }
-    
-    static func chargesInDateRange(_ range: ClosedRange<Date>, from charges: [Charge]) -> [Charge] {
-        charges.filter { range.contains($0.date) }
-    }
-    
-    static func totalRevenue(for range: ClosedRange<Date>, from charges: [Charge]) -> Double {
-        chargesInDateRange(range, from: charges).reduce(0) { $0 + $1.amount }
-    }
-    
-    static func averageCharge(for type: ServiceType, from charges: [Charge]) -> Double {
-        let chargesOfType = charges.filter { $0.type == type }
-        guard !chargesOfType.isEmpty else { return 0 }
-        let totalAmount = chargesOfType.reduce(0) { $0 + $1.amount }
-        return totalAmount / Double(chargesOfType.count)
-    }
-    
-    // MARK: - Grouping Methods
-    
-    /// Groups charges for a given owner by month.
-    static func chargesForOwnerGroupedByMonth(_ owner: DogOwner, from charges: [Charge]) -> [Int: [Charge]] {
-        chargesForOwner(owner, from: charges).reduce(into: [Int: [Charge]]()) { grouped, charge in
-            let month = Calendar.current.component(.month, from: charge.date)
-            grouped[month, default: []].append(charge)
-        }
-    }
-    
-    /// Calculates the total revenue per month for a given owner.
-    static func totalRevenueGroupedByMonth(for owner: DogOwner, from charges: [Charge]) -> [Int: Double] {
-        chargesForOwnerGroupedByMonth(owner, from: charges).reduce(into: [Int: Double]()) { totals, chargeGroup in
-            let month = chargeGroup.key
-            let totalAmount = chargeGroup.value.reduce(0) { $0 + $1.amount }
-            totals[month] = totalAmount
-        }
-    }
-
-    /// Groups charges for a given owner by (month, year) tuple.
-    static func chargesForOwnerGroupedByMonthYear(_ owner: DogOwner, from charges: [Charge]) -> [DateComponents: [Charge]] {
-        chargesForOwner(owner, from: charges).reduce(into: [DateComponents: [Charge]]()) { grouped, charge in
-            let components = Calendar.current.dateComponents([.month, .year], from: charge.date)
-            grouped[components, default: []].append(charge)
-        }
-    }
-
-    /// Calculates total revenue grouped by month and year for a given owner.
-    static func totalRevenueGroupedByMonthYear(for owner: DogOwner, from charges: [Charge]) -> [DateComponents: Double] {
-        chargesForOwnerGroupedByMonthYear(owner, from: charges).reduce(into: [DateComponents: Double]()) { totals, entry in
-            totals[entry.key] = entry.value.reduce(0) { $0 + $1.amount }
-        }
+#if DEBUG
+extension Charge {
+    static var sample: Charge {
+        let owner = DogOwner.sample
+        return Charge(
+            date: Calendar.current.date(byAdding: .day, value: -2, to: Date.now)!,
+            serviceType: .full,
+            amount: 85.0,
+            paymentMethod: .credit,
+            notes: "Used lavender shampoo", dogOwner: owner,
+            appointment: nil, petBadges: []
+        )
     }
 }
+#endif

@@ -3,271 +3,365 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
+//  Updated on May 16, 2025 — added hourlyAppointmentFrequency helper and polished SwiftData model.
 //
 
 import Foundation
 import SwiftData
 
+// TODO: Move transformer registration to PersistenceController and consider caching aggregated summaries separately.
+// TODO: Consider persisting aggregated summaries separately to optimize large data reads
+
+@MainActor
 @Model
-final class DailyRevenue: Identifiable {
-    @Attribute(.unique) var id: UUID
-    @Attribute var date: Date
-    var totalAmount: Double
-    @Relationship(deleteRule: .cascade) var dogOwner: DogOwner // Relationship to DogOwner
-
-    // MARK: - Initializer
-    init(date: Date, totalAmount: Double = 0.0, dogOwner: DogOwner) throws {
-        guard totalAmount >= 0 else {
-            throw RevenueError.negativeAmount
-        }
-        guard date <= Date() else {
-            throw RevenueError.futureDate
-        }
-        self.id = UUID()
-        self.date = date
-        self.totalAmount = totalAmount
-        self.dogOwner = dogOwner
+final class DailyRevenue: Identifiable, Hashable {
+  
+  /// Shared calendar for date calculations and comparisons.
+  private static let calendar = Calendar.current
+  
+  // MARK: – Persisted Properties
+  
+  @Attribute
+  var id: UUID = UUID()
+  
+  @Attribute
+  var date: Date = Date.now
+  
+  @Attribute
+  var totalAmount: Double = 0.0
+  
+  @Relationship(deleteRule: .cascade)
+  var dogOwner: DogOwner
+  
+  
+  // MARK: – Initialization & Creation Errors
+  
+  enum RevenueError: Error, LocalizedError {
+    case negativeAmount, futureDate
+    var errorDescription: String? {
+      switch self {
+      case .negativeAmount:
+        return NSLocalizedString("Total amount cannot be negative.", comment: "")
+      case .futureDate:
+        return NSLocalizedString("Date cannot be in the future.", comment: "")
+      }
     }
-
-    // MARK: - Error Handling
-    enum RevenueError: Error, LocalizedError {
-        case negativeAmount
-        case futureDate
-
-        var errorDescription: String? {
-            switch self {
-            case .negativeAmount:
-                return NSLocalizedString("Total amount cannot be negative.", comment: "Revenue Error: Negative Amount")
-            case .futureDate:
-                return NSLocalizedString("Date cannot be in the future.", comment: "Revenue Error: Future Date")
-            }
-        }
+  }
+  
+  /// Initializes a DailyRevenue, enforcing non-negative amounts and non-future dates.
+  init(
+    date: Date = Date.now,
+    totalAmount: Double = 0.0,
+    owner: DogOwner
+  ) {
+    self.date = date <= Date.now ? date : Date.now
+    self.totalAmount = max(0, totalAmount)
+    self.dogOwner = owner
+  }
+  
+  /// Designated initializer for DailyRevenue model.
+  init(
+    id: UUID = UUID(),
+    date: Date = Date.now,
+    totalAmount: Double = 0.0,
+    dogOwner: DogOwner
+  ) {
+    self.id = id
+    self.date = date <= Date.now ? date : Date.now
+    self.totalAmount = max(0, totalAmount)
+    self.dogOwner = dogOwner
+  }
+  
+  /// Creates and inserts a new DailyRevenue, validating inputs via `RevenueError`.
+  @discardableResult
+  static func create(
+    date: Date = Date.now,
+    totalAmount: Double,
+    owner: DogOwner,
+    in context: ModelContext
+  ) throws -> DailyRevenue {
+    guard totalAmount >= 0 else { throw RevenueError.negativeAmount }
+    guard date <= Date.now        else { throw RevenueError.futureDate }
+    let revenue = DailyRevenue(date: date, totalAmount: totalAmount, owner: owner)
+    context.insert(revenue)
+    return revenue
+  }
+  
+  
+  // MARK: – Cached Formatters
+  
+  private static let currencyFormatter: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .currency
+    return f
+  }()
+  
+  private static let dateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .medium
+    f.timeStyle = .none
+    return f
+  }()
+  
+  
+  // MARK: – Computed Properties
+  
+  /// Returns the totalAmount formatted as a currency string using the current locale.
+  @Transient
+  var formattedTotal: String {
+    Self.currencyFormatter.locale = .current
+    return Self.currencyFormatter.string(from: NSNumber(value: totalAmount))
+      ?? "\(Self.currencyFormatter.currencySymbol ?? "$")\(totalAmount)"
+  }
+  
+  /// Returns the date formatted as a medium style date string.
+  @Transient
+  var formattedDate: String {
+    Self.dateFormatter.string(from: date)
+  }
+  
+  /// Indicates whether the date is today.
+  @Transient
+  var isToday: Bool {
+    Self.calendar.isDateInToday(date)
+  }
+  
+  /// Indicates whether the date is in the current month.
+  @Transient
+  var isCurrentMonth: Bool {
+    Self.calendar.isDate(date, equalTo: Date.now, toGranularity: .month)
+  }
+  
+  /// Returns a reward tag string based on totalAmount thresholds.
+  @Transient
+  var dailyRewardTag: String? {
+    switch totalAmount {
+    case 0..<100:       return nil
+    case 100..<250:     return "🏅 Goal Met"
+    case 250..<500:     return "🎯 Great Day"
+    case 500...:        return "🚀 Record Breaker"
+    default:            return nil
     }
-
-    // MARK: - Computed Properties
-
-    /// Formats the total amount as a localized currency string.
-    var formattedTotal: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = Locale.current.currency?.identifier ?? "USD"
-        return formatter.string(from: NSNumber(value: totalAmount)) ?? "$\(totalAmount)"
+  }
+  
+  /// Returns the number of earned loyalty points based on totalAmount.
+  @Transient
+  var earnedLoyaltyPoints: Int {
+    switch totalAmount {
+    case 0..<100:       return 0
+    case 100..<250:     return 1
+    case 250..<500:     return 2
+    case 500...:        return 3
+    default:            return 0
     }
-
-    /// Returns a tag for daily revenue milestone (e.g. rewards or goals).
-    var dailyRewardTag: String? {
-        switch totalAmount {
-        case 0..<100:
-            return nil
-        case 100..<250:
-            return "🏅 Goal Met"
-        case 250..<500:
-            return "🎯 Great Day"
-        case 500...:
-            return "🚀 Record Breaker"
-        default:
-            return nil
-        }
+  }
+  
+  /// Returns a loyalty badge string based on totalAmount.
+  @Transient
+  var loyaltyBadge: String {
+    switch totalAmount {
+    case 0..<100:       return "🔸 Starter"
+    case 100..<250:     return "🔹 Loyal"
+    case 250..<500:     return "⭐️ Super Loyal"
+    case 500...:        return "🏆 VIP"
+    default:            return "🔸 Starter"
     }
-
-    /// Bonus loyalty points earned based on daily revenue milestones.
-    var earnedLoyaltyPoints: Int {
-        switch totalAmount {
-        case 0..<100:
-            return 0
-        case 100..<250:
-            return 1
-        case 250..<500:
-            return 2
-        case 500...:
-            return 3
-        default:
-            return 0
-        }
+  }
+  
+  /// Combined summary of this day's revenue and badge.
+  @Transient
+  var summary: String {
+    let dateStr = formattedDate
+    let amountStr = formattedTotal
+    let badgeStr = dailyRewardTag ?? ""
+    return badgeStr.isEmpty ? "\(dateStr): \(amountStr)" : "\(dateStr): \(amountStr) \(badgeStr)"
+  }
+  
+  func snapshotCategory(averageLast7Days: Double) -> String {
+    guard averageLast7Days >= 0 else { return "➖ On Par" }
+    if totalAmount > averageLast7Days {
+      return "📈 Above Average"
+    } else if totalAmount < averageLast7Days {
+      return "📉 Below Average"
+    } else {
+      return "➖ On Par"
     }
-
-    /// Computed badge showing loyalty progress and revenue thresholds.
-    var loyaltyBadge: String {
-        switch totalAmount {
-        case 0..<100:
-            return "🔸 Starter"
-        case 100..<250:
-            return "🔹 Loyal"
-        case 250..<500:
-            return "⭐️ Super Loyal"
-        case 500...:
-            return "🏆 VIP"
-        default:
-            return "🔸 Starter"
-        }
+  }
+  
+  
+  // MARK: – Mutating Methods
+  
+  func addRevenue(_ amount: Double) {
+    guard amount >= 0 else { return }
+    totalAmount += amount
+  }
+  
+  func resetIfNotToday() {
+    if !isToday {
+      totalAmount = 0.0
     }
-
-    /// Formats the date as a localized string.
-    var formattedDate: String {
-        date.formatted(.dateTime.month().day().year())
+  }
+  
+  
+  // MARK: – Range Calculations
+  
+  /// Calculates total revenue within the specified date range.
+  static func totalRevenue(
+    for range: ClosedRange<Date>,
+    in entries: [DailyRevenue]
+  ) -> Double {
+    entries
+      .filter { range.contains($0.date) }
+      .reduce(0) { $0 + $1.totalAmount }
+  }
+  
+  /// Computes average daily revenue over the given date range.
+  static func averageDailyRevenue(
+    for range: ClosedRange<Date>,
+    in entries: [DailyRevenue]
+  ) -> Double {
+    guard let days = Self.calendar
+            .dateComponents([.day], from: range.lowerBound, to: range.upperBound).day,
+          days >= 0
+    else { return 0 }
+    let total = totalRevenue(for: range, in: entries)
+    return total / Double(days + 1)
+  }
+  
+  
+  // MARK: – Summaries
+  
+  static func weeklyRevenueSummary(
+    from entries: [DailyRevenue]
+  ) -> [(week: String, total: Double)] {
+    let calendar = Self.calendar
+    let grouped = Dictionary(grouping: entries) {
+      calendar.component(.weekOfYear, from: $0.date)
     }
-
-    /// Checks if the revenue is for today's date.
-    var isToday: Bool {
-        Calendar.current.isDateInToday(date)
+    return grouped
+      .map { week, revenues in
+        (week: NSLocalizedString("Week \(week)", comment: ""), total: revenues.reduce(0) { $0 + $1.totalAmount })
+      }
+      .sorted {
+        let a = Int($0.week.components(separatedBy: " ").last!)!
+        let b = Int($1.week.components(separatedBy: " ").last!)!
+        return a < b
+      }
+  }
+  
+  static func dailyRevenueSummary(
+    for month: Int,
+    year: Int,
+    in entries: [DailyRevenue]
+  ) -> [(day: Int, total: Double)] {
+    let calendar = Self.calendar
+    guard let start = calendar.date(from: DateComponents(year: year, month: month)) else { return [] }
+    guard let end = calendar.date(byAdding: .month, value: 1, to: start)?
+            .addingTimeInterval(-1) else { return [] }
+    let monthly = entries.filter { $0.date >= start && $0.date <= end }
+    let byDay = Dictionary(grouping: monthly) {
+      calendar.component(.day, from: $0.date)
     }
-
-    /// Checks if the revenue is for the current month.
-    var isCurrentMonth: Bool {
-        Calendar.current.isDate(date, equalTo: Date(), toGranularity: .month)
+    return byDay
+      .map { day, revenues in (day: day, total: revenues.reduce(0) { $0 + $1.totalAmount }) }
+      .sorted { $0.day < $1.day }
+  }
+  
+  /// Breaks down number of appointments per hour for a given day.
+  /// - Parameters:
+  ///   - day: the date to slice (time component ignored)
+  ///   - appointments: list of all appointments
+  /// - Returns: array of (hour: 0–23, count: Int), sorted by hour
+  static func hourlyAppointmentFrequency(
+    for day: Date,
+    in appointments: [Appointment]
+  ) -> [(hour: Int, count: Int)] {
+    let calendar = Self.calendar
+    let startOfDay = calendar.startOfDay(for: day)
+    let startOfNext = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+    let dailyAppts = appointments.filter {
+      $0.date >= startOfDay && $0.date < startOfNext
     }
-
-    /// Snapshot category for Revenue Snapshot Widget based on external average context.
-    func snapshotCategory(averageLast7Days: Double) -> String {
-        if totalAmount > averageLast7Days {
-            return "📈 Above Average"
-        } else if totalAmount < averageLast7Days {
-            return "📉 Below Average"
-        } else {
-            return "➖ On Par"
-        }
+    let grouped = Dictionary(grouping: dailyAppts) {
+      calendar.component(.hour, from: $0.date)
     }
-
-    // MARK: - Methods
-
-    /// Adds revenue to the total amount, ensuring the amount is non-negative.
-    func addRevenue(amount: Double) {
-        guard amount >= 0 else { return }
-        totalAmount += amount
+    return grouped
+      .map { (hour: $0.key, count: $0.value.count) }
+      .sorted { $0.hour < $1.hour }
+  }
+  
+  // MARK: – Total per owner
+  
+  static func totalRevenue(
+    for owner: DogOwner,
+    in entries: [DailyRevenue]
+  ) -> Double {
+    entries
+      .filter { $0.dogOwner.id == owner.id }
+      .reduce(0) { $0 + $1.totalAmount }
+  }
+  
+  
+  // MARK: – Fetch Helpers
+  
+  /// Fetches all DailyRevenue entries in reverse date order.
+  static func fetchAll(in context: ModelContext) -> [DailyRevenue] {
+    let desc = FetchDescriptor<DailyRevenue>(
+      sortBy: [SortDescriptor(\DailyRevenue.date, order: .reverse)]
+    )
+    do {
+      return try context.fetch(desc)
+    } catch {
+      print("⚠️ DailyRevenue.fetchAll failed:", error)
+      return []
     }
-
-    /// Resets the total revenue to 0.0 if the stored date isn't today.
-    func resetIfNotToday() {
-        if !isToday {
-            totalAmount = 0.0
-        }
-    }
-
-    /// Calculates the total revenue for the past 7 days, including today.
-    func calculateWeeklyRevenue(from revenues: [DailyRevenue]) -> Double {
-        let startDate = Calendar.current.date(byAdding: .day, value: -6, to: Date()) ?? Date()
-        return DailyRevenue.totalRevenue(for: startDate...Date(), revenues: revenues)
-    }
-
-    /// Calculates the total revenue for the current month.
-    func calculateMonthlyRevenue(from revenues: [DailyRevenue]) -> Double {
-        guard let startOfMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date)),
-              let endOfMonth = Calendar.current.date(byAdding: .month, value: 1, to: startOfMonth)?.addingTimeInterval(-1) else {
-            return totalAmount
-        }
-        return DailyRevenue.totalRevenue(for: startOfMonth...endOfMonth, revenues: revenues)
-    }
-
-    /// Calculates the revenue for a specific date.
-    func calculateRevenue(for specificDate: Date, from revenues: [DailyRevenue]) -> Double {
-        revenues.filter { Calendar.current.isDate($0.date, inSameDayAs: specificDate) }
-            .reduce(0) { $0 + $1.totalAmount }
-    }
-
-    // MARK: - Static Methods
-
-    /// Calculates the total revenue for a specific date range.
-    static func totalRevenue(for range: ClosedRange<Date>, revenues: [DailyRevenue]) -> Double {
-        revenues.filter { range.contains($0.date) }
-            .reduce(0) { $0 + $1.totalAmount }
-    }
-
-    /// Calculates the average daily revenue for a specific date range.
-    static func averageDailyRevenue(for range: ClosedRange<Date>, revenues: [DailyRevenue]) -> Double {
-        let filteredRevenues = revenues.filter { range.contains($0.date) }
-        let totalDays = Calendar.current.dateComponents([.day], from: range.lowerBound, to: range.upperBound).day ?? 0
-        guard totalDays > 0 else { return 0 }
-        let totalRevenue = filteredRevenues.reduce(0) { $0 + $1.totalAmount }
-        return totalRevenue / Double(totalDays + 1)
-    }
-
-    /// Returns the revenue for today's date, if available.
-    static func revenueForToday(from revenues: [DailyRevenue]) -> DailyRevenue? {
-        revenues.first { $0.isToday }
-    }
-
-    /// Summarizes the total weekly revenue grouped by week.
-    static func weeklyRevenueSummary(from revenues: [DailyRevenue]) -> [(week: String, total: Double)] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: revenues) {
-            calendar.component(.weekOfYear, from: $0.date)
-        }
-
-        return grouped.map { (week, weeklyRevenues) in
-            let total = weeklyRevenues.reduce(0) { $0 + $1.totalAmount }
-            return (week: NSLocalizedString("Week \(week)", comment: "Weekly revenue summary"), total: total)
-        }
-        .sorted { $0.week < $1.week }
-    }
-
-    // MARK: - New Static Methods for Improved Revenue Calculations
-
-    /// Calculates the revenue for a specific owner over a specific date range.
-    static func totalRevenueForOwner(owner: DogOwner, from revenues: [DailyRevenue]) -> Double {
-        let ownerRevenues = revenues.filter { $0.dogOwner.id == owner.id }
-        return ownerRevenues.reduce(0) { $0 + $1.totalAmount }
-    }
-
-    /// Returns the total revenue for each day within a given month.
-    static func dailyRevenueSummary(for month: Int, year: Int, revenues: [DailyRevenue]) -> [(day: String, total: Double)] {
-        let calendar = Calendar.current
-        let startOfMonth = calendar.date(from: DateComponents(year: year, month: month))!
-        let endOfMonth = calendar.date(byAdding: .month, value: 1, to: startOfMonth)!.addingTimeInterval(-1)
-        
-        let monthlyRevenues = revenues.filter { $0.date >= startOfMonth && $0.date <= endOfMonth }
-        
-        let groupedByDay = Dictionary(grouping: monthlyRevenues) {
-            calendar.component(.day, from: $0.date)
-        }
-        
-        return groupedByDay.map { (day, dayRevenues) in
-            let total = dayRevenues.reduce(0) { $0 + $1.totalAmount }
-            return (day: "\(day)", total: total)
-        }
-        .sorted { Int($0.day)! < Int($1.day)! }
-    }
-
-    /// Returns the total revenue for each week of the year.
-    static func weeklyRevenueSummary(for year: Int, revenues: [DailyRevenue]) -> [(week: String, total: Double)] {
-        let calendar = Calendar.current
-        let startOfYear = calendar.date(from: DateComponents(year: year))!
-        let endOfYear = calendar.date(byAdding: .year, value: 1, to: startOfYear)!
- 
-        let filteredRevenues = revenues.filter { $0.date >= startOfYear && $0.date <= endOfYear }
-        
-        let groupedByWeek = Dictionary(grouping: filteredRevenues) {
-            calendar.component(.weekOfYear, from: $0.date)
-        }
-        
-        return groupedByWeek.map { (week, weekRevenues) in
-            let total = weekRevenues.reduce(0) { $0 + $1.totalAmount }
-            return (week: NSLocalizedString("Week \(week)", comment: "Weekly revenue summary"), total: total)
-        }
-        .sorted { $0.week < $1.week }
-    }
-    /// Returns the number of appointments per hour across all provided appointments.
-    static func hourlyAppointmentFrequency(from appointments: [Appointment]) -> [Int: Int] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: appointments) {
-            calendar.component(.hour, from: $0.date)
-        }
-        return grouped.mapValues { $0.count }
-            .sorted { $0.key < $1.key }
-            .reduce(into: [Int: Int]()) { $0[$1.key] = $1.value }
-    }
-    /// Calculates the average revenue per day for the current month.
-    static func averageMonthlyRevenue(for month: Int, year: Int, revenues: [DailyRevenue]) -> Double {
-        let calendar = Calendar.current
-        guard let startOfMonth = calendar.date(from: DateComponents(year: year, month: month)),
-              let endOfMonth = calendar.date(byAdding: .month, value: 1, to: startOfMonth)?.addingTimeInterval(-1) else {
-            return 0.0
-        }
-
-        let days = calendar.dateComponents([.day], from: startOfMonth, to: endOfMonth).day ?? 0
-        guard days > 0 else { return 0.0 }
-
-        let filtered = revenues.filter { $0.date >= startOfMonth && $0.date <= endOfMonth }
-        let total = filtered.reduce(0) { $0 + $1.totalAmount }
-        return total / Double(days + 1)
-    }
+  }
+  
+  /// Fetches the DailyRevenue for a specific owner on the given day, if any.
+  static func fetch(
+    for owner: DogOwner,
+    on day: Date,
+    in context: ModelContext
+  ) -> DailyRevenue? {
+    let start = Self.calendar.startOfDay(for: day)
+    let end = Self.calendar.date(byAdding: .day, value: 1, to: start)!
+    let desc = FetchDescriptor<DailyRevenue>(
+      predicate: #Predicate { $0.dogOwner.id == owner.id && $0.date >= start && $0.date < end },
+      sortBy: [SortDescriptor(\DailyRevenue.date, order: .reverse)]
+    )
+    return (try? context.fetch(desc))?.first
+  }
+  
+  /// Fetches today's DailyRevenue for the specified owner, if it exists.
+  static func fetchToday(
+    for owner: DogOwner,
+    in context: ModelContext
+  ) -> DailyRevenue? {
+    fetch(for: owner, on: Date.now, in: context)
+  }
+  
+  
+  // MARK: – Hashable
+  
+  static func == (lhs: DailyRevenue, rhs: DailyRevenue) -> Bool {
+    lhs.id == rhs.id
+  }
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(id)
+  }
 }
+
+#if DEBUG
+extension DailyRevenue {
+  static var sample: DailyRevenue {
+    let owner = DogOwner(
+      ownerName: "Jane Doe",
+      dogName: "Rex",
+      breed: "Labrador",
+      contactInfo: "jane@example.com",
+      address: "123 Bark St."
+    )
+    return DailyRevenue(date: Date.now, totalAmount: 275, owner: owner)
+  }
+}
+#endif

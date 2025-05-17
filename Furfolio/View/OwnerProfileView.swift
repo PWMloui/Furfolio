@@ -6,7 +6,12 @@
 //  Updated on [Today's Date] with modern navigation, animations, haptic feedback, extended pet details, and document attachment sections.
 
 import SwiftUI
+import SwiftData
 
+// TODO: Move data formatting, badge logic, and navigation state into an OwnerProfileViewModel for cleaner view code and easier testing.
+
+@MainActor
+/// Displays a detailed profile for a DogOwner, including info, pets, documents, and history sections.
 struct OwnerProfileView: View {
     let dogOwner: DogOwner
 
@@ -18,6 +23,14 @@ struct OwnerProfileView: View {
     @State private var showCharges = true
     @State private var showAddAppointment = false
     @State private var showAddCharge = false
+
+    /// Shared formatter for dates in history sections.
+    private static let dateFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
+        fmt.timeStyle = .short
+        return fmt
+    }()
 
     var body: some View {
         NavigationStack {
@@ -94,7 +107,7 @@ struct OwnerProfileView: View {
         }
     }
     
-    // MARK: - Owner Info Section
+    /// Shows the owner’s name, contact details, and status badges.
     @ViewBuilder
     private func ownerInfoSection() -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -104,57 +117,31 @@ struct OwnerProfileView: View {
             // Engagement and retention indicators
             VStack(alignment: .leading, spacing: 4) {
                 if dogOwner.hasBirthdayThisMonth {
-                    Text("🎂 Birthday Month")
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.purple.opacity(0.2))
-                        .cornerRadius(6)
-                        .foregroundColor(.purple)
+                    TagLabelView(text: "🎂 Birthday Month", backgroundColor: .purple, textColor: .purple)
                 }
                 if dogOwner.retentionRisk {
-                    Text("⚠️ Retention Risk")
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.orange.opacity(0.2))
-                        .cornerRadius(6)
-                        .foregroundColor(.orange)
+                    TagLabelView(text: "⚠️ Retention Risk", backgroundColor: .orange, textColor: .orange)
                 }
                 if let spenderTag = dogOwner.lifetimeValueTag {
-                    Text(spenderTag)
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.yellow.opacity(0.2))
-                        .cornerRadius(6)
-                        .foregroundColor(.yellow)
+                    TagLabelView(text: spenderTag, backgroundColor: .yellow, textColor: .yellow)
                 }
                 // Loyalty reward progress
                 if !dogOwner.loyaltyProgressTag.isEmpty {
-                    Text(dogOwner.loyaltyProgressTag)
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.green.opacity(0.2))
-                        .cornerRadius(6)
-                        .foregroundColor(.green)
+                    TagLabelView(text: dogOwner.loyaltyProgressTag, backgroundColor: .green, textColor: .green)
                 }
                 // Behavior trend badge
                 if !dogOwner.behaviorTrendBadge.isEmpty {
-                    Text(dogOwner.behaviorTrendBadge)
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.orange.opacity(0.2))
-                        .cornerRadius(6)
-                        .foregroundColor(.orange)
+                    TagLabelView(text: dogOwner.behaviorTrendBadge, backgroundColor: .orange, textColor: .orange)
                 }
             }
             contactInfoText
             addressText
         }
         .padding()
-        .background(Color.gray.opacity(0.1))
-        .cornerRadius(10)
+        .cardStyle()
     }
     
-    // MARK: - Dog Info Section
+    /// Shows primary dog info including image and basic details.
     @ViewBuilder
     private func dogInfoSection() -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -170,11 +157,10 @@ struct OwnerProfileView: View {
             dogImageView
         }
         .padding()
-        .background(Color.blue.opacity(0.1))
-        .cornerRadius(10)
+        .cardStyle()
     }
     
-    // MARK: - Pet Details Section
+    /// Lists additional pet profiles with key details.
     @ViewBuilder
     private func petDetailsSection() -> some View {
         if !dogOwner.pets.isEmpty {
@@ -200,12 +186,11 @@ struct OwnerProfileView: View {
                 }
             }
             .padding()
-            .background(Color.purple.opacity(0.1))
-            .cornerRadius(10)
+            .cardStyle()
         }
     }
     
-    // MARK: - Document Attachments Section
+    /// Displays document attachments for this owner.
     @ViewBuilder
     private func documentAttachmentsSection() -> some View {
         if !dogOwner.documentAttachments.isEmpty {
@@ -221,12 +206,11 @@ struct OwnerProfileView: View {
                 }
             }
             .padding()
-            .background(Color.green.opacity(0.1))
-            .cornerRadius(10)
+            .cardStyle()
         }
     }
     
-    // MARK: - Appointment History Section
+    /// Shows the owner’s past appointments with show/hide toggle.
     @ViewBuilder
     private func appointmentHistorySection() -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -247,11 +231,10 @@ struct OwnerProfileView: View {
             }
         }
         .padding()
-        .background(Color.orange.opacity(0.1))
-        .cornerRadius(10)
+        .cardStyle()
     }
     
-    // MARK: - Charge History Section
+    /// Shows the owner’s past charges with show/hide toggle.
     @ViewBuilder
     private func chargeHistorySection() -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -272,8 +255,7 @@ struct OwnerProfileView: View {
             }
         }
         .padding()
-        .background(Color.pink.opacity(0.1))
-        .cornerRadius(10)
+        .cardStyle()
     }
     
     // MARK: - Helper Views

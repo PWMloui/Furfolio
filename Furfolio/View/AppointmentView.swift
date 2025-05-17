@@ -3,327 +3,259 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with advanced animations, improved alert binding, modern async state handling, and enhanced accessibility.
+//  Updated on Jun 20, 2025 — fully cleaned up trailing‐closure errors and enhanced save logic.
+//
 
 import SwiftUI
 import UserNotifications
 import PhotosUI
 
+// TODO: Move business logic (saving, validation, notifications) into a dedicated ViewModel and use NotificationManager for scheduling.
+
+@MainActor
+/// View for adding a new appointment: selects date/time, service type, photos, and optional reminders.
 struct AddAppointmentView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     let dogOwner: DogOwner
 
+    // MARK: – Computed
+    private var stats: ClientStats { ClientStats(owner: dogOwner) }
+
+    // MARK: – Form State
     @State private var appointmentDate = Date()
     @State private var serviceType: Appointment.ServiceType = .basic
+    @State private var appointmentDuration = Appointment.ServiceType.basic.defaultDurationMinutes
     @State private var appointmentNotes = ""
+    @State private var linkChargeRecord = false
+    @State private var enableReminder = false
+
+    // MARK: – Conflict & Saving
     @State private var conflictWarning: String? = nil
     @State private var showConflictAlert = false
     @State private var isSaving = false
-    @State private var enableReminder = false
-    @State private var linkChargeRecord = false  // Toggle for linking a charge record
 
-    @State private var appointmentDuration = 60
-
+    // MARK: – Photos
     @State private var beforePhotoData: Data? = nil
     @State private var afterPhotoData: Data? = nil
-
-    // For haptic feedback
-    private let feedbackGenerator = UINotificationFeedbackGenerator()
-    
-    // For onboarding tooltip display
-    @State private var showTooltip = false
-
     @State private var beforePhotoItem: PhotosPickerItem? = nil
     @State private var afterPhotoItem: PhotosPickerItem? = nil
+
+    // MARK: – Feedback & Tooltip
+    private let feedback = UINotificationFeedbackGenerator()
+    @State private var showTooltip = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Form {
+                    /// Displays the appointment details section.
                     appointmentDetailsSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                    
+
                     photosSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                    
-                    // Optionally display conflict warning text inside the form.
-                    if let conflictWarning = conflictWarning, !conflictWarning.isEmpty {
-                        conflictWarningSection(conflictWarning)
+
+                    if let warning = conflictWarning {
+                        Section(header: Text("")) {
+                            Text(warning)
+                                .foregroundColor(.red)
+                                .italic()
+                                .accessibilityLabel("Conflict warning")
+                        }
                     }
                 }
-                .navigationTitle(NSLocalizedString("Add Appointment", comment: "Navigation title for Add Appointment view"))
+                .listStyle(.insetGrouped)
+                .navigationTitle("Add Appointment")
                 .toolbar { toolbarContent() }
-                // Dynamic alert when a conflict is detected.
-                .alert(isPresented: $showConflictAlert) {
-                    Alert(
-                        title: Text(NSLocalizedString("Conflict Detected", comment: "Alert title for conflict detection")),
-                        message: Text(conflictWarning ?? ""),
-                        dismissButton: .default(Text(NSLocalizedString("OK", comment: "Alert confirmation button")), action: {
-                            // Reset conflict warning after dismissal.
-                            conflictWarning = nil
-                        })
-                    )
+                .alert("Conflict Detected", isPresented: $showConflictAlert) {
+                    Button("OK") { conflictWarning = nil }
+                } message: {
+                    Text(conflictWarning ?? "")
                 }
-                
-                // Progress overlay while saving.
+
                 if isSaving {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                    ProgressView(NSLocalizedString("Saving...", comment: "Progress indicator while saving"))
+                    Color.black.opacity(0.3).ignoresSafeArea()
+                    ProgressView("Saving…")
                         .padding()
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemBackground)))
-                        .shadow(radius: 10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
                 }
             }
-            .onAppear {
-                // Show an onboarding tooltip for a few seconds when the view appears.
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
-                    withAnimation { showTooltip = true }
-                    try? await Task.sleep(nanoseconds: 3_000_000_000) // Show for 3 seconds
-                    withAnimation { showTooltip = false }
-                }
+        }
+        .onAppear {
+            Task {
+                // Show tooltip on form fields for initial guidance
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                withAnimation { showTooltip = true }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                withAnimation { showTooltip = false }
             }
         }
         .accessibilityElement(children: .contain)
     }
-    
-    // MARK: - Sections
-    
+
+    // MARK: – Sections
+
+    /// Builds the section for selecting date, service, duration, notes, and toggles.
     @ViewBuilder
     private func appointmentDetailsSection() -> some View {
-        Section(header: Text(NSLocalizedString("Appointment Details", comment: "Section header for appointment details"))) {
+        Section(header: Text("Appointment Details")) {
             DatePicker(
-                NSLocalizedString("Appointment Date", comment: "Picker for appointment date"),
+                "Date & Time",
                 selection: $appointmentDate,
+                in: Date().addingTimeInterval(60)...,
                 displayedComponents: [.date, .hourAndMinute]
             )
-            .onChange(of: appointmentDate) { _ in
-                conflictWarning = nil
-            }
-            .accessibilityLabel(NSLocalizedString("Select appointment date", comment: "Accessibility label for date picker"))
-            
-            Picker(
-                NSLocalizedString("Service Type", comment: "Picker for selecting service type"),
-                selection: $serviceType
-            ) {
-                ForEach(Appointment.ServiceType.allCases, id: \.self) { type in
-                    Text(type.localized)
+            .onChange(of: appointmentDate) { _ in conflictWarning = nil }
+            .accessibilityLabel("Select appointment date and time")
+
+            Picker("Service Type", selection: $serviceType) {
+                ForEach(Appointment.ServiceType.allCases) { type in
+                    Text(type.localizedName).tag(type)
                 }
             }
-            .pickerStyle(MenuPickerStyle())
-            .accessibilityLabel(NSLocalizedString("Select service type", comment: "Accessibility label for service type picker"))
-            
-            Stepper(
-                value: $appointmentDuration,
-                in: 15...240,
-                step: 15
-            ) {
-                Text("Duration: \(appointmentDuration) minutes")
-            }
-            .accessibilityLabel("Appointment duration")
-            
+            .pickerStyle(.menu)
+            .onChange(of: serviceType) { appointmentDuration = $0.defaultDurationMinutes }
+            .accessibilityLabel("Select service type")
+
+            Stepper("Duration: \(appointmentDuration) min", value: $appointmentDuration, in: 15...240, step: 15)
+                .accessibilityLabel("Appointment duration in minutes")
+
             VStack(alignment: .leading, spacing: 4) {
-                TextField(
-                    NSLocalizedString("Notes (Optional)", comment: "Placeholder for appointment notes"),
-                    text: $appointmentNotes
-                )
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .autocapitalization(.sentences)
-                .onChange(of: appointmentNotes) { _ in limitNotesLength() }
-                .accessibilityLabel(NSLocalizedString("Enter additional notes", comment: "Accessibility label for notes field"))
-                
+                TextField("Notes (optional)", text: $appointmentNotes)
+                    .textFieldStyle(.roundedBorder)
+                    .autocapitalization(.sentences)
+                    .onChange(of: appointmentNotes) { _ in clampNotesLength() }
+                    .accessibilityLabel("Enter any extra details (max 250 chars)")
+
                 if showTooltip && appointmentNotes.isEmpty {
-                    Text(NSLocalizedString("Enter any extra details (max 250 characters)", comment: "Tooltip for additional notes"))
+                    Text("Enter extra details (max 250 characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .transition(.opacity)
-                        .accessibilityHidden(true)
+                }
+                if appointmentNotes.count > 250 {
+                    Text("Notes must be ≤ 250 characters")
+                        .font(.caption)
+                        .foregroundColor(.red)
                 }
             }
-            
-            Toggle(
-                NSLocalizedString("Enable Reminder", comment: "Toggle for enabling reminders"),
-                isOn: $enableReminder
-            )
-            .onChange(of: enableReminder) { isOn in
-                if isOn { requestNotificationPermission() }
-            }
-            .accessibilityLabel(NSLocalizedString("Toggle to enable appointment reminder", comment: "Accessibility label for reminder toggle"))
-            
-            // Optional toggle to link a charge record.
-            Toggle(
-                NSLocalizedString("Link Charge Record", comment: "Toggle for linking a charge record"),
-                isOn: $linkChargeRecord
-            )
-            .accessibilityLabel(NSLocalizedString("Toggle to link a charge record", comment: "Accessibility label for charge record linking toggle"))
 
-            // Loyalty reward progress and behavior trend badge
-            if !dogOwner.loyaltyProgressTag.isEmpty {
+            Toggle("Link Charge Record", isOn: $linkChargeRecord)
+                .accessibilityLabel("Toggle to link a charge record")
+
+            Toggle("Enable Reminder", isOn: $enableReminder)
+                .onChange(of: enableReminder) {
+                    if $0 { requestNotificationPermission() }
+                }
+                .accessibilityLabel("Toggle to enable reminder notification")
+
+            if !stats.loyaltyProgressTag.isEmpty {
                 HStack {
-                    Text("Loyalty Progress")
-                    Spacer()
-                    Text(dogOwner.loyaltyProgressTag)
+                    Text("Loyalty Progress"); Spacer()
+                    Text(stats.loyaltyProgressTag)
                         .foregroundColor(.green)
-                        .font(.caption)
-                        .bold()
+                        .font(.caption.bold())
                 }
-                .padding(.top, 4)
             }
-
-            if !dogOwner.behaviorTrendBadge.isEmpty {
+            if let badge = stats.recentBehaviorBadges.first {
                 HStack {
-                    Text("Behavior")
-                    Spacer()
-                    Text(dogOwner.behaviorTrendBadge)
+                    Text("Behavior"); Spacer()
+                    Text(badge)
                         .foregroundColor(.orange)
-                        .font(.caption)
-                        .bold()
+                        .font(.caption.bold())
                 }
             }
         }
     }
-    
+
+    /// Builds the section for picking before/after photos.
     @ViewBuilder
     private func photosSection() -> some View {
-        Section(header: Text(NSLocalizedString("Photos", comment: "Section header for photos"))) {
-            VStack(alignment: .leading) {
-                Text(NSLocalizedString("Before Photo", comment: "Label for before photo picker"))
-                    .font(.headline)
-                HStack {
-                    if let data = beforePhotoData, let uiImage = UIImage(data: data) {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 80, height: 80)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .accessibilityLabel(NSLocalizedString("Before photo preview", comment: "Accessibility label for before photo preview"))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary, lineWidth: 1)
-                            .frame(width: 80, height: 80)
-                            .overlay(
-                                Image(systemName: "photo")
-                                    .foregroundColor(.secondary)
-                            )
-                            .accessibilityLabel(NSLocalizedString("No before photo selected", comment: "Accessibility label for no before photo"))
-                    }
-                    PhotosPicker(
-                        selection: $beforePhotoItem,
-                        matching: .images,
-                        photoLibrary: .shared()) {
-                            Text(NSLocalizedString("Select Before Photo", comment: "Button label for selecting before photo"))
-                    }
-                    .onChange(of: beforePhotoItem) { newItem in
-                        Task {
-                            if let item = newItem {
-                                if let data = try? await item.loadTransferable(type: Data.self) {
-                                    beforePhotoData = data
-                                }
-                            }
-                        }
-                    }
-                    .accessibilityLabel(NSLocalizedString("Select before photo", comment: "Accessibility label for before photo picker"))
-                }
-            }
-            
-            VStack(alignment: .leading) {
-                Text(NSLocalizedString("After Photo", comment: "Label for after photo picker"))
-                    .font(.headline)
-                HStack {
-                    if let data = afterPhotoData, let uiImage = UIImage(data: data) {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 80, height: 80)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .accessibilityLabel(NSLocalizedString("After photo preview", comment: "Accessibility label for after photo preview"))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary, lineWidth: 1)
-                            .frame(width: 80, height: 80)
-                            .overlay(
-                                Image(systemName: "photo")
-                                    .foregroundColor(.secondary)
-                            )
-                            .accessibilityLabel(NSLocalizedString("No after photo selected", comment: "Accessibility label for no after photo"))
-                    }
-                    PhotosPicker(
-                        selection: $afterPhotoItem,
-                        matching: .images,
-                        photoLibrary: .shared()) {
-                            Text(NSLocalizedString("Select After Photo", comment: "Button label for selecting after photo"))
-                    }
-                    .onChange(of: afterPhotoItem) { newItem in
-                        Task {
-                            if let item = newItem {
-                                if let data = try? await item.loadTransferable(type: Data.self) {
-                                    afterPhotoData = data
-                                }
-                            }
-                        }
-                    }
-                    .accessibilityLabel(NSLocalizedString("Select after photo", comment: "Accessibility label for after photo picker"))
-                }
-            }
+        Section(header: Text("Photos")) {
+            photoPicker(label: "Before Photo", data: $beforePhotoData, item: $beforePhotoItem)
+            photoPicker(label: "After Photo",  data: $afterPhotoData,  item: $afterPhotoItem)
         }
     }
-    
+
+    // MARK: – Photo Picker
+
     @ViewBuilder
-    private func conflictWarningSection(_ conflictWarning: String) -> some View {
-        Section {
-            Text(conflictWarning)
-                .foregroundColor(.red)
-                .italic()
-                .accessibilityLabel(NSLocalizedString("Conflict warning", comment: "Accessibility label for conflict warning"))
+    private func photoPicker(
+        label: String,
+        data: Binding<Data?>,
+        item: Binding<PhotosPickerItem?>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.headline)
+            HStack {
+                if let d = data.wrappedValue, let img = UIImage(data: d) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 80, height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.secondary, lineWidth: 1)
+                        .frame(width: 80, height: 80)
+                        .overlay(Image(systemName: "photo").foregroundColor(.secondary))
+                }
+
+                (
+                    PhotosPicker(selection: item, matching: .images) {
+                        Text("Select")
+                    }
+                )
+                .onChange(of: item.wrappedValue) { new in
+                    Task {
+                        if let picked = new,
+                           let loaded = try? await picked.loadTransferable(type: Data.self)
+                        {
+                            data.wrappedValue = loaded
+                        }
+                    }
+                }
+            }
         }
     }
-    
-    // MARK: - Toolbar
-    
+
+    // MARK: – Toolbar
+
     @ToolbarContentBuilder
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
-            Button(NSLocalizedString("Cancel", comment: "Cancel button")) {
-                withAnimation { dismiss() }
-            }
-            .accessibilityLabel(NSLocalizedString("Cancel appointment creation", comment: "Accessibility label for cancel button"))
+            Button("Cancel") { dismiss() }
         }
-        
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button(NSLocalizedString("Save", comment: "Save button")) {
-                handleSave()
-            }
-            .disabled(!validateFields() || isSaving)
-            .accessibilityLabel(NSLocalizedString("Save appointment", comment: "Accessibility label for save button"))
+            Button("Save", action: handleSave)
+                .disabled(!validateAppointment() || isSaving)
         }
     }
-    
-    // MARK: - Save Handling
-    
+
+    // MARK: – Save Handling
+
+    /// Validates and, if valid, saves the appointment and dismisses the view.
     private func handleSave() {
-        if validateAppointment() {
-            isSaving = true
-            feedbackGenerator.notificationOccurred(.success)
-            withAnimation(.easeInOut(duration: 0.3)) {
-                saveAppointment()
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
-                withAnimation {
-                    isSaving = false
-                    dismiss()
-                }
-            }
-        } else {
+        guard validateAppointment() else {
             showConflictAlert = true
+            return
+        }
+        isSaving = true
+        feedback.notificationOccurred(.success)
+        saveAppointment()
+
+        // bind the Task so it's not mis‐parsed
+        _ = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            isSaving = false
+            dismiss()
         }
     }
-    
-    /// Saves the appointment to the model context.
+
+    /// Inserts the new Appointment into the model context and links a charge if requested.
     private func saveAppointment() {
-        let newAppointment = Appointment(
+        let appt = Appointment(
             date: appointmentDate,
             dogOwner: dogOwner,
             serviceType: serviceType,
@@ -331,112 +263,97 @@ struct AddAppointmentView: View {
             beforePhoto: beforePhotoData,
             afterPhoto: afterPhotoData
         )
-        newAppointment.durationMinutes = appointmentDuration
-        
-        // If linking a charge record is enabled, create and link the charge.
-        if linkChargeRecord {
-            let charge = Charge(
-                date: appointmentDate,
-                type: .custom,
-                amount: 0.0,
-                dogOwner: dogOwner,
-                notes: "Linked to appointment on \(appointmentDate.formatted(date: .abbreviated, time: .shortened))",
-                appointment: newAppointment
-            )
-            dogOwner.charges.append(charge)
-            modelContext.insert(charge)
-        }
-        
+        appt.durationMinutes = appointmentDuration
+
         withAnimation {
-            modelContext.insert(newAppointment)
-            dogOwner.appointments.append(newAppointment)
+            modelContext.insert(appt)
+            if linkChargeRecord {
+                let charge = Charge.create(
+                    date: appointmentDate,
+                    serviceType: .custom,
+                    amount: 0,
+                    paymentMethod: .cash,
+                    owner: dogOwner,
+                    notes: "Linked to appointment",
+                    appointment: appt,
+                    in: modelContext
+                )
+                print("Linked charge \(charge.id) to appointment")
+            }
         }
-        
+
         if enableReminder {
-            scheduleReminder(for: newAppointment)
+            scheduleReminder(for: appt)
         }
-        
-        print("Appointment saved for \(dogOwner.ownerName) on \(newAppointment.formattedDate)")
     }
-    
-    // MARK: - Validation
-    
-    /// Validates the appointment and checks for conflicts.
+
+    // MARK: – Validation & Conflict
+
+    /// Checks date validity and appointment conflict; sets conflictWarning if invalid.
     private func validateAppointment() -> Bool {
-        guard validateFields() else { return false }
-        
-        if !checkConflicts() {
-            conflictWarning = NSLocalizedString(
-                "This appointment conflicts with another!",
-                comment: "Conflict warning message"
-            )
+        guard appointmentDate > Date.now else {
+            conflictWarning = "Appointment must be in the future."
             return false
         }
-        
+        if dogOwner.appointments.contains(where: {
+            abs($0.date.timeIntervalSince(appointmentDate)) < 3600
+        }) {
+            conflictWarning = "This appointment conflicts with another."
+            return false
+        }
         return true
     }
-    
-    /// Ensures required fields are valid.
-    private func validateFields() -> Bool {
-        return appointmentDate > Date()
-    }
-    
-    /// Checks for conflicting appointments within a 1-hour buffer.
-    private func checkConflicts() -> Bool {
-        !dogOwner.appointments.contains {
-            abs($0.date.timeIntervalSince(appointmentDate)) < 3600
-        }
-    }
-    
-    // MARK: - Reminder Management
-    
-    /// Schedules a reminder notification for the appointment.
+
+    // MARK: – Notifications
+
+    /// Schedules a local notification reminder via NotificationManager.
     private func scheduleReminder(for appointment: Appointment) {
-        let content = UNMutableNotificationContent()
-        content.title = NSLocalizedString("Upcoming Appointment", comment: "Reminder title")
-        content.body = String(
-            format: NSLocalizedString("Appointment with %@ on %@", comment: "Reminder body"),
-            dogOwner.ownerName,
-            appointment.formattedDate
-        )
+        var content = UNMutableNotificationContent()
+        content.title = "Upcoming Appointment"
+        content.body = "\(dogOwner.ownerName) at \(appointment.formattedDate)"
         content.sound = .default
-        
-        guard let triggerDate = Calendar.current.date(byAdding: .minute, value: -30, to: appointment.date) else { return }
-        let triggerComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerComponents, repeats: false)
-        
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
+
+        guard let triggerDate = Calendar.current.date(byAdding: .minute,
+                                                      value: -30,
+                                                      to: appointment.date)
+        else { return }
+        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+        let req = UNNotificationRequest(
+            identifier: appointment.id.uuidString,
             content: content,
-            trigger: trigger
+            trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
         )
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Failed to schedule reminder: \(error.localizedDescription)")
-            }
-        }
+        UNUserNotificationCenter.current().add(req)
     }
-    
-    /// Requests notification permission from the user.
+
+    /// Requests UNUserNotificationCenter authorization for alerts and sounds.
     private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-            if let error = error {
-                print("Notification permission error: \(error.localizedDescription)")
-            }
-            if !granted {
-                enableReminder = false
-                print("User denied notification permissions.")
-            }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            if !granted { enableReminder = false }
         }
     }
-    
-    // MARK: - Utility Methods
-    
-    /// Limits the length of appointment notes to 250 characters.
-    private func limitNotesLength() {
+
+    // MARK: – Utilities
+
+    /// Ensures the notes string does not exceed 250 characters.
+    private func clampNotesLength() {
         if appointmentNotes.count > 250 {
             appointmentNotes = String(appointmentNotes.prefix(250))
+        }
+    }
+}
+
+// MARK: – Nested ServiceType enhancements
+
+extension Appointment.ServiceType {
+    var localizedName: String {
+        NSLocalizedString(rawValue, comment: "")
+    }
+    var defaultDurationMinutes: Int {
+        switch self {
+        case .basic:  return 60
+        case .full:   return 90
+        case .custom: return 0
         }
     }
 }

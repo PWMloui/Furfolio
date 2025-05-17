@@ -6,14 +6,19 @@
 
 import SwiftUI
 import Charts
+// TODO: Move service trend computation into a dedicated ViewModel for cleaner views and easier testing.
 
+@MainActor
+/// A view displaying service popularity trends with a bar chart and summary annotations.
 struct ServiceTrendsView: View {
     let appointments: [Appointment]
 
+    /// Computes booking counts grouped by service type.
     var serviceFrequency: [Appointment.ServiceType: Int] {
         Appointment.serviceTypeFrequency(for: appointments)
     }
     
+    /// Computes the average number of appointments across service types.
     var averageAppointments: Double {
         let total = serviceFrequency.values.reduce(0, +)
         return serviceFrequency.isEmpty ? 0 : Double(total) / Double(serviceFrequency.count)
@@ -29,6 +34,7 @@ struct ServiceTrendsView: View {
                 Text("No appointment data available.")
                     .foregroundColor(.gray)
             } else {
+                /// Renders a bar chart of appointment counts per service type with an average line.
                 Chart {
                     ForEach(Appointment.ServiceType.allCases, id: \.self) { type in
                         if let count = serviceFrequency[type] {
@@ -73,9 +79,9 @@ struct ServiceTrendsView: View {
             }
         }
         .padding()
-        .background(Color.blue.opacity(0.05))
-        .cornerRadius(12)
+        .cardStyle()
         .padding()
         .navigationTitle("Service Trends")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

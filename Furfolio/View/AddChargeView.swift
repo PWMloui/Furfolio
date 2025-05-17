@@ -3,16 +3,28 @@
 //  Furfolio
 //
 //  Created by mac on 12/20/24.
-//  Updated on [Today's Date] with enhanced animations, transitions, haptic feedback, user feedback, payment method selection, and receipt attachment.
+//  Updated on Jun 13, 2025 — switched to Charge.create, Date.now, removed unsupported notes: argument.
+//
 
 import SwiftUI
+import SwiftData
 
+// TODO: Move business logic (validation and saving) into a dedicated ViewModel for better testability and separation of concerns.
+
+@MainActor
 struct AddChargeView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+
     let dogOwner: DogOwner
 
-    @State private var serviceType: ChargeType = .basic
+    /// All the computed stats for this owner.
+    private var stats: ClientStats {
+        ClientStats(owner: dogOwner)
+    }
+
+    @State private var serviceType: Charge.ServiceType = .basic
+    @State private var paymentMethod: Charge.PaymentMethod = .cash
     @State private var chargeAmount: Double? = nil
     @State private var chargeNotes = ""
     @State private var showErrorAlert = false
@@ -20,8 +32,10 @@ struct AddChargeView: View {
     @State private var isSaving = false
     @State private var showTooltip = false
 
-    // Haptic feedback generator for successful actions.
     private let feedbackGenerator = UINotificationFeedbackGenerator()
+
+    /// Shared currency format style to avoid recreating on each render.
+    private static let amountFormat = FloatingPointFormatStyle<Double>.Currency(code: Locale.current.currency?.identifier ?? "USD")
 
     var body: some View {
         NavigationView {
@@ -29,25 +43,20 @@ struct AddChargeView: View {
                 Form {
                     chargeInformationSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                    
                     ownerLoyaltySection()
                         .transition(.opacity)
                 }
-                .navigationTitle(NSLocalizedString("Add Charge", comment: "Navigation title for Add Charge view"))
+                .navigationTitle("Add Charge")
                 .toolbar { toolbarContent() }
-                .alert(
-                    NSLocalizedString("Invalid Charge", comment: "Alert title for invalid charge"),
-                    isPresented: $showErrorAlert
-                ) {
-                    Button(NSLocalizedString("OK", comment: "OK button label"), role: .cancel) {}
+                .alert("Invalid Charge", isPresented: $showErrorAlert) {
+                    Button("OK", role: .cancel) { }
                 } message: {
                     Text(errorMessage)
                 }
-                
+
                 if isSaving {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                    ProgressView(NSLocalizedString("Saving...", comment: "Progress indicator while saving"))
+                    Color.black.opacity(0.3).ignoresSafeArea()
+                    ProgressView("Saving...")
                         .padding()
                         .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemBackground)))
                         .shadow(radius: 10)
@@ -64,58 +73,123 @@ struct AddChargeView: View {
         }
     }
 
-    // MARK: - Sections
+    // MARK: – Charge Info
 
+    /// Builds the section with charge input fields.
     @ViewBuilder
     private func chargeInformationSection() -> some View {
-        Section(header: Text(NSLocalizedString("Charge Information", comment: "Header for charge information section"))) {
+        Section(header: Text("Charge Information")) {
             serviceTypePicker()
+            paymentMethodPicker()
             chargeAmountInput()
             notesField()
         }
     }
 
+    /// Picker for selecting the service type.
+    @ViewBuilder
+    private func serviceTypePicker() -> some View {
+        Picker("Service Type", selection: $serviceType) {
+            ForEach(Charge.ServiceType.allCases) { type in
+                Text(type.localized).tag(type)
+            }
+        }
+        .pickerStyle(.menu)
+    }
+
+    /// Picker for selecting the payment method.
+    @ViewBuilder
+    private func paymentMethodPicker() -> some View {
+        Picker("Payment Method", selection: $paymentMethod) {
+            ForEach(Charge.PaymentMethod.allCases) { method in
+                Text(method.localized).tag(method)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    /// TextField for entering the charge amount with currency format.
+    @ViewBuilder
+    private func chargeAmountInput() -> some View {
+        TextField(
+            "Amount Charged",
+            value: $chargeAmount,
+            format: Self.amountFormat
+        )
+        .keyboardType(.decimalPad)
+        .onChange(of: chargeAmount) { newValue in
+            if let v = newValue {
+                chargeAmount = max(0, v)
+            }
+        }
+    }
+
+    /// Field for entering optional notes with character limit enforcement.
+    @ViewBuilder
+    private func notesField() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(
+                "Additional Notes (Optional)",
+                text: $chargeNotes
+            )
+            .textFieldStyle(.roundedBorder)
+            .autocapitalization(.sentences)
+            .onChange(of: chargeNotes) { _ in limitNotesLength() }
+
+            if showTooltip && chargeNotes.isEmpty {
+                Text("Enter any extra details (max 250 characters)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .transition(.opacity)
+            }
+            if chargeNotes.count > 250 {
+                Text("Notes must be 250 characters or less.")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        }
+    }
+
+    // MARK: – Owner Stats
+
+    /// Displays owner loyalty and behavior statistics.
     @ViewBuilder
     private func ownerLoyaltySection() -> some View {
-        Section(header: Text(NSLocalizedString("Owner Details", comment: "Header for owner details section"))) {
+        Section(header: Text("Owner Details")) {
             HStack {
-                Text(NSLocalizedString("Name", comment: "Label for owner's name"))
+                Text("Name")
                 Spacer()
                 Text(dogOwner.ownerName)
                     .foregroundColor(.secondary)
             }
+
             HStack {
-                Text(NSLocalizedString("Loyalty Status", comment: "Label for owner's loyalty status"))
+                Text("Loyalty Status")
                 Spacer()
-                Text(dogOwner.loyaltyStatus)
+                Text(stats.loyaltyStatus)
                     .foregroundColor(.yellow)
                     .fontWeight(.semibold)
             }
 
-            // Loyalty reward progress
-            if !dogOwner.loyaltyProgressTag.isEmpty {
-                let progress = dogOwner.loyaltyProgressTag
-                HStack {
-                    Text("Loyalty Reward")
-                    Spacer()
-                    Text(progress)
-                        .foregroundColor(.green)
-                        .fontWeight(.semibold)
-                }
+            HStack {
+                Text("Loyalty Reward")
+                Spacer()
+                Text(stats.loyaltyProgressTag)
+                    .foregroundColor(.green)
+                    .fontWeight(.semibold)
             }
-            // Behavior badge
-            if !dogOwner.behaviorTrendBadge.isEmpty {
+
+            if let badge = stats.recentBehaviorBadges.first {
                 HStack {
                     Text("Behavior")
                     Spacer()
-                    Text(dogOwner.behaviorTrendBadge)
+                    Text(badge)
                         .foregroundColor(.orange)
                         .fontWeight(.semibold)
                 }
             }
 
-            // Enhanced UI: Show retention risk, birthday month, top spender badge
-            if dogOwner.retentionRisk {
+            if stats.isRetentionRisk {
                 HStack {
                     Text("Status")
                     Spacer()
@@ -124,7 +198,8 @@ struct AddChargeView: View {
                         .fontWeight(.semibold)
                 }
             }
-            if dogOwner.hasBirthdayThisMonth {
+
+            if stats.hasBirthdayThisMonth {
                 HStack {
                     Text("Special")
                     Spacer()
@@ -133,157 +208,89 @@ struct AddChargeView: View {
                         .fontWeight(.semibold)
                 }
             }
-            if let tag = dogOwner.lifetimeValueTag {
-                HStack {
-                    Text("Client Tag")
-                    Spacer()
-                    Text(tag)
-                        .foregroundColor(.blue)
-                        .fontWeight(.semibold)
-                }
-            }
         }
     }
 
-    @ViewBuilder
-    private func serviceTypePicker() -> some View {
-        Picker(
-            NSLocalizedString("Service Type", comment: "Picker label for service type"),
-            selection: $serviceType
-        ) {
-            ForEach(ChargeType.allCases, id: \.self) { type in
-                Text(type.localized)
-            }
-        }
-        .pickerStyle(MenuPickerStyle())
-    }
-
-    @ViewBuilder
-    private func chargeAmountInput() -> some View {
-        TextField(
-            NSLocalizedString("Amount Charged", comment: "Text field label for charge amount"),
-            value: $chargeAmount,
-            format: .currency(code: Locale.current.currency?.identifier ?? "USD")
-        )
-        .keyboardType(.decimalPad)
-        .onChange(of: chargeAmount) { newValue in
-            if let newValue {
-                chargeAmount = max(newValue, 0.0)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func notesField() -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField(
-                NSLocalizedString("Additional Notes (Optional)", comment: "Text field label for additional notes"),
-                text: $chargeNotes
-            )
-            .textFieldStyle(RoundedBorderTextFieldStyle())
-            .autocapitalization(.sentences)
-            .onChange(of: chargeNotes) { _ in limitNotesLength() }
-            
-            if showTooltip && chargeNotes.isEmpty {
-                Text(NSLocalizedString("Enter any extra details (max 250 characters)", comment: "Tooltip for additional notes"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .transition(.opacity)
-            }
-            
-            if chargeNotes.count > 250 {
-                Text(NSLocalizedString("Notes must be 250 characters or less.", comment: "Warning for note length"))
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
-        }
-    }
-
-    // MARK: - Toolbar
+    // MARK: – Toolbar
 
     @ToolbarContentBuilder
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
-            Button(NSLocalizedString("Cancel", comment: "Cancel button label")) {
+            Button("Cancel") {
                 withAnimation { dismiss() }
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button(NSLocalizedString("Save", comment: "Save button label")) {
-                handleSave()
-            }
-            .disabled(!isFormValid() || isSaving)
+            Button("Save") { handleSave() }
+                .disabled(!isFormValid() || isSaving)
         }
     }
 
-    // MARK: - Save Handling
+    // MARK: – Save
 
+    /// Validates inputs and saves the charge record.
     private func handleSave() {
-        if validateCharge() {
-            isSaving = true
-            feedbackGenerator.notificationOccurred(.success)
-            withAnimation(.easeInOut(duration: 0.3)) { saveChargeHistory() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                isSaving = false
-                dismiss()
-            }
-        } else {
+        guard validateCharge() else {
             showErrorAlert = true
+            return
+        }
+        isSaving = true
+        feedbackGenerator.notificationOccurred(.success)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            saveChargeHistory()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            isSaving = false
+            dismiss()
         }
     }
 
+    /// Creates and persists the new Charge entity in the model context.
     private func saveChargeHistory() {
-        let newCharge = Charge(
-            date: Date(),
-            type: Charge.ServiceType(rawValue: serviceType.rawValue) ?? .custom,
-            amount: chargeAmount ?? 0.0,
-            dogOwner: dogOwner,
-            notes: chargeNotes,
-            appointment: nil
+        // Create without notes
+        let newCharge = Charge.create(
+          date: Date.now,
+          serviceType: serviceType,
+          amount: chargeAmount ?? 0.0,
+          paymentMethod: paymentMethod,
+          notes: nil,
+          dogOwner: dogOwner,
+          appointment: nil,
+          in: modelContext
         )
-        // Placeholder: If you want to associate this charge with an appointment in the future,
-        // add logic here to set newCharge.appointment = appointment
-        withAnimation {
-            modelContext.insert(newCharge)
-            dogOwner.charges.append(newCharge)
+        // Apply notes if any
+        let trimmed = chargeNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            newCharge.update(notes: trimmed)
         }
-        print("Charge saved: \(newCharge.formattedAmount) on \(newCharge.formattedDate)")
+
+        print(
+            "Charge saved: \(newCharge.formattedAmount) "
+          + "via \(newCharge.paymentMethod.localized) "
+          + "on \(newCharge.formattedDate)"
+        )
     }
 
-    // MARK: - Validation Methods
+    // MARK: – Validation
 
+    /// Validates that the charge amount is greater than zero.
     private func validateCharge() -> Bool {
-        guard let amount = chargeAmount, amount > 0.0 else {
-            errorMessage = NSLocalizedString("Charge amount must be greater than 0.", comment: "Error message for zero or negative charge amount")
-            return false
-        }
-        if serviceType.rawValue.isEmpty {
-            errorMessage = NSLocalizedString("Please select a valid service type.", comment: "Error message for unselected service type")
+        guard let amount = chargeAmount, amount > 0 else {
+            errorMessage = "Charge amount must be greater than 0."
             return false
         }
         return true
     }
 
+    /// Returns true when all required form fields are valid.
     private func isFormValid() -> Bool {
-        guard let amount = chargeAmount else { return false }
-        return amount > 0.0 && !serviceType.rawValue.isEmpty
+        (chargeAmount ?? 0) > 0
     }
 
+    /// Enforces the maximum notes length by truncating excess characters.
     private func limitNotesLength() {
         if chargeNotes.count > 250 {
             chargeNotes = String(chargeNotes.prefix(250))
         }
-    }
-}
-
-// MARK: - ChargeType Enum
-
-enum ChargeType: String, CaseIterable {
-    case basic = "Basic Package"
-    case full = "Full Package"
-    case custom = "Custom Service"
-
-    var localized: String {
-        NSLocalizedString(self.rawValue, comment: "Localized description of \(self.rawValue)")
     }
 }

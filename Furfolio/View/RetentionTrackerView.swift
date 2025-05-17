@@ -6,81 +6,79 @@
 
 import SwiftUI
 
+// TODO: Move retention-risk filtering and presentation into a dedicated ViewModel; cache formatters for performance.
+
+@MainActor
+/// View showing dog owners at risk of churn (60+ days inactive), with key status badges.
 struct RetentionTrackerView: View {
-    let dogOwners: [DogOwner]
+  let dogOwners: [DogOwner]
 
-    var retentionRisks: [DogOwner] {
-        dogOwners.filter { $0.retentionRisk }
-            .sorted { ($0.lastActivityDate ?? .distantPast) < ($1.lastActivityDate ?? .distantPast) }
-    }
+  /// Shared formatter for displaying last-visit dates.
+  private static let dateFormatter: DateFormatter = {
+    let fmt = DateFormatter()
+    fmt.dateStyle = .medium
+    fmt.timeStyle = .none
+    return fmt
+  }()
 
-    var body: some View {
-        List {
-            Section(header: Text("Retention Risks (60+ days inactive)")) {
-                if retentionRisks.isEmpty {
-                    Text("No clients are currently at risk.")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(retentionRisks) { owner in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text(owner.ownerName)
-                                    .font(.headline)
+  /// Dog owners filtered to those inactive 60+ days, sorted by last activity.
+  var retentionRisks: [DogOwner] {
+    dogOwners.filter { $0.retentionRisk }
+      .sorted { ($0.lastActivityDate ?? .distantPast) < ($1.lastActivityDate ?? .distantPast) }
+  }
 
-                                if let tag = owner.lifetimeValueTag {
-                                    Label(tag, systemImage: "dollarsign.circle")
-                                        .font(.caption2)
-                                        .padding(6)
-                                        .background(Color.yellow.opacity(0.2))
-                                        .cornerRadius(6)
-                                        .foregroundColor(.orange)
-                                }
-                            }
+  var body: some View {
+    NavigationStack {
+      List {
+        Section(header: Text("Retention Risks (60+ days inactive)")) {
+          if retentionRisks.isEmpty {
+            Text("No clients are currently at risk.")
+              .foregroundColor(.secondary)
+          } else {
+            ForEach(retentionRisks) { owner in
+              VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                  Text(owner.ownerName)
+                    .font(.headline)
 
-                            if let last = owner.lastActivityDate {
-                                Text("Last Visit: \(last.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            } else {
-                                Text("No visits recorded")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-
-                            HStack(spacing: 8) {
-                                if owner.hasBirthdayThisMonth {
-                                    Label("🎂 Birthday Month", systemImage: "gift")
-                                        .font(.caption2)
-                                        .padding(6)
-                                        .background(Color.purple.opacity(0.2))
-                                        .cornerRadius(6)
-                                        .foregroundColor(.purple)
-                                }
-
-                                if !owner.loyaltyProgressTag.isEmpty {
-                                    Label(owner.loyaltyProgressTag, systemImage: "star.fill")
-                                        .font(.caption2)
-                                        .padding(6)
-                                        .background(Color.green.opacity(0.2))
-                                        .cornerRadius(6)
-                                        .foregroundColor(.green)
-                                }
-
-                                if !owner.behaviorTrendBadge.isEmpty {
-                                    Label(owner.behaviorTrendBadge, systemImage: "exclamationmark.triangle.fill")
-                                        .font(.caption2)
-                                        .padding(6)
-                                        .background(Color.orange.opacity(0.2))
-                                        .cornerRadius(6)
-                                        .foregroundColor(.orange)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
+                  if let tag = owner.lifetimeValueTag {
+                    TagLabelView(text: tag, backgroundColor: .yellow, textColor: .orange)
+                  }
                 }
+
+                if let last = owner.lastActivityDate {
+                  Text("Last Visit: \(last.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                } else {
+                  Text("No visits recorded")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                }
+
+                HStack(spacing: 8) {
+                  if owner.hasBirthdayThisMonth {
+                    TagLabelView(text: "🎂 Birthday Month", backgroundColor: .purple, textColor: .white)
+                  }
+
+                  if !owner.loyaltyProgressTag.isEmpty {
+                    TagLabelView(text: owner.loyaltyProgressTag, backgroundColor: .green, textColor: .white)
+                  }
+
+                  if !owner.behaviorTrendBadge.isEmpty {
+                    TagLabelView(text: owner.behaviorTrendBadge, backgroundColor: .orange, textColor: .white)
+                  }
+                }
+              }
+              .padding(.vertical, 8)
+              .cardStyle()
             }
+          }
         }
-        .navigationTitle("Retention Tracker")
+      }
+      .listStyle(.insetGrouped)
+      .navigationTitle("Retention Tracker")
+      .navigationBarTitleDisplayMode(.inline)
     }
+  }
 }
