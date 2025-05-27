@@ -8,9 +8,7 @@
 
 import Foundation
 import SwiftData
-// TODO: Mark required fields with @Attribute(.required) and compute heavy properties as .transient for SwiftData optimization
 import UIKit
-// TODO: Centralize transformer registration in PersistenceController and move heavy computation into a ViewModel for testability.
 @MainActor
 
 @Model
@@ -31,7 +29,7 @@ final class PetGalleryImage: Identifiable, Hashable {
     // MARK: – Persistent Properties
     
     /// Unique identifier for this gallery image.
-    @Attribute
+    @Attribute(.required)
     var id: UUID = UUID()                             // was `.init()`
     
     /// Raw image data, stored externally.
@@ -43,7 +41,7 @@ final class PetGalleryImage: Identifiable, Hashable {
     var caption: String?
     
     /// Date when the image was added.
-    @Attribute
+    @Attribute(.required)
     var dateAdded: Date = Date.now                    // was `.now`
     
     /// Last-updated timestamp.
@@ -51,7 +49,7 @@ final class PetGalleryImage: Identifiable, Hashable {
     var updatedAt: Date? = nil
     
     /// Tags associated with this image.
-    @Attribute(.transformable(by: PetGalleryImage.stringArrayTransformerName))
+    @Attribute(.required, .transformable(by: PetGalleryImage.stringArrayTransformerName))
     var tags: [String] = []
     
     /// The dog owner related to this image.

@@ -15,6 +15,28 @@ import SwiftData
 /// Supports DogOwner, Appointment, and Charge exports with proper CSV escaping.
 final class ExportManager {
 
+  struct CSVBuilder {
+      let headers: [String]
+      private var rows: [[String]] = []
+      
+      init(headers: [String]) {
+          self.headers = headers
+          self.rows = []
+      }
+      
+      mutating func addRow(_ row: [String]) {
+          rows.append(row)
+      }
+      
+      func build(escape: (String) -> String) -> String {
+          var csv = headers.map(escape).joined(separator: ",") + "\n"
+          for row in rows {
+              csv += row.map(escape).joined(separator: ",") + "\n"
+          }
+          return csv
+      }
+  }
+
   /// Shared singleton instance
   static let shared = ExportManager()
 
@@ -37,18 +59,19 @@ final class ExportManager {
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
   func exportOwnersCSV(_ owners: [DogOwner]) throws -> URL {
-    var csv = "Owner Name,Email,Phone,Address,Number of Dogs\n"
+    var builder = CSVBuilder(headers: ["Owner Name","Email","Phone","Address","Number of Dogs"])
     for owner in owners {
       let fields: [String] = [
         owner.ownerName,
         owner.email ?? "",
-        owner.contactInfo ?? "",
-        owner.address ?? "",
+        owner.contactInfo,
+        owner.address,
         String(owner.dogs.count)
       ]
-      csv += fields.map { escape($0) }.joined(separator: ",") + "\n"
+      builder.addRow(fields)
     }
-    return try write(csv: csv, fileName: "DogOwners.csv")
+    let csv = builder.build(escape: escape)
+    return try write(csv: csv, fileName: fileNameWithTimestamp("DogOwners.csv"))
   }
 
   /// Exports an array of Appointment entities to a CSV file.
@@ -56,7 +79,7 @@ final class ExportManager {
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
   func exportAppointmentsCSV(_ appointments: [Appointment]) throws -> URL {
-    var csv = "Date,Owner Name,Service Type,Notes\n"
+    var builder = CSVBuilder(headers: ["Date","Owner Name","Service Type","Notes"])
     for appt in appointments {
       let dateStr = isoFormatter.string(from: appt.date)
       let fields: [String] = [
@@ -65,9 +88,10 @@ final class ExportManager {
         appt.serviceType.rawValue,
         appt.notes ?? ""
       ]
-      csv += fields.map { escape($0) }.joined(separator: ",") + "\n"
+      builder.addRow(fields)
     }
-    return try write(csv: csv, fileName: "Appointments.csv")
+    let csv = builder.build(escape: escape)
+    return try write(csv: csv, fileName: fileNameWithTimestamp("Appointments.csv"))
   }
 
   /// Exports an array of Charge entities to a CSV file.
@@ -75,7 +99,7 @@ final class ExportManager {
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
   func exportChargesCSV(_ charges: [Charge]) throws -> URL {
-    var csv = "Date,Type,Amount,Notes\n"
+    var builder = CSVBuilder(headers: ["Date","Type","Amount","Notes"])
     for charge in charges {
       let dateStr = isoFormatter.string(from: charge.date)
       let fields: [String] = [
@@ -84,9 +108,16 @@ final class ExportManager {
         String(format: "%.2f", charge.amount),
         charge.notes ?? ""
       ]
-      csv += fields.map { escape($0) }.joined(separator: ",") + "\n"
+      builder.addRow(fields)
     }
-    return try write(csv: csv, fileName: "Charges.csv")
+    let csv = builder.build(escape: escape)
+    return try write(csv: csv, fileName: fileNameWithTimestamp("Charges.csv"))
+  }
+
+  private func fileNameWithTimestamp(_ base: String) -> String {
+      let timestamp = isoFormatter.string(from: Date())
+      let name = base.replacingOccurrences(of: ".csv", with: "")
+      return "\(name)_\(timestamp).csv"
   }
 
   /// Writes a CSV string to a temporary file and returns its URL.
@@ -105,4 +136,3 @@ final class ExportManager {
     return fileURL
   }
 }
-//

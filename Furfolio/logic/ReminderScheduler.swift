@@ -6,11 +6,11 @@
 //  Updated on 07/08/2025 — added static helpers to match Appointment APIs.
 //
 
+
 import Foundation
 import UserNotifications
 import os.log
 
-@MainActor
 /// Schedules, cancels, and reschedules local notifications for appointments.
 struct ReminderScheduler {
     // MARK: — Dependencies
@@ -103,6 +103,41 @@ struct ReminderScheduler {
             }
         }
     }
+
+
+    /// Async variant of schedule(...), throwing on error.
+    func scheduleAsync(
+        appointmentID: String,
+        at date: Date,
+        offsetMinutes: Int,
+        title: String = "Upcoming Appointment",
+        body: String,
+        category: String? = nil
+    ) async throws {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body  = body
+        content.sound = .default
+        if let cat = category {
+            content.categoryIdentifier = cat
+        }
+        let triggerDate = Self.calendar.date(byAdding: .minute, value: -offsetMinutes, to: date) ?? date
+        let comps = Self.calendar.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+        let request = UNNotificationRequest(identifier: appointmentID, content: content, trigger: trigger)
+        
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            center.add(request) { error in
+                if let err = error {
+                    logger.error("Async schedule failed \(appointmentID): \(err.localizedDescription)")
+                    continuation.resume(throwing: err)
+                } else {
+                    logger.debug("Async scheduled \(appointmentID) at \(triggerDate)")
+                    continuation.resume()
+                }
+            }
+        }
+    }
     
     
     // MARK: — Cancel
@@ -114,6 +149,13 @@ struct ReminderScheduler {
         center.removePendingNotificationRequests(withIdentifiers: [appointmentID])
         logger.debug("Canceled reminder \(appointmentID)")
         completion?()
+    }
+
+
+    /// Async variant of cancel(...).
+    func cancelAsync(appointmentID: String) async {
+        center.removePendingNotificationRequests(withIdentifiers: [appointmentID])
+        logger.debug("Async canceled reminder \(appointmentID)")
     }
     
     

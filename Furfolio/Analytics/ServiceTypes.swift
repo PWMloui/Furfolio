@@ -9,14 +9,12 @@
 import Foundation
 import SwiftUI
 
-// TODO: Cache NumberFormatter instances per Locale to improve performance and reduce allocations.
-
 /// Enumerates all grooming service types with defaults, localization, and rich descriptions.
 enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConvertible, Comparable {
     // MARK: – Cache
     
     /// Cache of currency formatters keyed by locale identifier.
-    private static var currencyFormatterCache: [String: NumberFormatter] = [:]
+    private static let currencyFormatterCache = NSCache<NSString, NumberFormatter>()
     
     case basic    = "Basic Package"
     case full     = "Full Package"
@@ -65,10 +63,11 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
         }
     }
     
-    /// SwiftUI Image view representing this service type.
-    var image: some View {
+    /// SwiftUI Image representing this service type.
+    ///
+    /// Styling and accessibility modifiers should be applied in the view layer.
+    var image: Image {
         Image(systemName: symbolName)
-            .accessibilityLabel(Text(localizedName))
     }
     
     /// Emoji plus name, e.g. "🛁 Basic Package".
@@ -131,14 +130,14 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     
     /// Returns a currency formatter for the given locale, caching instances for reuse.
     private static func priceFormatter(locale: Locale) -> NumberFormatter {
-        let key = locale.identifier
-        if let cached = currencyFormatterCache[key] {
+        let key = locale.identifier as NSString
+        if let cached = currencyFormatterCache.object(forKey: key) {
             return cached
         }
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.locale = locale
-        currencyFormatterCache[key] = formatter
+        currencyFormatterCache.setObject(formatter, forKey: key)
         return formatter
     }
     

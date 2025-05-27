@@ -8,6 +8,7 @@
 
 import Foundation
 import SwiftData
+import UIKit
 
 // TODO: Centralize transformer registration in PersistenceController and move computed logic into a ViewModel for testability.
 @MainActor
@@ -99,6 +100,10 @@ final class DogOwner: Identifiable, Hashable {
   @Attribute
   var updatedDate: Date?
 
+  /// Number of visits required to achieve "Loyal Client" status.
+  @Attribute
+  var loyaltyThreshold: Int = 10
+
   // MARK: – Initialization
 
   init(
@@ -111,6 +116,7 @@ final class DogOwner: Identifiable, Hashable {
     dogImageData: Data? = nil,
     notes: String = "",
     birthdate: Date? = nil,
+    loyaltyThreshold: Int = 10,
     pets: [Pet] = [],
     emergencyContacts: [String] = [],
     documentAttachments: [URL] = []
@@ -124,6 +130,7 @@ final class DogOwner: Identifiable, Hashable {
     self.dogImageData        = dogImageData
     self.notes               = notes.trimmingCharacters(in: .whitespacesAndNewlines)
     self.birthdate           = birthdate
+    self.loyaltyThreshold    = loyaltyThreshold
     self.pets                = pets
     self.emergencyContacts   = emergencyContacts
     self.documentAttachments = documentAttachments
@@ -142,6 +149,7 @@ final class DogOwner: Identifiable, Hashable {
     dogImageData: Data? = nil,
     notes: String = "",
     birthdate: Date? = nil,
+    loyaltyThreshold: Int = 10,
     pets: [Pet] = [],
     emergencyContacts: [String] = [],
     documentAttachments: [URL] = [],
@@ -158,6 +166,7 @@ final class DogOwner: Identifiable, Hashable {
     self.dogImageData = dogImageData
     self.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
     self.birthdate = birthdate
+    self.loyaltyThreshold = loyaltyThreshold
     self.pets = pets
     self.emergencyContacts = emergencyContacts
     self.documentAttachments = documentAttachments
@@ -188,14 +197,14 @@ final class DogOwner: Identifiable, Hashable {
     return last < cutoff
   }
 
-  /// Loyalty status based on appointment count.
+  /// Loyalty status based on appointment count; controlled by loyaltyThreshold cut-off.
   @Transient
   var loyaltyStatus: String {
     switch appointments.count {
     case 0:      return "New"
     case 1:      return "🐾 First Timer"
-    case 2...9:  return "🔁 Monthly Regular"
-    default:     return "🥇 Loyal Client"
+    case 2..<loyaltyThreshold:  return "🔁 Regular"
+    default:                 return "🥇 Loyal Client"
     }
   }
 
@@ -332,29 +341,43 @@ final class DogOwner: Identifiable, Hashable {
   }
 }
 
-
-// MARK: – Preview Data
-
 #if DEBUG
 import SwiftUI
+
 extension DogOwner {
+    /// Sample DogOwner for SwiftUI previews.
     static var sample: DogOwner {
-        let owner = DogOwner(
+        DogOwner(
             ownerName: "Jane Doe",
-            dogName: "Rex",
-            breed: "Labrador",
-            contactInfo: "jane@example.com",
-            address: "123 Bark St."
+            dogName: "Buddy",
+            breed: "Golden Retriever",
+            contactInfo: "555-1234",
+            email: "jane.doe@example.com",
+            address: "123 Main Street, Hometown",
+            dogImageData: nil,
+            notes: "Loves fetch and belly rubs.",
+            birthdate: Date(timeIntervalSince1970: 1_600_000_000),
+            loyaltyThreshold: 10,
+            pets: [],
+            emergencyContacts: ["555-5678"],
+            documentAttachments: []
         )
-        owner.charges = [ Charge.sample ]
-        let sampleAppt = Appointment(
-            date: Date.now,
-            dogOwner: owner,
-            serviceType: .basic,
-            notes: "Sample appointment"
-        )
-        owner.appointments = [ sampleAppt ]
-        return owner
+    }
+}
+
+struct DogOwner_Previews: PreviewProvider {
+    static var previews: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Owner: \(DogOwner.sample.ownerName)")
+            Text("Dog: \(DogOwner.sample.dogName)")
+            Text("Breed: \(DogOwner.sample.breed)")
+            Text("Contact: \(DogOwner.sample.contactInfo)")
+            Text("Email: \(DogOwner.sample.email ?? "-")")
+            Text("Address: \(DogOwner.sample.address)")
+            Text("Notes: \(DogOwner.sample.notes)")
+        }
+        .padding()
+        .previewDisplayName("DogOwner Sample Preview")
     }
 }
 #endif

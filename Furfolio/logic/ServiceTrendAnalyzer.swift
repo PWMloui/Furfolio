@@ -5,11 +5,11 @@
 //  Updated on 2025-07-03 — added frequency, trend scoring, and simple forecast.
 //
 
+
 import Foundation
+import _Concurrency
 
-// TODO: Allow injection of custom window sizes and smoothing factors; cache shared Calendar for performance.
 
-@MainActor
 /// Analyzes appointment data to surface service usage trends, including frequency, trend scoring, and forecasting.
 struct ServiceTrendAnalyzer {
   /// Shared calendar for date calculations.
@@ -131,5 +131,47 @@ struct ServiceTrendAnalyzer {
       forecast = alpha * Double(count) + (1 - alpha) * forecast
     }
     return forecast
+  }
+
+  /// Async variant of frequency(...).
+  static func frequency(
+    in appointments: [Appointment]
+  ) async -> [Appointment.ServiceType: Int] {
+    await _Concurrency.Task.detached { frequency(in: appointments) }.value
+  }
+
+  /// Async variant of topServices(...).
+  static func topServices(
+    in appointments: [Appointment],
+    top n: Int
+  ) async -> [(service: Appointment.ServiceType, count: Int)] {
+    await _Concurrency.Task.detached { topServices(in: appointments, top: n) }.value
+  }
+
+  /// Async variant of trendScores(...).
+  static func trendScores(
+    in appointments: [Appointment],
+    recentWindow days: Int = 30
+  ) async -> [Appointment.ServiceType: Double] {
+    await _Concurrency.Task.detached { trendScores(in: appointments, recentWindow: days) }.value
+  }
+
+  /// Async variant of topTrendingServices(...).
+  static func topTrendingServices(
+    in appointments: [Appointment],
+    top n: Int,
+    recentWindow days: Int = 30
+  ) async -> [(service: Appointment.ServiceType, score: Double)] {
+    await _Concurrency.Task.detached { topTrendingServices(in: appointments, top: n, recentWindow: days) }.value
+  }
+
+  /// Async variant of forecast(...).
+  static func forecast(
+    for service: Appointment.ServiceType,
+    in appointments: [Appointment],
+    overPast days: Int = 30,
+    alpha: Double = 0.3
+  ) async -> Double {
+    await _Concurrency.Task.detached { forecast(for: service, in: appointments, overPast: days, alpha: alpha) }.value
   }
 }

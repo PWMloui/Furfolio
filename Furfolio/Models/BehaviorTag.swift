@@ -8,9 +8,6 @@
 
 import SwiftData
 
-// TODO: Convert transient computed properties to use SwiftData’s @Transient wrapper and annotate model for main-actor safety.
-@MainActor
-
 // TODO: Refactor computed properties to be transient attributes to avoid unnecessary persistence
 @Model
 final class BehaviorTag: Identifiable, Hashable {
@@ -178,8 +175,6 @@ final class BehaviorTag: Identifiable, Hashable {
         appointments.removeAll()
     }
     
-    
-    // TODO: Consider loading presets from external configuration or localization files
     // MARK: – Presets
     
     static var calm: BehaviorTag {

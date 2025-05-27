@@ -8,9 +8,6 @@
 import SwiftUI
 import Combine
 
-// TODO: Extract quick-action subscription logic into a dedicated AppShortcutsService to decouple from AppState.
-
-@MainActor
 /// Global application state and quick-action handlers.
 final class AppState: ObservableObject {
   /// Shared singleton instance.
@@ -25,6 +22,14 @@ final class AppState: ObservableObject {
   /// Toggles presentation of the “Add Charge” sheet when a quick-action is invoked.
   /// Controls presentation of the Add Charge sheet.
   @Published var showAddChargeSheet: Bool = false
+  /// Indicates whether the user is authenticated.
+  @Published var isAuthenticated: Bool = false
+  /// Number of visits required to earn a loyalty reward.
+  @Published var loyaltyThreshold: Int {
+    didSet {
+      UserDefaults.standard.set(loyaltyThreshold, forKey: "loyaltyThreshold")
+    }
+  }
 
   private var cancellables = Set<AnyCancellable>()
 
@@ -43,8 +48,28 @@ final class AppState: ObservableObject {
       .store(in: &cancellables)
   }
 
+  /// Signs the user in by setting isAuthenticated to true.
+  func signIn() {
+    isAuthenticated = true
+  }
+
+  /// Signs the user out by setting isAuthenticated to false.
+  func signOut() {
+    isAuthenticated = false
+  }
+
+  /// Updates the loyalty threshold.
+  func updateLoyaltyThreshold(to newValue: Int) {
+    loyaltyThreshold = newValue
+  }
+
   /// Initializes the shared AppState and registers quick-action listeners.
   private init() {
+    // Load loyalty threshold from UserDefaults or default to 10
+    self.loyaltyThreshold = UserDefaults.standard.integer(forKey: "loyaltyThreshold")
+    if self.loyaltyThreshold == 0 {
+      self.loyaltyThreshold = 10
+    }
     registerQuickActionSubscriptions()
   }
 }

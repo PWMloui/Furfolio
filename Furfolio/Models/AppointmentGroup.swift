@@ -8,9 +8,6 @@
 
 import Foundation
 
-// TODO: Consider moving grouping logic into a dedicated ViewModel for cleaner separation and easier testing.
-
-@MainActor
 /// Utilities for grouping and sectioning Appointment arrays by various criteria with shared formatters.
 struct AppointmentGroup {
     

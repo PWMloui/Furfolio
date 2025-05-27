@@ -10,11 +10,9 @@ import SwiftData
 import UserNotifications
 import os
 
-// TODO: Extract notification configuration and shortcut registration into a NotificationService for cleaner App struct.
 
 // MARK: - Model Container Holder
 
-@MainActor
 /// Holds and initializes the shared SwiftData ModelContainer, with fallback for corrupted stores.
 class ModelContainerHolder: ObservableObject {
     let modelContainer: ModelContainer
@@ -58,7 +56,6 @@ enum ActiveSheet: Identifiable {
 
 // MARK: - FurfolioApp
 
-@MainActor
 /// The main application entry point, wiring up the model container and root ContentView.
 @main
 /// Configures global state: model container, notifications, and keyboard shortcuts.

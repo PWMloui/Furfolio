@@ -9,9 +9,6 @@
 import Foundation
 import SwiftUI
 
-// TODO: Allow customization of priority colors and icons via theme or environment.
-
-@MainActor
 /// Defines urgency levels for tasks, including sorting, display metadata, and theming support.
 enum TaskPriority: String, CaseIterable, Identifiable, Comparable, Codable {
   case low
@@ -47,15 +44,6 @@ enum TaskPriority: String, CaseIterable, Identifiable, Comparable, Codable {
     }
   }
 
-  /// Color associated with this priority level for UI theming.
-  var color: Color {
-    switch self {
-    case .high:   return .red
-    case .medium: return .orange
-    case .low:    return .green
-    }
-  }
-
   // MARK: – Sorting (higher priority first)
   /// Internal sort weight: lower values sort earlier (high before medium before low).
   private var sortOrder: Int {
@@ -69,5 +57,28 @@ enum TaskPriority: String, CaseIterable, Identifiable, Comparable, Codable {
   /// Sorts priorities so that `.high` comes before `.medium`, which comes before `.low`.
   static func < (lhs: TaskPriority, rhs: TaskPriority) -> Bool {
     lhs.sortOrder < rhs.sortOrder
+  }
+}
+
+private struct TaskPriorityColorMappingKey: EnvironmentKey {
+  static let defaultValue: [TaskPriority: Color] = [
+    .high: .red,
+    .medium: .orange,
+    .low: .green
+  ]
+}
+
+extension EnvironmentValues {
+  /// A dictionary mapping TaskPriority cases to Colors, allowing theme overrides.
+  var taskPriorityColors: [TaskPriority: Color] {
+    get { self[TaskPriorityColorMappingKey.self] }
+    set { self[TaskPriorityColorMappingKey.self] = newValue }
+  }
+}
+
+extension TaskPriority {
+  /// Returns the appropriate Color from the current environment's mapping.
+  func prioritizedColor(in environment: EnvironmentValues) -> Color {
+    environment.taskPriorityColors[self] ?? .primary
   }
 }

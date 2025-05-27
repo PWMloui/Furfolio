@@ -7,11 +7,7 @@
 //
 
 import Foundation
-import SwiftUI
 
-// TODO: Allow injection of custom thresholds, badge formats, and localization for enhanced flexibility and testing.
-
-@MainActor
 /// Provides loyalty reward computations for a DogOwner, producing a badge and summary.
 struct LoyaltyRewardEngine {
     
@@ -24,63 +20,37 @@ struct LoyaltyRewardEngine {
     }
     
     /// Default number of visits required to earn a free reward.
-    nonisolated static var defaultThreshold: Int { ClientStats.loyaltyThreshold }
-    /// Computes loyalty status directly from a visit count, for preview/testing.
-    nonisolated static func status(visits: Int, threshold: Int = defaultThreshold) -> Status {
-      if visits >= threshold {
-        return .init(
-          badge: NSLocalizedString("🎁 Free Bath Earned!", comment: ""),
-          summary: NSLocalizedString("You’ve earned a free bath—enjoy!", comment: "")
-        )
-      } else {
-        let remaining = threshold - visits
-        return .init(
-          badge: visitsRemainingBadge(remaining),
-          summary: visitsRemainingSummary(remaining)
-        )
-      }
-    }
+    static var defaultThreshold: Int { ClientStats.loyaltyThreshold }
     
-    /// Helper to format a localized string with visit count and plural suffix.
-    nonisolated private static func visitsRemainingBadge(_ remaining: Int) -> String {
-      String(
-        format: NSLocalizedString("🏆 %d more to free bath", comment: "Badge showing visits remaining"),
-        remaining
-      )
-    }
-
-    nonisolated private static func visitsRemainingSummary(_ remaining: Int) -> String {
-      let suffix = (remaining == 1 ? "" : "s")
-      return String(
-        format: NSLocalizedString("Just %d visit%@ away from your reward!", comment: "Summary when visits remain"),
-        remaining, suffix
-      )
-    }
-    
-    /// Computes the loyalty status for a given owner.
-    ///
-    /// - Parameters:
-    ///   - owner: The DogOwner whose visit history is evaluated.
-    ///   - threshold: Visits required to earn a free reward (defaults to `defaultThreshold`).
-    /// - Returns: A `Status` struct containing a localized badge and summary.
-    static func status(
-        for owner: DogOwner,
-        threshold: Int = defaultThreshold
-    ) -> Status {
-        let stats  = ClientStats(owner: owner)
-        let visits = stats.totalAppointments
-        
+    @MainActor
+    static func status(visits: Int, threshold: Int = defaultThreshold) -> Status {
+        let badge: String
         if visits >= threshold {
-            return .init(
-                badge: NSLocalizedString("🎁 Free Bath Earned!", comment: "Loyalty badge when user has earned reward"),
-                summary: NSLocalizedString("You’ve earned a free bath—enjoy!", comment: "Loyalty summary when reward earned")
-            )
+            badge = NSLocalizedString("🎁 Free Bath Earned!", comment: "")
         } else {
-            let remaining = threshold - visits
-            let badge = visitsRemainingBadge(remaining)
-            let summary = visitsRemainingSummary(remaining)
-            return .init(badge: badge, summary: summary)
+            badge = String(
+                format: NSLocalizedString("🏆 %d more to free bath", comment: "Badge showing visits remaining"),
+                threshold - visits
+            )
         }
+        let summary: String
+        if visits >= threshold {
+            summary = NSLocalizedString("You’ve earned a free bath—enjoy!", comment: "")
+        } else {
+            let rem = threshold - visits
+            let suffix = (rem == 1 ? "" : "s")
+            summary = String(
+                format: NSLocalizedString("Just %d visit%@ away from your reward!", comment: "Summary when visits remain"),
+                rem, suffix
+            )
+        }
+        return .init(badge: badge, summary: summary)
+    }
+    
+    @MainActor
+    static func status(for owner: DogOwner, threshold: Int = defaultThreshold) -> Status {
+        let stats = ClientStats(owner: owner)
+        return status(visits: stats.totalAppointments, threshold: threshold)
     }
 }
 

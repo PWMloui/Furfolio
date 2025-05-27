@@ -33,9 +33,6 @@ extension EnvironmentValues {
     }
 }
 
-// TODO: Consider centralizing these styles in a Theme or StyleGuide struct for easier customization and theming.
-
-@MainActor
 /// Common view modifiers for consistent styling across the app.
 extension View {
     /// Applies a card style with background, corner radius, and shadow.
@@ -124,4 +121,3 @@ extension View {
             )
     }
 }
-

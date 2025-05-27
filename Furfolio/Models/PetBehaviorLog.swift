@@ -9,7 +9,6 @@
 import Foundation
 import SwiftData
 
-// TODO: Centralize transformer registration in PersistenceController and move validation/formatting logic into a ViewModel for testability.
 @MainActor
 @Model
 final class PetBehaviorLog: Identifiable, Hashable {
@@ -26,33 +25,32 @@ final class PetBehaviorLog: Identifiable, Hashable {
   // MARK: – Persistent Properties
   
   /// Unique identifier for this behavior log entry.
-  @Attribute
-  var id: UUID = UUID()
-  
+  @Attribute nonisolated var id: UUID = UUID()
+
   /// Date and time when this behavior was logged.
   @Attribute
   var dateLogged: Date = Date.now
-  
+
   /// The log message describing the behavior.
   @Attribute
   var note: String
-  
+
   /// Optional emoji tag categorizing the behavior.
   @Attribute
   var tagEmoji: String?
-  
+
   /// Associated appointment, if any.
-  @Relationship(deleteRule: .nullify)
+  @Relationship
   var appointment: Appointment?
-  
+
   /// Owner of the dog for this log entry.
-  @Relationship(deleteRule: .cascade)
+  @Relationship
   var dogOwner: DogOwner
-  
+
   /// Record creation timestamp.
   @Attribute
   var createdAt: Date = Date.now
-  
+
   /// Record last-updated timestamp.
   @Attribute
   var updatedAt: Date?
@@ -232,10 +230,10 @@ final class PetBehaviorLog: Identifiable, Hashable {
     
     // MARK: – Hashable
     
-    static func == (lhs: PetBehaviorLog, rhs: PetBehaviorLog) -> Bool {
+    nonisolated static func == (lhs: PetBehaviorLog, rhs: PetBehaviorLog) -> Bool {
         lhs.id == rhs.id
     }
-    func hash(into hasher: inout Hasher) {
+    nonisolated func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
     

@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 // TODO: Consider extracting summary and chartData into a dedicated SummaryBuilder and ChartDataProvider for reusability and testability.
 
@@ -46,7 +47,9 @@ struct ClientStats {
         return f
     }()
 
-    static let loyaltyThreshold = 10
+    var loyaltyThreshold: Int {
+        SettingsManager.shared.loyaltyThreshold
+    }
     static let retentionDaysThreshold = 60
     static let topSpenderThreshold: Double = 1_000
 
@@ -84,7 +87,7 @@ struct ClientStats {
         switch totalAppointments {
         case 0: return "New"
         case 1: return "🐾 First Timer"
-        case 2..<Self.loyaltyThreshold: return "🔁 Monthly Regular"
+        case 2..<loyaltyThreshold: return "🔁 Monthly Regular"
         default: return "🏅 Loyal Client"
         }
     }
@@ -223,7 +226,7 @@ struct ClientStats {
     // MARK: – Progress & Badges
 
     var loyaltyProgressTag: String {
-        let remaining = max(0, Self.loyaltyThreshold - totalAppointments)
+        let remaining = max(0, loyaltyThreshold - totalAppointments)
         return remaining == 0
             ? "🎁 Free Bath Earned!"
             : "🏆 \(remaining) more to free bath"

@@ -16,6 +16,11 @@ import UserNotifications
 @MainActor
 @Model
 final class Task: Identifiable, Hashable, CustomStringConvertible {
+    /// Notification center, injectable for testing.
+    static var notificationCenter: UNUserNotificationCenter = .current()
+
+    /// Calendar provider, injectable for testing.
+    static var calendarProvider: Calendar = .current
     /// Shared date formatter for dueDateFormatted.
     private static let dateFormatter: DateFormatter = {
         let fmt = DateFormatter()
@@ -42,6 +47,7 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     @Attribute               var createdAt: Date
     @Attribute               var updatedAt: Date?
     @Attribute               var priority: TaskPriority
+    @Attribute               var reminderOffsetMinutes: Int
     @Relationship(deleteRule: .nullify)
     var owner: DogOwner?
 
@@ -54,7 +60,8 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
         dueDate: Date? = nil,
         isCompleted: Bool = false,
         priority: TaskPriority = .medium,
-        owner: DogOwner? = nil
+        owner: DogOwner? = nil,
+        reminderOffsetMinutes: Int = 30
     ) {
         self.id          = UUID()
         self.title       = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,6 +72,7 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
         self.updatedAt   = nil
         self.priority    = priority
         self.owner       = owner
+        self.reminderOffsetMinutes = reminderOffsetMinutes
     }
 
     // MARK: – Computed Properties
@@ -115,6 +123,12 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
         return parts.joined(separator: " • ")
     }
 
+    @Transient
+    /// Description of reminder offset for display
+    var reminderOffsetDescription: String {
+        "\(reminderOffsetMinutes) min before"
+    }
+
     // MARK: – Actions
 
     /// Marks the task as completed and updates timestamp.
@@ -135,47 +149,63 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
         title: String? = nil,
         details: String? = nil,
         dueDate: Date? = nil,
-        priority: TaskPriority? = nil
+        priority: TaskPriority? = nil,
+        reminderOffsetMinutes: Int? = nil
     ) {
+        var didUpdate = false
         if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
             self.title = t
+            didUpdate = true
         }
         if let d = details?.trimmingCharacters(in: .whitespacesAndNewlines) {
             self.details = d
+            didUpdate = true
         }
         if let date = dueDate {
             self.dueDate = date
+            didUpdate = true
         }
         if let p = priority {
             self.priority = p
+            didUpdate = true
         }
-        updatedAt = Date.now
+        if let offset = reminderOffsetMinutes, offset != self.reminderOffsetMinutes {
+            self.reminderOffsetMinutes = offset
+            didUpdate = true
+        }
+        if didUpdate {
+            updatedAt = Date.now
+        }
     }
 
     // MARK: – Reminder Scheduling
 
-    /// Schedules a local notification reminder before task is due.
-    func scheduleReminder(minutesBefore: Int = 30) {
+    /// Schedules a local notification reminder using the task’s reminderOffsetMinutes.
+    func scheduleReminder() {
+        scheduleReminder(minutesBefore: reminderOffsetMinutes)
+    }
+
+    private func scheduleReminder(minutesBefore: Int) {
         guard let due = dueDate else { return }
-        let triggerDate = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: due) ?? due
+        let triggerDate = Self.calendarProvider.date(byAdding: .minute, value: -minutesBefore, to: due) ?? due
 
         let content = UNMutableNotificationContent()
         content.title = "Task Due Soon"
         content.body  = title
         content.sound = .default
 
-        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+        let comps = Self.calendarProvider.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
         let request = UNNotificationRequest(
             identifier: id.uuidString,
             content: content,
             trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
         )
-        UNUserNotificationCenter.current().add(request)
+        Self.notificationCenter.add(request)
     }
 
     /// Cancels any pending local notification reminders for this task.
     func cancelReminder() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id.uuidString])
+        Self.notificationCenter.removePendingNotificationRequests(withIdentifiers: [id.uuidString])
     }
 
     // MARK: – Fetch Helpers

@@ -34,7 +34,7 @@ struct ContentView: View {
     @State private var isShowingMetricsView = false
 
     // Selected detail
-    @State private var selectedDogOwner: DogOwner?
+    @State private var selectedDogOwner: DogOwner? = nil
 
     // Filtering
     @State private var selectedFilter: String = "All"

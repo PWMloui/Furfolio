@@ -10,132 +10,202 @@ import SwiftUI
 
 // TODO: Make animation and styling configurable via environment or initializer; consider extracting to ProgressRingViewModel.
 
-@MainActor
+private struct ProgressRingLineWidthKey: EnvironmentKey { static let defaultValue: CGFloat = 12 }
+private struct ProgressRingAnimationKey: EnvironmentKey { static let defaultValue: Animation = .easeInOut(duration: 0.5) }
+private struct ProgressRingGradientKey: EnvironmentKey { static let defaultValue: Gradient? = nil }
+
+extension EnvironmentValues {
+  var progressRingLineWidth: CGFloat { self[ProgressRingLineWidthKey.self] }
+  var progressRingAnimation: Animation { self[ProgressRingAnimationKey.self] }
+  var progressRingGradient: Gradient? { self[ProgressRingGradientKey.self] }
+}
+
 /// A circular progress indicator that visually represents a value between 0.0 and 1.0.
 /// Optionally displays custom content in the center.
 struct ProgressRingView<CenterContent: View>: View {
-  /// The current progress value (0.0 to 1.0).
-  let progress: Double
-
-  /// The thickness of the progress ring stroke.
-  var lineWidth: CGFloat = 12
-
-  /// Color used for the filled portion of the ring.
-  var tint: Color = .accentColor
-
-  /// Color used for the unfilled track portion of the ring.
-  var trackColor: Color = Color(.systemGray5)
-
-  /// Optional closure producing the view displayed in the ring’s center.
-  private let centerContent: (() -> CenterContent)?
-
-  /// Default animation for progress changes.
-  nonisolated static var defaultAnimation: Animation {
-    .easeInOut(duration: 0.5)
+  enum AnimationStyle {
+    case ease, spring(response: Double, dampingFraction: Double)
+    case custom(Animation)
+    var animation: Animation {
+      switch self {
+      case .ease: return .easeInOut(duration: 0.5)
+      case .spring(let response, let damping): return .spring(response: response, dampingFraction: damping)
+      case .custom(let anim): return anim
+      }
+    }
   }
 
-  /// Animation used when the progress value changes.
-  private var progressAnimation: Animation = defaultAnimation
+  @Binding var progress: Double
+
+  var strokeGradient: Gradient?
+  var lineCap: CGLineCap
+  var lineJoin: CGLineJoin
+  var dash: [CGFloat]
+  var animationStyle: AnimationStyle
+  var onComplete: (() -> Void)?
+  var isIndeterminate: Bool
+
+  private let centerContent: (() -> CenterContent)?
+
+  @Environment(\.progressRingLineWidth) private var envLineWidth
+  @Environment(\.progressRingAnimation) private var envAnimation
+  @Environment(\.progressRingGradient) private var envGradient
+
+  @State private var animateIndeterminate = false
+
+  var lineWidth: CGFloat { envLineWidth }
 
   var body: some View {
-    ZStack {
-      // Track circle
-      Circle()
-        .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-        .foregroundColor(trackColor)
+    GeometryReader { geo in
+      ZStack {
+        // Track circle
+        Circle()
+          .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: lineCap, lineJoin: lineJoin, dash: dash))
+          .foregroundColor(Color(.systemGray5))
 
-      // Progress circle
-      Circle()
-        .trim(from: 0, to: CGFloat(min(max(progress, 0), 1)))
-        .rotation(Angle(degrees: -90))
-        .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-        .foregroundColor(tint)
-        .animation(progressAnimation, value: progress)
+        // Progress circle
+        Circle()
+          .trim(from: 0, to: CGFloat(min(max(progress, 0), 1)))
+          .stroke(
+            AngularGradient(gradient: strokeGradient ?? envGradient ?? Gradient(colors: [Color.accentColor]), center: .center),
+            style: StrokeStyle(lineWidth: lineWidth, lineCap: lineCap, lineJoin: lineJoin, dash: dash)
+          )
+          .rotationEffect(Angle(degrees: isIndeterminate ? (animateIndeterminate ? 360 : 0) : -90))
+          .animation(animationStyle.animation, value: progress)
+          .onAppear {
+            if isIndeterminate {
+              withAnimation(Animation.linear(duration: 1).repeatForever(autoreverses: false)) {
+                animateIndeterminate = true
+              }
+            }
+          }
+          .onChange(of: progress) { newValue in
+            if newValue >= 1.0 {
+              onComplete?()
+            }
+          }
+          .gesture(
+            DragGesture(minimumDistance: 0)
+              .onChanged { value in
+                let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+                let vector = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
+                let angle = atan2(vector.dy, vector.dx) + .pi / 2
+                let fixedAngle = angle < 0 ? angle + 2 * .pi : angle
+                let newProgress = Double(fixedAngle / (2 * .pi))
+                progress = min(max(newProgress, 0), 1)
+              }
+              .onEnded { _ in }
+          )
 
-      // Center content (if provided)
-      if let content = centerContent {
-        content()
+        // Center content (if provided)
+        if let content = centerContent {
+          content()
+        }
       }
     }
     .aspectRatio(1, contentMode: .fit)
   }
 }
 
-extension ProgressRingView {
-  /// Creates a ProgressRingView with optional center content and customizable animation.
-  @MainActor
-  init(
-    progress: Double,
-    lineWidth: CGFloat = 12,
-    tint: Color = .accentColor,
-    trackColor: Color = Color(.systemGray5),
-    animation: Animation = defaultAnimation,
-    centerContent: (() -> CenterContent)? = nil
-  ) {
-    self.progress = progress
-    self.lineWidth = lineWidth
-    self.tint = tint
-    self.trackColor = trackColor
-    self.progressAnimation = animation
-    self.centerContent = centerContent
-  }
-}
 
 extension ProgressRingView where CenterContent == AnyView {
-  /// Creates a ProgressRingView displaying a percentage label with customizable animation.
-  @MainActor
   init(
-    progress: Double,
-    lineWidth: CGFloat = 12,
-    tint: Color = .accentColor,
-    trackColor: Color = Color(.systemGray5),
-    animation: Animation = defaultAnimation,
-    showsPercentage: Bool
+    progress: Binding<Double>,
+    showsPercentage: Bool,
+    strokeGradient: Gradient? = nil,
+    lineCap: CGLineCap = .round,
+    lineJoin: CGLineJoin = .round,
+    dash: [CGFloat] = [],
+    animationStyle: AnimationStyle = .ease,
+    onComplete: (() -> Void)? = nil,
+    isIndeterminate: Bool = false
   ) {
-    self.progress = progress
-    self.lineWidth = lineWidth
-    self.tint = tint
-    self.trackColor = trackColor
-    self.progressAnimation = animation
+    self._progress = progress
+    self.strokeGradient = strokeGradient
+    self.lineCap = lineCap
+    self.lineJoin = lineJoin
+    self.dash = dash
+    self.animationStyle = animationStyle
+    self.onComplete = onComplete
+    self.isIndeterminate = isIndeterminate
 
     if showsPercentage {
       self.centerContent = {
         AnyView(
-          Text("\(Int((progress * 100).rounded()))%")
-            .font(.system(size: lineWidth * 0.8, weight: .semibold))
-            .foregroundColor(tint)
+          Text("\(Int((progress.wrappedValue * 100).rounded()))%")
+            .font(.system(size: 12 * 0.8, weight: .semibold))
+            .foregroundColor(Color.accentColor)
         )
       }
     } else {
       self.centerContent = nil
     }
   }
+
+  /// Allows custom centerContent for AnyView variant.
+  init(
+    progress: Binding<Double>,
+    showsPercentage: Bool = false,
+    strokeGradient: Gradient? = nil,
+    lineCap: CGLineCap = .round,
+    lineJoin: CGLineJoin = .round,
+    dash: [CGFloat] = [],
+    animationStyle: AnimationStyle = .ease,
+    onComplete: (() -> Void)? = nil,
+    isIndeterminate: Bool = false,
+    centerContent: @escaping () -> AnyView
+  ) {
+    self._progress = progress
+    self.strokeGradient = strokeGradient
+    self.lineCap = lineCap
+    self.lineJoin = lineJoin
+    self.dash = dash
+    self.animationStyle = animationStyle
+    self.onComplete = onComplete
+    self.isIndeterminate = isIndeterminate
+    self.centerContent = centerContent
+  }
 }
 
 #if DEBUG
 struct ProgressRingView_Previews: PreviewProvider {
-    static var previews: some View {
-        VStack(spacing: 20) {
-            // Simple percentage ring
-            ProgressRingView(progress: 0.25, showsPercentage: true)
-                .frame(width: 100, height: 100)
+  @State static var progress1 = 0.25
+  @State static var progress2 = 0.75
+  @State static var progress3 = 0.5
 
-            // Thicker green ring, percentage
-            ProgressRingView(progress: 0.75, lineWidth: 20, tint: .green, showsPercentage: true)
-                .frame(width: 120, height: 120)
+  static var previews: some View {
+    VStack(spacing: 20) {
+      // Simple percentage ring
+      ProgressRingView(progress: $progress1, showsPercentage: true)
+        .frame(width: 100, height: 100)
 
-            // Custom center content (paw icon)
-            ProgressRingView(progress: 0.5, lineWidth: 8, tint: .orange, trackColor: .black.opacity(0.1)) {
-                AnyView(
-                    Image(systemName: "pawprint.fill")
-                        .font(.title)
-                        .foregroundColor(.orange)
-                )
-            }
-            .frame(width: 80, height: 80)
+      // Thicker green ring, percentage
+        ProgressRingView(progress: $progress2, showsPercentage: true, strokeGradient: Gradient(colors: [.green, .blue]), lineCap: .round, lineJoin: .round, dash: [], animationStyle: .ease)
+        .frame(width: 120, height: 120)
+
+      // Custom center content (paw icon)
+      ProgressRingView<AnyView>(
+        progress: $progress3,
+        showsPercentage: false,
+        strokeGradient: nil,
+        lineCap: .round,
+        lineJoin: .round,
+        dash: [],
+        animationStyle: .ease,
+        onComplete: nil,
+        isIndeterminate: false,
+        centerContent: {
+          AnyView(
+            Image(systemName: "pawprint.fill")
+              .font(.title)
+              .foregroundColor(.orange)
+          )
         }
-        .padding()
-        .previewLayout(.sizeThatFits)
+      )
+      .frame(width: 80, height: 80)
     }
+    .padding()
+    .previewLayout(.sizeThatFits)
+  }
 }
 #endif

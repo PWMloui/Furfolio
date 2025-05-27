@@ -6,7 +6,6 @@
 //  Updated on 07/09/2025 — sync non-custom ranges, show active interval.
 //
 
-
 import SwiftUI
 
 // TODO: Extract date-range management into a ViewModel and allow custom range validation/injection for testing.

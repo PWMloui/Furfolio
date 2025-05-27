@@ -20,10 +20,15 @@ enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
   /// A custom date range defined by the user.
   case custom = "Custom"
     /// Shared calendar for date calculations.
-    private static let calendar = Calendar.current
+    static var calendar = Calendar.current
+
+    /// Overrideable provider for "now", useful in tests.
+    static var overrideNow: (() -> Date)? = nil
 
     /// Reference to the current date and time.
-    private static var now: Date { Date.now }
+    private static var now: Date {
+        overrideNow?() ?? Date()
+    }
 
     var id: String { rawValue }
     

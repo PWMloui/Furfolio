@@ -8,9 +8,6 @@
 
 import Foundation
 import SwiftData
-// TODO: Mark required fields with @Attribute(.required) and computed props as .transient for SwiftData optimization
-
-@MainActor
 @Model
 final class ServiceHistory: Identifiable, Hashable {
     

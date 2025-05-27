@@ -12,7 +12,6 @@ import SwiftData
 // TODO: Centralize transformer registration in PersistenceController and move business logic into a ViewModel for testability.
 @MainActor
 
-// TODO: Mark required fields with @Attribute(.required) and transient computed properties for SwiftData optimization
 
 @Model
 final class InventoryItem: Identifiable, Hashable {
@@ -40,7 +39,7 @@ final class InventoryItem: Identifiable, Hashable {
   var id: UUID = UUID()               // was `.init()`
   
   /// Name of the inventory item.
-  @Attribute
+  @Attribute(.required)
   var name: String
   
   /// Category of the inventory item.
@@ -48,19 +47,19 @@ final class InventoryItem: Identifiable, Hashable {
   var category: String?
   
   /// Quantity of the item currently on hand.
-  @Attribute
+  @Attribute(.required)
   var quantityOnHand: Int
   
   /// Threshold at which reorder is recommended.
-  @Attribute
+  @Attribute(.required)
   var reorderThreshold: Int
   
   /// Cost price of the item.
-  @Attribute
+  @Attribute(.required)
   var costPrice: Double
   
   /// Selling price of the item.
-  @Attribute
+  @Attribute(.required)
   var sellPrice: Double
   
   /// Additional notes about the item.

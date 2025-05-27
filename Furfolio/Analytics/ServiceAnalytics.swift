@@ -5,13 +5,10 @@
 //  Updated on May 30, 2025 — performance improvements, clearer naming, added top-frequency helper,
 //                         and replaced intermediate arrays with single-pass aggregates.
 //
-
+// Computations run off the main thread by default. UI views should `await` these async methods.
 
 import Foundation
-
-// TODO: Consider offloading heavy analytics to a background queue or using async streams for large data sets.
-@MainActor
-
+import _Concurrency
 /// Provides analytics functions for appointments and charges, such as frequency, duration, and revenue metrics.
 struct ServiceAnalytics {
     
@@ -21,6 +18,12 @@ struct ServiceAnalytics {
         let frequency: Int           // Number of appointments
         let averageDuration: Double  // Average duration in minutes
         let totalRevenue: Double     // Total revenue from charges
+
+        /// Revenue per minute across all appointments of this type.
+        var revenuePerMinute: Double {
+            let totalMinutes = averageDuration * Double(frequency)
+            return totalMinutes > 0 ? totalRevenue / totalMinutes : 0
+        }
     }
     
     
@@ -29,13 +32,26 @@ struct ServiceAnalytics {
     /// Returns the count of appointments grouped by service type.
     /// - Parameter appointments: Array of Appointment instances.
     /// - Returns: A dictionary mapping each service type to its frequency.
-    static func appointmentFrequency(
+    /// - Note: This is a synchronous method.
+    static func syncAppointmentFrequency(
         in appointments: [Appointment]
     ) -> [Appointment.ServiceType: Int] {
         appointments.reduce(into: [:]) { counts, appt in
             // Single-pass aggregation for frequency.
             counts[appt.serviceType, default: 0] += 1
         }
+    }
+
+    /// Returns the count of appointments grouped by service type.
+    /// - Parameter appointments: Array of Appointment instances.
+    /// - Returns: A dictionary mapping each service type to its frequency.
+    /// - Note: This is an async method running off the main thread.
+    static func appointmentFrequency(
+        in appointments: [Appointment]
+    ) async -> [Appointment.ServiceType: Int] {
+        await _Concurrency.Task.detached {
+            syncAppointmentFrequency(in: appointments)
+        }.value
     }
     
     
@@ -62,12 +78,8 @@ struct ServiceAnalytics {
     
     
     // MARK: – Revenue by Service
-    
-    /// Computes total revenue per service type by matching charges to appointments.
-    /// - Parameters:
-    ///   - appointments: Array of Appointment instances.
-    ///   - charges: Array of Charge instances.
-    /// - Returns: A dictionary mapping each service type to total revenue.
+
+    @MainActor
     static func revenueByService(
         for appointments: [Appointment],
         charges: [Charge]
@@ -94,22 +106,25 @@ struct ServiceAnalytics {
     ///   - appointments: Array of Appointment instances.
     ///   - charges: Array of Charge instances.
     /// - Returns: A dictionary mapping each service type to its ServiceMetrics.
+    /// - Note: This is an async method running off the main thread.
     static func metrics(
         for appointments: [Appointment],
         charges: [Charge]
-    ) -> [Appointment.ServiceType: ServiceMetrics] {
-        let freq    = appointmentFrequency(in: appointments)
-        let avg     = averageDuration(for: appointments)
-        let revenue = revenueByService(for: appointments, charges: charges)
-        
-        return Appointment.ServiceType.allCases.reduce(into: [:]) { result, type in
-            let f = freq[type] ?? 0
-            let a = avg[type] ?? 0
-            let r = revenue[type] ?? 0
-            result[type] = ServiceMetrics(frequency: f,
-                                          averageDuration: a,
-                                          totalRevenue: r)
-        }
+    ) async -> [Appointment.ServiceType: ServiceMetrics] {
+        await _Concurrency.Task.detached { () -> [Appointment.ServiceType: ServiceMetrics] in
+            let freq    = syncAppointmentFrequency(in: appointments)
+            let avg     = averageDuration(for: appointments)
+            let revenue = await revenueByService(for: appointments, charges: charges)
+            
+            return Appointment.ServiceType.allCases.reduce(into: [:]) { result, type in
+                let f = freq[type] ?? 0
+                let a = avg[type] ?? 0
+                let r = revenue[type] ?? 0
+                result[type] = ServiceMetrics(frequency: f,
+                                              averageDuration: a,
+                                              totalRevenue: r)
+            }
+        }.value
     }
     
     
@@ -154,8 +169,30 @@ struct ServiceAnalytics {
         for appointments: [Appointment],
         charges: [Charge],
         limit: Int = 3
-    ) -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
-        let m = metrics(for: appointments, charges: charges)
+    ) async -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
+        let m = await metrics(for: appointments, charges: charges)
         return topRevenueServices(from: m, limit: limit)
+    }
+
+    /// Returns the top-N service types by revenue per minute.
+    static func topRevenuePerMinuteServices(
+        from metrics: [Appointment.ServiceType: ServiceMetrics],
+        limit: Int = 3
+    ) -> [(type: Appointment.ServiceType, value: Double)] {
+        metrics
+            .map { (type: $0.key, value: $0.value.revenuePerMinute) }
+            .sorted(by: { $0.value > $1.value })
+            .prefix(limit)
+            .map { (type: $0.type, value: $0.value) }
+    }
+
+    /// Convenience that computes metrics and returns top-N by revenue per minute in one call.
+    static func topRevenuePerMinuteServices(
+        for appointments: [Appointment],
+        charges: [Charge],
+        limit: Int = 3
+    ) async -> [(type: Appointment.ServiceType, value: Double)] {
+        let m = await metrics(for: appointments, charges: charges)
+        return topRevenuePerMinuteServices(from: m, limit: limit)
     }
 }

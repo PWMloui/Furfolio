@@ -9,8 +9,6 @@
 import UIKit
 import Foundation
 
-// TODO: Move quick action registration and handling into a dedicated AppShortcutsService for cleaner separation and testability.
-
 /// Quick action identifiers for Home Screen shortcuts.
 enum AppShortcutType: String {
     case addOwner = "com.furfolio.addOwner"
@@ -25,7 +23,6 @@ extension Notification.Name {
     static let shortcutAddCharge = Notification.Name("shortcutAddCharge")
 }
 
-@MainActor
 /// Manages registration and handling of Home Screen Quick Actions.
 final class AppShortcutHandler {
 

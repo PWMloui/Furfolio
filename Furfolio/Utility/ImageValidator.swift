@@ -1,4 +1,3 @@
-
 //
 //  ImageValidator.swift
 //  Furfolio
@@ -8,6 +7,12 @@
 //
 
 import UIKit
+import ImageIO
+
+enum ValidationResult {
+  case success(UIImage)
+  case failure(String)
+}
 
 struct ImageValidator {
     
@@ -24,7 +29,7 @@ struct ImageValidator {
     // MARK: – Type Checks
     
     /// Returns true if the data is a JPEG or PNG.
-    static func isValidType(_ data: Data?) -> Bool {
+    public static func isValidType(_ data: Data?) -> Bool {
         guard let bytes = data else { return false }
         // JPEG magic numbers: 0xFF 0xD8…0xFF 0xD9
         if bytes.starts(with: [0xFF, 0xD8]) { return true }
@@ -37,13 +42,13 @@ struct ImageValidator {
     // MARK: – Size & Resolution
     
     /// Returns true if data size ≤ `maxDataSize`.
-    static func isValidSize(_ data: Data?) -> Bool {
+    public static func isValidSize(_ data: Data?) -> Bool {
         guard let data = data else { return false }
         return data.count <= maxDataSize
     }
     
     /// Returns true if image dimensions ≥ `minWidth`×`minHeight`.
-    static func isSufficientResolution(_ image: UIImage) -> Bool {
+    public static func isSufficientResolution(_ image: UIImage) -> Bool {
         image.size.width  >= minWidth &&
         image.size.height >= minHeight
     }
@@ -51,12 +56,39 @@ struct ImageValidator {
     
     // MARK: – Full Validation
     
-    /// Returns true if data exists, is correct type, within size limits, and has sufficient resolution.
-    static func isAcceptableImage(_ data: Data?) -> Bool {
-        guard let data = data else { return false }
-        guard isValidType(data) else { return false }
-        guard isValidSize(data) else { return false }
-        guard let image = UIImage(data: data) else { return false }
-        return isSufficientResolution(image)
+    /// Returns success with UIImage if valid, or failure with error message.
+    static func validateImage(_ data: Data?) -> ValidationResult {
+      guard let data = data else {
+        return .failure("No data provided")
+      }
+      guard isValidType(data) else {
+        return .failure("Unsupported image format")
+      }
+      guard isValidSize(data) else {
+        return .failure("Image exceeds maximum size of \(maxDataSize/1_000_000) MB")
+      }
+      // Use CGImageSource to inspect dimensions without full decoding
+      guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+            let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
+        return .failure("Unable to read image properties")
+      }
+      guard width >= minWidth, height >= minHeight else {
+        return .failure("Image resolution too low (\(Int(width))×\(Int(height)) px)")
+      }
+      guard let image = UIImage(data: data) else {
+        return .failure("Failed to decode image")
+      }
+      return .success(image)
+    }
+    
+    /// Convenience check: returns true if `validateImage` yields `.success`
+    public static func isAcceptableImage(_ data: Data?) -> Bool {
+        if case .success = validateImage(data) {
+            return true
+        } else {
+            return false
+        }
     }
 }

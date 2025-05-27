@@ -18,23 +18,17 @@ final class PersistenceController {
     /// The configured ModelContainer for the app's SwiftData models.
     let container: ModelContainer
 
-    private init() {
+    init(inMemory: Bool = false) {
         registerTransformers()
-        do {
-            // Initialize the SwiftData container with all @Model types
-            self.container = try ModelContainer(
-                for:
-                    DogOwner.self,
-                Appointment.self,
-                Charge.self,
-                DailyRevenue.self,
-                AppointmentTemplate.self,
-                BehaviorTag.self
-                
-            )
-        } catch {
-            fatalError("Unable to initialize ModelContainer: \(error)")
-        }
+        container = ModelContainer(
+            for: DogOwner.self, Appointment.self, Charge.self, DailyRevenue.self,
+                 AppointmentTemplate.self, BehaviorTag.self, ClientMilestone.self,
+                 ClientStats.self, InventoryItem.self, Pet.self, PetBehaviorLog.self,
+                 PetGalleryImage.self, AddOnService.self, Expense.self, AuditLog.self,
+                 VendorInvoice.self, EquipmentAsset.self, SessionLog.self,
+                 ExportProfile.self,
+            configurations: .init(inMemory: inMemory)
+        )
     }
 
     /// Registers all custom ValueTransformers for transformable @Attribute properties.
@@ -51,7 +45,7 @@ final class PersistenceController {
 
     /// A context configured for SwiftUI previews and testing (in-memory).
     static var previewContext: ModelContext = {
-      let controller = PersistenceController.shared
+      let controller = PersistenceController(inMemory: true)
       // Use the main context for previews
       return controller.container.mainContext
     }()

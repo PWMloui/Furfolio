@@ -11,8 +11,7 @@ import Foundation
 import SwiftData
 import SwiftUI
 
-@MainActor
-/// Model representing a financial charge for a service, linked to a dog owner and optional appointment.
+@preconcurrency
 @Model
 final class Charge: Identifiable, Hashable {
     
@@ -231,18 +230,3 @@ final class Charge: Identifiable, Hashable {
     
 }
 
-#if DEBUG
-extension Charge {
-    static var sample: Charge {
-        let owner = DogOwner.sample
-        return Charge(
-            date: Calendar.current.date(byAdding: .day, value: -2, to: Date.now)!,
-            serviceType: .full,
-            amount: 85.0,
-            paymentMethod: .credit,
-            notes: "Used lavender shampoo", dogOwner: owner,
-            appointment: nil, petBadges: []
-        )
-    }
-}
-#endif

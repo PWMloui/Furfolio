@@ -1,4 +1,3 @@
-
 //  LocalizationKeys.swift
 //  Furfolio
 //
@@ -9,8 +8,6 @@
 import Foundation
 
 // TODO: Centralize localization lookups and support pluralization/localized formatting via a LocalizationService.
-@MainActor
-
 /// Centralized keys for all user-facing strings in the Furfolio app.
 enum LocalizationKeys {
   /// Common action strings used throughout the app.
@@ -83,6 +80,34 @@ enum LocalizationKeys {
   // MARK: — PopularServicesView
   static let popularServicesTitle = "popular.view.title"
   static let bookingsSuffix       = "popular.view.bookings_suffix"
+
+  /// Strings for the Expense views.
+  // MARK: — Expense
+  static let addExpenseTitle      = "expense.add.title"
+  static let expenseSummaryTitle  = "expense.summary.title"
+  static let expenseTotalLabel    = "expense.summary.total"
+  static let expenseDatePicker    = "expense.add.date_picker"
+  static let expenseCategoryPicker = "expense.add.category_picker"
+  static let expenseAmountField   = "expense.add.amount_field"
+  static let expenseNotesField    = "expense.add.notes_field"
+
+  /// Strings for the Settings views.
+  // MARK: — Settings
+  static let settingsTitle        = "settings.view.title"
+  static let darkModeLockToggle   = "settings.dark_mode_lock"
+  static let notificationsToggle  = "settings.notifications_toggle"
+  static let locationAccessToggle = "settings.location_access_toggle"
+  static let privacyPolicyLink    = "settings.privacy_policy_link"
+  static let termsOfServiceLink   = "settings.terms_of_service_link"
+
+  /// Strings for the Audit Log views.
+  // MARK: — AuditLog
+  static let auditLogTitle        = "audit_log.view.title"
+  static let auditLogDateFilter   = "audit_log.filter.date"
+  static let auditLogUserFilter   = "audit_log.filter.user"
+  static let auditLogActionFilter = "audit_log.filter.action"
+  static let auditLogEntryDetails = "audit_log.entry.details"
+  static let auditLogNoEntries    = "audit_log.no_entries"
 }
 
 /// Convenience extensions for localized string lookups.

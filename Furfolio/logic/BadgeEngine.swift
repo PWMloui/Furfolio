@@ -10,11 +10,9 @@
 import Foundation
 
 struct BadgeEngine {
-  // TODO: Allow injection of custom keyword maps and loyalty thresholds for flexibility and testing.
     
     // MARK: — Behavior Badges
     
-  @MainActor
   /// Represents a behavior badge with associated display text and matching keywords.
     enum BehaviorBadge: String, CaseIterable, Identifiable, CustomStringConvertible {
         case aggressive = "🔴 Aggressive Behavior"
@@ -30,7 +28,7 @@ struct BadgeEngine {
         }
         
         /// Mapping from badges to lowercase keywords for note matching.
-        fileprivate static let keywordMap: [BehaviorBadge: [String]] = [
+        fileprivate static let defaultKeywordMap: [BehaviorBadge: [String]] = [
             .aggressive: ["aggressive", "bite", "attacked", "snapped"],
             .anxious:    ["anxious", "nervous", "fearful", "skittish"],
             .calm:       ["calm", "friendly", "relaxed", "gentle"],
@@ -38,8 +36,8 @@ struct BadgeEngine {
         ]
         
         /// Returns true if any of this badge’s keywords appear in the text.
-        func matches(_ text: String) -> Bool {
-          guard let keywords = BehaviorBadge.keywordMap[self] else { return false }
+        func matches(_ text: String, keywordMap: [BehaviorBadge: [String]] = BehaviorBadge.defaultKeywordMap) -> Bool {
+          guard let keywords = keywordMap[self] else { return false }
           return keywords.contains { text.lowercased().contains($0) }
         }
     }
@@ -47,18 +45,20 @@ struct BadgeEngine {
     /// Determines the highest-priority behavior badge for the given notes.
     /// Scans notes and returns the highest-priority badge.
     /// Priority order: aggressive → anxious → calm → neutral.
-    @MainActor static func behaviorBadge(from notes: String) -> BehaviorBadge {
+    static func behaviorBadge(
+      from notes: String,
+      keywordMap: [BehaviorBadge: [String]] = BehaviorBadge.defaultKeywordMap
+    ) -> BehaviorBadge {
         let text = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if BehaviorBadge.aggressive.matches(text) { return .aggressive }
-        if BehaviorBadge.anxious.matches(text)    { return .anxious }
-        if BehaviorBadge.calm.matches(text)       { return .calm }
+        if BehaviorBadge.aggressive.matches(text, keywordMap: keywordMap) { return .aggressive }
+        if BehaviorBadge.anxious.matches(text, keywordMap: keywordMap)    { return .anxious }
+        if BehaviorBadge.calm.matches(text, keywordMap: keywordMap)       { return .calm }
         return .neutral
     }
     
     
     // MARK: — Loyalty Badges
     
-  @MainActor
   /// Represents loyalty status: earned or progress toward next reward.
     enum LoyaltyBadge: Identifiable, CustomStringConvertible {
         case earned
@@ -109,10 +109,10 @@ struct BadgeEngine {
     
     #if DEBUG
       /// Debug helper: prints sample badge mappings and examples to the console.
-    @MainActor static func runDebugChecks() {
+    static func runDebugChecks() {
         // Behavior
         for badge in BehaviorBadge.allCases {
-          print("Keywords for \(badge.rawValue):", BehaviorBadge.keywordMap[badge]!)
+          print("Keywords for \(badge.rawValue):", BehaviorBadge.defaultKeywordMap[badge]!)
         }
         // Examples
         print("Behavior(‘friendly pup’) →", behaviorBadge(from: "friendly pup").rawValue)

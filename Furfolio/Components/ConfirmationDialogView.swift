@@ -8,9 +8,6 @@
 
 import SwiftUI
 
-// TODO: Move confirmation-dialog presentation logic into a dedicated ViewModel for better separation of concerns and customization
-
-@MainActor
 /// A reusable overlay that presents a confirmation dialog with customizable title, message, and actions.
 struct ConfirmationDialogView<Presenting: View>: View {
   @Binding var isPresented: Bool
@@ -58,30 +55,38 @@ struct ConfirmationDialogView<Presenting: View>: View {
 
   /// The view body that wraps the presenting view and conditionally presents the confirmation dialog.
   var body: some View {
-    presenting
-      .confirmationDialog(
-        title,
-        isPresented: $isPresented,
-        titleVisibility: .visible
-      ) {
-        if let message = message {
-          Text(message)
+    ZStack {
+      presenting
+      if isPresented {
+        Color.black.opacity(0.4)
+          .ignoresSafeArea()
+        VStack(spacing: 16) {
+          Text(title)
+            .font(.headline)
+          if let message = message {
+            Text(message)
+              .font(.subheadline)
+          }
+          HStack {
+            Button(cancelButtonTitle) {
+              withAnimation { isPresented = false }
+            }
+            .buttonStyle(.bordered)
+            Button(confirmButtonTitle, role: confirmButtonRole) {
+              withAnimation {
+                isPresented = false
+                onConfirm()
+              }
+            }
+            .buttonStyle(.borderedProminent)
+          }
         }
-        Button(confirmButtonTitle, role: confirmButtonRole) {
-          isPresented = false
-          onConfirm()
-        }
-        .accessibilityHint("Confirms action: \(title)")
-
-        Button(cancelButtonTitle, role: cancelButtonRole) {
-          isPresented = false
-        }
-        .accessibilityLabel(Text(cancelButtonTitle))
-        .accessibilityHint("Cancels action: \(title)")
+        .padding()
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemBackground)))
+        .shadow(radius: 10)
+        .transition(.scale.combined(with: .opacity))
       }
-      .accessibilityAddTraits(.isModal)
-      .accessibilityLabel(Text(title))
-      .animation(.easeInOut, value: $isPresented.wrappedValue)
+    }
   }
 }
 
@@ -110,6 +115,5 @@ extension View {
     ) {
       self
     }
-    .animation(.easeInOut, value: isPresented.wrappedValue)
   }
 }

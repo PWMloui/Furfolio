@@ -5,11 +5,8 @@
 //  Created by mac on 5/15/25.
 //
 
-// TODO: Centralize theme colors in a Theme struct and support dynamic light/dark variants.
 
 import SwiftUI
-
-@MainActor
 /// Defines the app’s color palette: brand, semantic, and utility colors.
 extension Color {
   // MARK: - App Color Palette

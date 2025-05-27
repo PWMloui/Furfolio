@@ -18,8 +18,6 @@ extension Appointment {
   static let behaviorLogDefault: [String] = []
 }
 
-// TODO: Register custom ValueTransformers in PersistenceController and centralize scheduling/logging logic.
-@MainActor
 @Model
 final class Appointment: @preconcurrency Identifiable {
   

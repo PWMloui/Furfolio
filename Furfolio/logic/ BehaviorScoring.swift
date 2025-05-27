@@ -9,9 +9,6 @@
 import Foundation
 import SwiftUI
 
-// TODO: Allow injection of custom keyword-to-severity mappings for flexibility and localization.
-
-@MainActor
 /// Utility for converting behavior notes into severity scores and risk categories.
 struct BehaviorScoring {
     
@@ -52,7 +49,7 @@ struct BehaviorScoring {
     }
     
     /// Mapping of keywords to severity levels; notes containing multiple keywords pick the highest level.
-    private static let keywordMap: [String: SeverityLevel] = [
+    private static let defaultKeywordMap: [String: SeverityLevel] = [
         "calm":        .calm,
         "friendly":    .calm,
         "anxious":     .mild,
@@ -67,8 +64,12 @@ struct BehaviorScoring {
     
     /// Scores a single behavior note by returning the highest matching SeverityLevel.
     /// - Parameter note: The behavior description text.
+    /// - Parameter keywordMap: A mapping from keywords to severity levels.
     /// - Returns: The highest SeverityLevel found; defaults to .calm.
-    static func score(note: String) -> SeverityLevel {
+    static func score(
+        note: String,
+        keywordMap: [String: SeverityLevel] = defaultKeywordMap
+    ) -> SeverityLevel {
         let lower = note.lowercased()
         return keywordMap.reduce(.calm) { current, pair in
             let (keyword, level) = pair
@@ -82,16 +83,23 @@ struct BehaviorScoring {
     
     /// Computes the average severity across multiple notes.
     /// - Parameter notes: Array of behavior note strings.
+    /// - Parameter keywordMap: A mapping from keywords to severity levels.
     /// - Returns: A Double between 0.0 (all calm) and 3.0 (all severe).
-    static func averageSeverity(for notes: [String]) -> Double {
+    static func averageSeverity(
+        for notes: [String],
+        keywordMap: [String: SeverityLevel] = defaultKeywordMap
+    ) -> Double {
         guard !notes.isEmpty else { return 0 }
-        let total = notes.map { score(note: $0).rawValue }.reduce(0, +)
+        let total = notes.map { score(note: $0, keywordMap: keywordMap).rawValue }.reduce(0, +)
         return Double(total) / Double(notes.count)
     }
     
     /// Convenience for extracting notes from `PetBehaviorLog` objects.
-    static func averageSeverity(from logs: [PetBehaviorLog]) -> Double {
-        averageSeverity(for: logs.map(\.note))
+    static func averageSeverity(
+        from logs: [PetBehaviorLog],
+        keywordMap: [String: SeverityLevel] = defaultKeywordMap
+    ) -> Double {
+        averageSeverity(for: logs.map(\.note), keywordMap: keywordMap)
     }
     
     // MARK: — Risk Categories
@@ -138,8 +146,11 @@ struct BehaviorScoring {
     }
     
     /// Convenience for computing a `RiskCategory` directly from logs.
-    static func riskCategory(from logs: [PetBehaviorLog]) -> RiskCategory {
-        riskCategory(for: averageSeverity(from: logs))
+    static func riskCategory(
+        from logs: [PetBehaviorLog],
+        keywordMap: [String: SeverityLevel] = defaultKeywordMap
+    ) -> RiskCategory {
+        riskCategory(for: averageSeverity(from: logs, keywordMap: keywordMap))
     }
 }
 
@@ -159,7 +170,7 @@ struct BehaviorScoring_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 16) {
             Text("Per-Note Scores").font(.headline)
-            ForEach(sampleLogs, id: \.note) { log in
+            ForEach(sampleLogs, id: \.id) { log in
                 let level = BehaviorScoring.score(note: log.note)
                 HStack {
                     Text(level.emoji)

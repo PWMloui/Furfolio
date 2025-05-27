@@ -33,7 +33,12 @@ struct DashboardView: View {
     }()
 
     // MARK: — All Owners
-    @Query(sort: \.ownerName, order: .forward) private var owners: [DogOwner]
+    @Query(nil, [SortDescriptor(\.ownerName)], nil) private var owners: [DogOwner]
+
+    /// Allows injecting owners for previews or custom instantiation.
+    init(owners: [DogOwner]) {
+        _owners = .init(wrappedValue: owners)
+    }
 
     var body: some View {
       NavigationStack {
@@ -67,7 +72,7 @@ struct DashboardView: View {
         let allApps = owners.flatMap(\.appointments)
         let upcoming = allApps.filter { $0.date > .now }.count
         let totalCharges = owners.flatMap(\.charges).reduce(0) { $0 + $1.amount }
-        let avgCharge = owners.flatMap(\.charges).map(\.amount)
+        let avgCharge = owners.flatMap(\.charges).map(Int(\.amount))
             .reduce(0, +) / max(1, owners.flatMap(\.charges).count)
         let totalClients = owners.count
 
@@ -247,49 +252,3 @@ private struct QuickActionButton: View {
     }
 }
 
-// MARK: — Previews
-
-#if DEBUG
-struct DashboardView_Previews: PreviewProvider {
-    static let container: ModelContainer = {
-        try! ModelContainer(
-            for: DogOwner.self,
-                 Appointment.self,
-                 Charge.self,
-                 PetBehaviorLog.self,
-                 ServiceHistory.self
-        )
-    }()
-
-    static var sampleOwner: DogOwner = {
-        let o = DogOwner.sample
-        // insert one upcoming appt
-        let appt = Appointment(
-            date: Calendar.current.date(byAdding: .hour, value: 4, to: .now)!,
-            dogOwner: o,
-            serviceType: .basic,
-            notes: "Preview appt"
-        )
-        o.appointments = [appt]
-        // insert one charge
-        let charge = Charge(
-            date: .now,
-            serviceType: .basic,
-            amount: 45,
-            paymentMethod: .cash,
-            owner: o,
-            notes: nil
-        )
-        o.charges = [charge]
-        container.mainContext.insert(o)
-        container.mainContext.insert(appt)
-        container.mainContext.insert(charge)
-        return o
-    }()
-
-    static var previews: some View {
-        DashboardView()
-            .environment(\.modelContext, container.mainContext)
-    }
-}
-#endif

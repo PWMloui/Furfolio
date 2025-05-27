@@ -6,28 +6,73 @@
 //
 
 import SwiftUI
-// TODO: Allow configurable padding and background color via parameters or environment.
 
-@MainActor
+private struct SectionHeaderPaddingKey: EnvironmentKey {
+  static let defaultValue = EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16)
+}
+private struct SectionHeaderBackgroundKey: EnvironmentKey {
+  static let defaultValue = Color(.systemBackground)
+}
+
+private struct SectionHeaderFontKey: EnvironmentKey {
+  static let defaultValue: Font = .headline
+}
+private struct SectionHeaderForegroundKey: EnvironmentKey {
+  static let defaultValue: Color = .primary
+}
+
+extension EnvironmentValues {
+  var sectionHeaderPadding: EdgeInsets {
+    get { self[SectionHeaderPaddingKey.self] }
+    set { self[SectionHeaderPaddingKey.self] = newValue }
+  }
+  var sectionHeaderBackground: Color {
+    get { self[SectionHeaderBackgroundKey.self] }
+    set { self[SectionHeaderBackgroundKey.self] = newValue }
+  }
+  var sectionHeaderFont: Font {
+    get { self[SectionHeaderFontKey.self] }
+    set { self[SectionHeaderFontKey.self] = newValue }
+  }
+  var sectionHeaderForeground: Color {
+    get { self[SectionHeaderForegroundKey.self] }
+    set { self[SectionHeaderForegroundKey.self] = newValue }
+  }
+}
+
 /// A reusable view for section headers, applying consistent styling across the app.
 struct SectionHeaderView: View {
   /// The text displayed as the section header.
   let title: String
   let padding: EdgeInsets
   let backgroundColor: Color
+  let font: Font?
+  let foregroundColor: Color?
 
-  init(title: String,
-       padding: EdgeInsets = EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16),
-       backgroundColor: Color = Color(.systemBackground)) {
+  @Environment(\.sectionHeaderPadding) private var defaultPadding
+  @Environment(\.sectionHeaderBackground) private var defaultBackground
+  @Environment(\.sectionHeaderFont) private var defaultFont
+  @Environment(\.sectionHeaderForeground) private var defaultForeground
+
+  init(
+    title: String,
+    padding: EdgeInsets? = nil,
+    backgroundColor: Color? = nil,
+    font: Font? = nil,
+    foregroundColor: Color? = nil
+  ) {
     self.title = title
-    self.padding = padding
-    self.backgroundColor = backgroundColor
+    self.padding = padding ?? defaultPadding
+    self.backgroundColor = backgroundColor ?? defaultBackground
+    self.font = font ?? defaultFont
+    self.foregroundColor = foregroundColor ?? defaultForeground
   }
 
   /// The view body that renders the title text with the section header style.
   var body: some View {
     Text(title)
-      .sectionHeaderStyle()
+      .font(font)
+      .foregroundColor(foregroundColor)
       .padding(padding)
       .background(backgroundColor)
   }

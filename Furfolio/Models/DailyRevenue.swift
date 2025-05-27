@@ -8,6 +8,7 @@
 
 import Foundation
 import SwiftData
+import SwiftUI
 
 // TODO: Move transformer registration to PersistenceController and consider caching aggregated summaries separately.
 // TODO: Consider persisting aggregated summaries separately to optimize large data reads
@@ -135,24 +136,27 @@ final class DailyRevenue: Identifiable, Hashable {
   /// Returns a reward tag string based on totalAmount thresholds.
   @Transient
   var dailyRewardTag: String? {
+    let thresholds = SettingsManager.shared.rewardThresholds
     switch totalAmount {
-    case 0..<100:       return nil
-    case 100..<250:     return "🏅 Goal Met"
-    case 250..<500:     return "🎯 Great Day"
-    case 500...:        return "🚀 Record Breaker"
-    default:            return nil
+    case 0..<thresholds[0]: return nil
+    case thresholds[0]..<thresholds[1]: return "🏅 Goal Met"
+    case thresholds[1]..<thresholds[2]: return "🎯 Great Day"
+    case thresholds[2]...: return "🚀 Record Breaker"
+    default: return nil
     }
   }
   
   /// Returns the number of earned loyalty points based on totalAmount.
   @Transient
   var earnedLoyaltyPoints: Int {
+    let thresholds = SettingsManager.shared.rewardThresholds
+    let points = SettingsManager.shared.loyaltyPointsPerTier
     switch totalAmount {
-    case 0..<100:       return 0
-    case 100..<250:     return 1
-    case 250..<500:     return 2
-    case 500...:        return 3
-    default:            return 0
+    case 0..<thresholds[0]: return 0
+    case thresholds[0]..<thresholds[1]: return points[0]
+    case thresholds[1]..<thresholds[2]: return points[1]
+    case thresholds[2]...: return points[2]
+    default: return 0
     }
   }
   

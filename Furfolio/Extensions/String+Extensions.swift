@@ -7,33 +7,37 @@
 
 
 import Foundation
-// TODO: Cache DateFormatter and NumberFormatter instances to improve performance and avoid repeated allocations.
 
 /// Utility extensions for String: trimming, localization, validation, and format-based conversions.
 extension String {
-  /// Cache for DateFormatter instances keyed by format strings.
-  private static var dateFormatterCache: [String: DateFormatter] = [:]
+  /// Thread-safe cache for DateFormatter instances keyed by format strings.
+  private static let dateFormatterCache = NSCache<NSString, DateFormatter>()
 
   /// Retrieves a cached DateFormatter or creates and caches one for the given format.
   private static func dateFormatter(for format: String) -> DateFormatter {
-    if let fmt = dateFormatterCache[format] { return fmt }
+    let key = format as NSString
+    if let cached = dateFormatterCache.object(forKey: key) {
+      return cached
+    }
     let fmt = DateFormatter()
     fmt.dateFormat = format
-    dateFormatterCache[format] = fmt
+    dateFormatterCache.setObject(fmt, forKey: key)
     return fmt
   }
 
-  /// Cache for NumberFormatter instances keyed by locale identifiers.
-  private static var currencyFormatterCache: [String: NumberFormatter] = [:]
+  /// Thread-safe cache for NumberFormatter instances keyed by locale identifiers.
+  private static let currencyFormatterCache = NSCache<NSString, NumberFormatter>()
 
   /// Retrieves a cached NumberFormatter or creates and caches one for currency formatting for the given locale.
   private static func currencyFormatter(for locale: Locale) -> NumberFormatter {
-    let id = locale.identifier
-    if let fmt = currencyFormatterCache[id] { return fmt }
+    let key = locale.identifier as NSString
+    if let cached = currencyFormatterCache.object(forKey: key) {
+      return cached
+    }
     let fmt = NumberFormatter()
     fmt.numberStyle = .currency
     fmt.locale = locale
-    currencyFormatterCache[id] = fmt
+    currencyFormatterCache.setObject(fmt, forKey: key)
     return fmt
   }
     /// Checks if the string contains only numeric digits.

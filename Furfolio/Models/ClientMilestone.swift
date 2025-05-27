@@ -8,7 +8,6 @@
 
 import SwiftData
 import Foundation
-// TODO: Mark key properties as required and computed props as transient for SwiftData optimization
 
 @Model
 final class ClientMilestone: Identifiable, Hashable {

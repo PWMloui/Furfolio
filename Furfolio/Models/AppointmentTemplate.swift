@@ -8,11 +8,6 @@
 
 import Foundation
 import SwiftData
-
-// TODO: Centralize date formatting using a shared DateFormatter to improve performance.
-
-// TODO: Move photo storage to file-backed attachments to avoid SQLite BLOB bloat
-@MainActor
 @Model
 final class AppointmentTemplate: Identifiable {
     

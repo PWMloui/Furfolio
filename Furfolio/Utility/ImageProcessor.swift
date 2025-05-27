@@ -10,6 +10,9 @@ import UIKit
 
 struct ImageProcessor {
     
+    /// In-memory cache for processed UIImages
+    private static let imageCache = NSCache<NSString, UIImage>()
+    
     /// Supported output formats.
     enum OutputFormat {
         case jpeg(quality: CGFloat)    // quality 0.0…1.0
@@ -20,12 +23,15 @@ struct ImageProcessor {
     
     static func resizedImage(
         from data: Data?,
-        targetWidth: CGFloat
+        targetWidth: CGFloat,
+        interpolationQuality: CGInterpolationQuality = .high
     ) -> UIImage? {
-        guard
-            let data = data,
-            let image = UIImage(data: data)
-        else { return nil }
+        guard let data = data else { return nil }
+        let cacheKey = NSString(string: "resize_\(targetWidth)_\(data.hashValue)")
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
+        }
+        guard let image = UIImage(data: data) else { return nil }
         
         let originalSize = image.size
         let scale = targetWidth / originalSize.width
@@ -35,9 +41,12 @@ struct ImageProcessor {
         )
         
         let renderer = UIGraphicsImageRenderer(size: targetSize)
-        return renderer.image { _ in
+        let resized = renderer.image { context in
+            context.cgContext.interpolationQuality = interpolationQuality
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
+        imageCache.setObject(resized, forKey: cacheKey)
+        return resized
     }
     
     static func resize(
@@ -58,22 +67,25 @@ struct ImageProcessor {
     
     static func downsampledImage(
         from data: Data?,
-        maxDimension: CGFloat
+        maxDimension: CGFloat,
+        interpolationQuality: CGInterpolationQuality = .high
     ) -> UIImage? {
-        guard
-            let data = data,
-            let image = UIImage(data: data)
-        else { return nil }
-        
-        let aspect = image.size.width / image.size.height
-        let newSize: CGSize = aspect > 1
-            ? CGSize(width: maxDimension, height: maxDimension / aspect)
-            : CGSize(width: maxDimension * aspect, height: maxDimension)
-        
-        let renderer = UIGraphicsImageRenderer(size: newSize)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: newSize))
+        guard let data = data else { return nil }
+        let cacheKey = NSString(string: "downsample_\(maxDimension)_\(data.hashValue)")
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
         }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else { return nil }
+        let img = UIImage(cgImage: cgImage)
+        imageCache.setObject(img, forKey: cacheKey)
+        return img
     }
     
     static func downsample(
@@ -100,12 +112,9 @@ struct ImageProcessor {
         targetWidth: CGFloat,
         as format: OutputFormat = .jpeg(quality: 0.8)
     ) async -> Data? {
-        // Fully qualify the concurrency Task and its Priority
-        return await _Concurrency.Task
-            .detached(priority: _Concurrency.TaskPriority.userInitiated) {
-                resize(data: data, targetWidth: targetWidth, as: format)
-            }
-            .value
+        return await Task(title: .userInitiated) {
+            resize(data: data, targetWidth: targetWidth, as: format)
+        }.value
     }
     
     static func asyncDownsample(
@@ -113,10 +122,8 @@ struct ImageProcessor {
         maxDimension: CGFloat,
         as format: OutputFormat = .jpeg(quality: 0.8)
     ) async -> Data? {
-        return await _Concurrency.Task
-            .detached(priority: _Concurrency.TaskPriority.userInitiated) {
-                downsample(data: data, maxDimension: maxDimension, as: format)
-            }
-            .value
+        return await Task(title: .userInitiated) {
+            downsample(data: data, maxDimension: maxDimension, as: format)
+        }.value
     }
 }
