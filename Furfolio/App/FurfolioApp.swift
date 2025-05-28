@@ -8,6 +8,7 @@
 import SwiftUI
 import UIKit
 import AppShortcutHandler
+import RemoteConfigService
 
 @main
 struct FurfolioApp: App {
@@ -19,6 +20,12 @@ struct FurfolioApp: App {
     init() {
         // Request notification permissions
         NotificationManager.shared.requestAuthorization()
+        AppShortcutHandler.startListening()
+        RemoteConfigService.shared.fetchAndActivate { success, error in
+            if let error = error {
+                print("🔴 RemoteConfig error: \(error)")
+            }
+        }
         // Remove direct seeding; will seed in onAppear
     }
 
@@ -35,23 +42,29 @@ struct FurfolioApp: App {
                     hasOwners: appState.hasOwners,
                     hasAppointments: appState.hasAppointments
                 )
-                ServiceSeeder.seed(into: persistenceController.container.viewContext)
+                Task {
+                    do {
+                        try await ServiceSeeder.shared.seed(into: persistenceController.container.viewContext)
+                    } catch {
+                        print("🔴 ServiceSeeder failed: \(error)")
+                    }
+                }
             }
             .onOpenURL { url in
                 appState.handleDeepLink(url)
             }
         }
         .onChange(of: scenePhase) { newPhase in
-            if newPhase == .active {
+            switch newPhase {
+            case .active:
                 AppShortcutHandler.registerShortcuts(
                     hasOwners: appState.hasOwners,
                     hasAppointments: appState.hasAppointments
                 )
-            }
-        }
-        .onChange(of: scenePhase) { newPhase in
-            if newPhase == .background {
+            case .background:
                 persistenceController.save()
+            default:
+                break
             }
         }
     }

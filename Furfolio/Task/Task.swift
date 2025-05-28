@@ -73,6 +73,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
         self.priority    = priority
         self.owner       = owner
         self.reminderOffsetMinutes = reminderOffsetMinutes
+        scheduleReminder()
     }
 
     // MARK: – Computed Properties
@@ -142,6 +143,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     func reschedule(to newDate: Date) {
         dueDate = newDate
         updatedAt = Date.now
+        scheduleReminder()
     }
 
     /// Updates task properties with trimmed inputs and stamps updatedAt.
@@ -175,6 +177,8 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
         }
         if didUpdate {
             updatedAt = Date.now
+            // Reschedule reminder when due date or offset changes
+            scheduleReminder()
         }
     }
 
@@ -274,6 +278,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     ) -> ScheduledTask {
         let t = ScheduledTask(title: title, details: details, dueDate: dueDate, priority: priority, owner: owner)
         context.insert(t)
+        t.scheduleReminder()
         return t
     }
 
