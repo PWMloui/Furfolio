@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 enum LogLevel: String {
   case error = "ERROR"
@@ -19,11 +20,28 @@ protocol LoggingBackend {
 }
 
 struct DefaultLoggingBackend: LoggingBackend {
-  private static let isoFormatter: ISO8601DateFormatter = {
+  static let isoFormatter: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return f
   }()
+  static let osLog = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "Furfolio", category: "ErrorLogger")
+  
+  private static func osLogType(for level: LogLevel) -> OSLogType {
+    switch level {
+    case .debug:
+      return .debug
+    case .info:
+      return .info
+    case .warning:
+      return .default
+    case .error:
+      return .error
+    }
+  }
+  
+  private init() {}
+  
   func log(level: LogLevel, message: String, metadata: [String: Any]?) {
     let timestamp = Self.isoFormatter.string(from: Date())
     var logEntry = "[\(timestamp)] [\(level.rawValue)] \(message)"
@@ -32,7 +50,7 @@ struct DefaultLoggingBackend: LoggingBackend {
        let jsonString = String(data: json, encoding: .utf8) {
       logEntry += " | metadata: \(jsonString)"
     }
-    print(logEntry)
+    os_log("%{public}@", log: Self.osLog, type: Self.osLogType(for: level), logEntry)
   }
 }
 

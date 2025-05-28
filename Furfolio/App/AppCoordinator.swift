@@ -13,21 +13,42 @@ class AppCoordinator: ObservableObject {
     enum Route: Equatable {
         case login
         case dashboard
+        case groomingHistory(ownerID: UUID)
+        case metricsDashboard
         case appointment(id: UUID)
     }
     
     @Published var currentRoute: Route = .login
+    @Published var path: [Route] = []
     
-    /// Returns the appropriate root view based on authentication state.
+    /// Returns the appropriate root view using a NavigationStack.
     func rootView() -> some View {
-        Group {
-            if AppState.shared.isAuthenticated {
-                DashboardView(owners: [])
-            } else {
-                LoginView()
+        NavigationStack(path: $path) {
+            Group {
+                if AppState.shared.isAuthenticated {
+                    DashboardView(owners: [])
+                        .environmentObject(self)
+                } else {
+                    LoginView()
+                        .environmentObject(self)
+                }
+            }
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .login:
+                    LoginView().environmentObject(self)
+                case .dashboard:
+                    DashboardView(owners: []).environmentObject(self)
+                case .metricsDashboard:
+                    MetricsDashboardView().environmentObject(self)
+                case .groomingHistory(let ownerID):
+                    GroomingHistoryView(ownerID: ownerID).environmentObject(self)
+                case .appointment(let id):
+                    AppointmentDetailView(appointmentID: id)
+                        .environmentObject(self)
+                }
             }
         }
-        .environmentObject(self)
     }
     
     /// Handles deep-links of form furfolio://appointment/{UUID}
@@ -42,6 +63,6 @@ class AppCoordinator: ObservableObject {
     
     /// Programmatic navigation helper.
     func navigate(to route: Route) {
-        currentRoute = route
+        path.append(route)
     }
 }

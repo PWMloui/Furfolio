@@ -30,7 +30,7 @@ final class AddOnService: Identifiable, Hashable {
             case .bath: return "Bath"
             case .haircut: return "Haircut"
             case .deShedding: return "De-shedding"
-            case .analGlandsExpression: return "Anal Glands"
+            case .analGlandsExpression: return "Anal Glands Expression"
             case .nailClipping: return "Nail Clipping"
             case .earCleaning: return "Ear Cleaning"
             case .faceGrooming: return "Face Grooming"

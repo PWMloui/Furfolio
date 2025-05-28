@@ -1,4 +1,3 @@
-
 //
 //  AppShortcutHandle.swift
 //  Furfolio
@@ -27,29 +26,33 @@ extension Notification.Name {
 final class AppShortcutHandler {
 
   /// Registers the supported Home Screen Quick Actions with the system.
-  static func registerShortcuts() {
+  static func registerShortcuts(hasOwners: Bool, hasAppointments: Bool) {
         let addOwner = UIApplicationShortcutItem(
             type: AppShortcutType.addOwner.rawValue,
-            localizedTitle: "Add Owner",
-            localizedSubtitle: nil,
+            localizedTitle: NSLocalizedString("Add Owner", comment: "Home screen shortcut to add a new owner"),
+            localizedSubtitle: NSLocalizedString("", comment: ""),
             icon: UIApplicationShortcutIcon(systemImageName: "person.badge.plus"),
             userInfo: nil
         )
         let addAppointment = UIApplicationShortcutItem(
             type: AppShortcutType.addAppointment.rawValue,
-            localizedTitle: "Add Appointment",
-            localizedSubtitle: nil,
+            localizedTitle: NSLocalizedString("Add Appointment", comment: "Home screen shortcut to add a new appointment"),
+            localizedSubtitle: NSLocalizedString("", comment: ""),
             icon: UIApplicationShortcutIcon(systemImageName: "calendar.badge.plus"),
             userInfo: nil
         )
         let addCharge = UIApplicationShortcutItem(
             type: AppShortcutType.addCharge.rawValue,
-            localizedTitle: "Add Charge",
-            localizedSubtitle: nil,
+            localizedTitle: NSLocalizedString("Add Charge", comment: "Home screen shortcut to add a new charge"),
+            localizedSubtitle: NSLocalizedString("", comment: ""),
             icon: UIApplicationShortcutIcon(systemImageName: "dollarsign.circle"),
             userInfo: nil
         )
-        UIApplication.shared.shortcutItems = [addOwner, addAppointment, addCharge]
+        var items: [UIApplicationShortcutItem] = []
+        items.append(addOwner)
+        if hasOwners { items.append(addAppointment) }
+        if hasAppointments { items.append(addCharge) }
+        UIApplication.shared.shortcutItems = items
     }
 
   /// Handles a selected quick action by posting the corresponding notification.
@@ -63,10 +66,16 @@ final class AppShortcutHandler {
         switch shortcutType {
         case .addOwner:
             NotificationCenter.default.post(name: .shortcutAddOwner, object: nil)
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
         case .addAppointment:
             NotificationCenter.default.post(name: .shortcutAddAppointment, object: nil)
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
         case .addCharge:
             NotificationCenter.default.post(name: .shortcutAddCharge, object: nil)
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
         }
         return true
     }
@@ -74,5 +83,16 @@ final class AppShortcutHandler {
   static func clearShortcuts() {
     UIApplication.shared.shortcutItems = []
   }
+
+  /// Starts listening for app foreground notifications to refresh shortcuts dynamically.
+  static func startListening() {
+    NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+        // TODO: Replace these placeholders with your actual logic to determine if owners and appointments exist.
+        let hasOwners = YourDataService.hasOwners
+        let hasAppointments = YourDataService.hasAppointments
+        registerShortcuts(hasOwners: hasOwners, hasAppointments: hasAppointments)
+    }
+  }
 }
 
+// Note: Call `AppShortcutHandler.startListening()` from your app's entry point, e.g., in `FurfolioApp.swift` init method.

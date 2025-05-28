@@ -30,9 +30,9 @@ enum TaskPriority: String, CaseIterable, Identifiable, Comparable, Codable {
     }
   }
 
-  /// Accessibility label combining title and icon.
-  var accessibilityLabel: Text {
-    Text("\(icon) \(title)")
+  /// Accessibility label combining icon and title for VoiceOver.
+  var accessibilityLabel: String {
+    "\(icon) \(title)"
   }
 
   /// Emoji icon that visually represents this priority level.
@@ -80,5 +80,10 @@ extension TaskPriority {
   /// Returns the appropriate Color from the current environment's mapping.
   func prioritizedColor(in environment: EnvironmentValues) -> Color {
     environment.taskPriorityColors[self] ?? .primary
+  }
+
+  /// Default color for this priority, without needing an EnvironmentValues.
+  var defaultColor: Color {
+    TaskPriorityColorMappingKey.defaultValue[self] ?? .primary
   }
 }

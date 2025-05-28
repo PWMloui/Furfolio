@@ -12,25 +12,52 @@ import SwiftData
 // TODO: Move behavior-editing logic into a dedicated ViewModel; use FormValidator for note and badge validation.
 
 @MainActor
+class BehaviorBadgeEditorViewModel: ObservableObject {
+    @Published var note: String
+    @Published var tagEmoji: String
+
+    private var log: PetBehaviorLog
+    private static let maxNoteLength: Int = 250
+
+    init(log: PetBehaviorLog) {
+        self.log = log
+        self.note = log.note
+        self.tagEmoji = log.tagEmoji
+    }
+
+    var isValid: Bool {
+        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !tagEmoji.isEmpty
+    }
+
+    func save(context: ModelContext) throws {
+        let clampedNote = String(note.prefix(Self.maxNoteLength))
+        log.note = clampedNote
+        log.tagEmoji = tagEmoji
+        try context.save()
+    }
+}
+
 /// View for editing a single PetBehaviorLog entry, including notes and badge selection.
 struct BehaviorBadgeEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @StateObject private var viewModel: BehaviorBadgeEditorViewModel
 
-    /// Maximum allowed length for behavior notes.
     private static let maxNoteLength: Int = 250
 
-    @Bindable var log: PetBehaviorLog
+    init(log: PetBehaviorLog) {
+        _viewModel = StateObject(wrappedValue: BehaviorBadgeEditorViewModel(log: log))
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 /// Section for entering and editing behavior notes.
                 Section(header: Text("Behavior Notes")) {
-                    TextEditor(text: $log.note)
-                        .onChange(of: log.note) { newValue in
+                    TextEditor(text: $viewModel.note)
+                        .onChange(of: viewModel.note) { newValue in
                             if newValue.count > Self.maxNoteLength {
-                                log.note = String(newValue.prefix(Self.maxNoteLength))
+                                viewModel.note = String(newValue.prefix(Self.maxNoteLength))
                             }
                         }
                         .frame(minHeight: 100)
@@ -39,9 +66,9 @@ struct BehaviorBadgeEditorView: View {
                                 .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                         )
                     VStack(alignment: .trailing) {
-                        Text("\(log.note.count)/\(Self.maxNoteLength)")
+                        Text("\(viewModel.note.count)/\(Self.maxNoteLength)")
                             .font(.caption)
-                            .foregroundColor(log.note.count > Self.maxNoteLength ? .red : .secondary)
+                            .foregroundColor(viewModel.note.count > Self.maxNoteLength ? .red : .secondary)
                     }
                 }
 
@@ -51,7 +78,7 @@ struct BehaviorBadgeEditorView: View {
                         ForEach(BadgeEngine.BehaviorBadge.allCases, id: \.self) { badge in
                             let emoji = badge.rawValue.components(separatedBy: " ").first!
                             Button {
-                                log.tagEmoji = emoji
+                                viewModel.tagEmoji = emoji
                             } label: {
                                 VStack {
                                     Text(emoji)
@@ -63,7 +90,7 @@ struct BehaviorBadgeEditorView: View {
                                 .padding(6)
                                 .background(
                                     RoundedRectangle(cornerRadius: 8)
-                                        .fill(log.tagEmoji == emoji ? Color.accentColor.opacity(0.2) : Color.clear)
+                                        .fill(viewModel.tagEmoji == emoji ? Color.accentColor.opacity(0.2) : Color.clear)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -80,13 +107,13 @@ struct BehaviorBadgeEditorView: View {
                     /// Saves changes to the behavior log if valid.
                     Button("Done") {
                         do {
-                            try context.save()
+                            try viewModel.save(context: context)
                         } catch {
                             print("⚠️ Failed to save behavior log:", error)
                         }
                         dismiss()
                     }
-                    .disabled(log.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || log.tagEmoji.isEmpty)
+                    .disabled(!viewModel.isValid)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     /// Discards changes and dismisses the editor.

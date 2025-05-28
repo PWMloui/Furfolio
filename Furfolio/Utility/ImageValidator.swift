@@ -57,38 +57,49 @@ struct ImageValidator {
     // MARK: – Full Validation
     
     /// Returns success with UIImage if valid, or failure with error message.
-    static func validateImage(_ data: Data?) -> ValidationResult {
-      guard let data = data else {
-        return .failure("No data provided")
-      }
-      guard isValidType(data) else {
-        return .failure("Unsupported image format")
-      }
-      guard isValidSize(data) else {
-        return .failure("Image exceeds maximum size of \(maxDataSize/1_000_000) MB")
-      }
-      // Use CGImageSource to inspect dimensions without full decoding
-      guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
-            let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
-        return .failure("Unable to read image properties")
-      }
-      guard width >= minWidth, height >= minHeight else {
-        return .failure("Image resolution too low (\(Int(width))×\(Int(height)) px)")
-      }
-      guard let image = UIImage(data: data) else {
-        return .failure("Failed to decode image")
-      }
-      return .success(image)
+    static func validateImage(_ data: Data?) async -> ValidationResult {
+        return await Task.detached(priority: .userInitiated) {
+            guard let data = data else {
+                return .failure("No data provided")
+            }
+            guard isValidType(data) else {
+                return .failure("Unsupported image format")
+            }
+            guard isValidSize(data) else {
+                return .failure("Image exceeds maximum size of \(maxDataSize/1_000_000) MB")
+            }
+            // Use CGImageSource to inspect dimensions without full decoding
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+                  let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
+                return .failure("Unable to read image properties")
+            }
+            guard width >= minWidth, height >= minHeight else {
+                return .failure("Image resolution too low (\(Int(width))×\(Int(height)) px)")
+            }
+            guard let image = UIImage(data: data) else {
+                return .failure("Failed to decode image")
+            }
+            return .success(image)
+        }.value
+    }
+    
+    /// Synchronous wrapper for validateImage
+    static func validateImageSync(_ data: Data?) async -> ValidationResult {
+        return Task { await validateImage(data) }.value
     }
     
     /// Convenience check: returns true if `validateImage` yields `.success`
     public static func isAcceptableImage(_ data: Data?) -> Bool {
-        if case .success = validateImage(data) {
+        if case .success = Task { await validateImage(data) }.value {
             return true
         } else {
             return false
         }
     }
+}
+public protocol EquatableBytes: Equatable {
+    init(bytes: [UInt8])
+    var bytes: [UInt8] { get }      
 }

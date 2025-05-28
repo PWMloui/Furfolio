@@ -46,13 +46,17 @@ class ModelContainerHolder: ObservableObject {
 
 // MARK: - ActiveSheet Enum
 
-/// Identifies which modal sheet is currently presented in the app.
+
+/// Represents which modal sheet to present.
 enum ActiveSheet: Identifiable {
     case addOwner
     case metricsDashboard
-    
+    case addAppointment
+    case addCharge
+
     var id: Int { hashValue }
 }
+
 
 // MARK: - FurfolioApp
 
@@ -111,6 +115,12 @@ struct FurfolioApp: App {
                   }
                 }
               }
+            case .addAppointment:
+              AddAppointmentView()
+            case .addCharge:
+              AddChargeView()
+            @unknown default:
+              break
             }
           }
       }

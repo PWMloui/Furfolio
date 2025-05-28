@@ -11,7 +11,6 @@ import SwiftUI
 
 // TODO: Consider extracting summary and chartData into a dedicated SummaryBuilder and ChartDataProvider for reusability and testability.
 
-@MainActor
 /// Provides computed statistics and summaries for a given DogOwner, including loyalty, retention, and service usage metrics.
 struct ClientStats {
     let owner: DogOwner

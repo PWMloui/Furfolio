@@ -24,7 +24,13 @@ final class ClientMilestone: Identifiable, Hashable {
     var type: MilestoneType
     
     @Attribute
-    var details: String?
+    var details: String? {
+        didSet {
+            // Trim whitespace on any update to details and record update time
+            details = details?.trimmingCharacters(in: .whitespacesAndNewlines)
+            updatedAt = Date.now
+        }
+    }
     
     @Relationship(deleteRule: .nullify)
     var dogOwner: DogOwner

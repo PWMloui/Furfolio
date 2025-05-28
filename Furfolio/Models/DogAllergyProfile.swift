@@ -37,7 +37,6 @@ enum AllergySeverity: Int, Codable, CaseIterable, Identifiable {
   }
 }
 
-// TODO: Centralize transformer registration in PersistenceController and move validation logic into a ViewModel for testability.
 @MainActor
 @Model
 final class DogAllergyProfile: Identifiable, Hashable {

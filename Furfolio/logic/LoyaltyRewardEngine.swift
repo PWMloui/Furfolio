@@ -19,36 +19,45 @@ struct LoyaltyRewardEngine {
         let summary: String
     }
     
-    /// Default number of visits required to earn a free reward.
-    static var defaultThreshold: Int { ClientStats.loyaltyThreshold }
+    /// Cached loyalty threshold to avoid repeated UserDefaults lookups.
+    private static let cachedThreshold: Int = SettingsManager.shared.loyaltyThreshold
+    static var defaultThreshold: Int { cachedThreshold }
+
+    /// Preloaded localized format strings for badge and summary.
+    private static let moreBadgeFmt = NSLocalizedString(
+        "🏆 %d more to free bath",
+        comment: "Badge showing visits remaining"
+    )
+    private static let moreSummaryFmt = NSLocalizedString(
+        "Just %d visit%@ away from your reward!",
+        comment: "Summary when visits remain"
+    )
+    private static let earnedBadge = NSLocalizedString(
+        "🎁 Free Bath Earned!",
+        comment: "Badge when threshold reached"
+    )
+    private static let earnedSummary = NSLocalizedString(
+        "You’ve earned a free bath—enjoy!",
+        comment: "Summary when threshold reached"
+    )
     
-    @MainActor
     static func status(visits: Int, threshold: Int = defaultThreshold) -> Status {
         let badge: String
-        if visits >= threshold {
-            badge = NSLocalizedString("🎁 Free Bath Earned!", comment: "")
-        } else {
-            badge = String(
-                format: NSLocalizedString("🏆 %d more to free bath", comment: "Badge showing visits remaining"),
-                threshold - visits
-            )
-        }
         let summary: String
+
         if visits >= threshold {
-            summary = NSLocalizedString("You’ve earned a free bath—enjoy!", comment: "")
+            badge = earnedBadge
+            summary = earnedSummary
         } else {
             let rem = threshold - visits
-            let suffix = (rem == 1 ? "" : "s")
-            summary = String(
-                format: NSLocalizedString("Just %d visit%@ away from your reward!", comment: "Summary when visits remain"),
-                rem, suffix
-            )
+            let suffix = rem == 1 ? "" : "s"
+            badge = String(format: moreBadgeFmt, rem)
+            summary = String(format: moreSummaryFmt, rem, suffix)
         }
         return .init(badge: badge, summary: summary)
     }
     
-    @MainActor
-    static func status(for owner: DogOwner, threshold: Int = defaultThreshold) -> Status {
+    @MainActor static func status(for owner: DogOwner, threshold: Int = defaultThreshold) -> Status {
         let stats = ClientStats(owner: owner)
         return status(visits: stats.totalAppointments, threshold: threshold)
     }

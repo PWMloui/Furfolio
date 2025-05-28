@@ -108,6 +108,20 @@ enum LocalizationKeys {
   static let auditLogActionFilter = "audit_log.filter.action"
   static let auditLogEntryDetails = "audit_log.entry.details"
   static let auditLogNoEntries    = "audit_log.no_entries"
+
+  /// Strings for the Appointment Templates.
+  // MARK: — AppointmentTemplate
+  static let templateFullGroomTitle   = "appointment.template.full_groom.title"
+  static let templateBasicGroomTitle  = "appointment.template.basic_groom.title"
+  static let templateSpaBathTitle     = "appointment.template.spa_bath.title"
+  static let templateServiceDuration  = "appointment.template.duration"
+  static let templateServicePriceRange = "appointment.template.price_range"
+
+  /// Strings for Add-On Services.
+  // MARK: — AddOnService
+  static let addOnServicesHeader      = "addon.services.header"
+  static let addOnServiceNameFormat   = "addon.service.name.%@"      // use String(format:) with service identifier
+  static let addOnServicePriceRange   = "addon.service.price_range.%@" // use String(format:) with service identifier
 }
 
 /// Convenience extensions for localized string lookups.

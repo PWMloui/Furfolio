@@ -10,7 +10,12 @@ import Foundation
 /// A cache for expensive-to-create DateFormatter instances.
 struct DateFormatterCache {
 
-    private static let cache = NSCache<NSString, DateFormatter>()
+    private static let cache: NSCache<NSString, DateFormatter> = {
+        let cache = NSCache<NSString, DateFormatter>()
+        cache.countLimit = 32 // Maximum number of cached formatters
+        cache.totalCostLimit = 0 // Set to 0 for unlimited total cost, or adjust as needed
+        return cache
+    }()
 
     /// Returns a cached DateFormatter for the given date and time styles, locale, and time zone.
     /// - Parameters:
@@ -75,4 +80,5 @@ struct DateFormatterCache {
     static func clearCache() {
         cache.removeAllObjects()
     }
+    private init() {}
 }

@@ -15,19 +15,7 @@ import PhotosUI
 /// View for editing an existing DogOwner, with fields for owner & dog info, images, and inactive status.
 struct EditDogOwnerView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var ownerName: String
-    @State private var dogName: String
-    @State private var breed: String
-    @State private var contactInfo: String
-    @State private var address: String
-    @State private var notes: String
-    @State private var selectedImage: PhotosPickerItem? = nil
-    @State private var selectedImageData: Data?
-    @State private var isSaving = false
-    @State private var showValidationError = false
-    @State private var showImageError = false
-    @State private var markAsInactive = false
-    @State private var dogBirthdate: Date
+    @StateObject private var viewModel: EditDogOwnerViewModel
 
     /// Shared date formatter for birthdate display.
     private static let dateFormatter: DateFormatter = {
@@ -39,21 +27,10 @@ struct EditDogOwnerView: View {
     var dogOwner: DogOwner
     var onSave: (DogOwner) -> Void
 
-    // Haptic feedback generator for successful actions.
-    private let feedbackGenerator = UINotificationFeedbackGenerator()
-
     init(dogOwner: DogOwner, onSave: @escaping (DogOwner) -> Void) {
-        _ownerName = State(initialValue: dogOwner.ownerName)
-        _dogName = State(initialValue: dogOwner.dogName)
-        _breed = State(initialValue: dogOwner.breed)
-        _contactInfo = State(initialValue: dogOwner.contactInfo)
-        _address = State(initialValue: dogOwner.address)
-        _notes = State(initialValue: dogOwner.notes)
-        _selectedImageData = State(initialValue: dogOwner.dogImage)
-        _dogBirthdate = State(initialValue: dogOwner.birthdate ?? Date())
-        
         self.dogOwner = dogOwner
         self.onSave = onSave
+        _viewModel = StateObject(wrappedValue: EditDogOwnerViewModel(dogOwner: dogOwner, onSave: onSave))
     }
 
     var body: some View {
@@ -67,12 +44,12 @@ struct EditDogOwnerView: View {
                     dogImageSection()
                         .transition(.opacity)
                     Section(header: Text("Dog Birthdate")) {
-                        DatePicker("Select Birthdate", selection: $dogBirthdate, displayedComponents: .date)
+                        DatePicker("Select Birthdate", selection: $viewModel.dogBirthdate, displayedComponents: .date)
                             .datePickerStyle(.compact)
                             .accessibilityLabel("Dog Birthdate Picker")
                     }
                     Section {
-                        Toggle("Mark as Inactive", isOn: $markAsInactive)
+                        Toggle("Mark as Inactive", isOn: $viewModel.markAsInactive)
                             .accessibilityLabel("Mark owner as inactive")
                     }
                 }
@@ -88,13 +65,13 @@ struct EditDogOwnerView: View {
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Save") {
-                            handleSave()
+                            viewModel.save()
                         }
-                        .disabled(isSaving || !validateFields())
+                        .disabled(viewModel.isSaving || !viewModel.validateFields())
                     }
                 }
                 // Overlay progress indicator while saving
-                if isSaving {
+                if viewModel.isSaving {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
                     ProgressView("Saving...")
@@ -104,12 +81,12 @@ struct EditDogOwnerView: View {
                         .transition(.opacity)
                 }
             }
-            .alert("Missing Required Fields", isPresented: $showValidationError) {
+            .alert("Missing Required Fields", isPresented: $viewModel.showValidationError) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("Please fill out the required fields: Owner Name, Dog Name, and Breed.")
             }
-            .alert("Invalid Image", isPresented: $showImageError) {
+            .alert("Invalid Image", isPresented: $viewModel.showImageError) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("Please select an image under 5MB with appropriate dimensions.")
@@ -122,19 +99,19 @@ struct EditDogOwnerView: View {
     /// Builds the section for editing owner name, contact info, and address.
     private func ownerInformationSection() -> some View {
         Section(header: Text("Owner Information")) {
-            customTextField(placeholder: "Owner Name", text: $ownerName)
-            customTextField(placeholder: "Contact Info (Optional)", text: $contactInfo, keyboardType: .phonePad)
-            customTextField(placeholder: "Address (Optional)", text: $address)
+            customTextField(placeholder: "Owner Name", text: $viewModel.ownerName)
+            customTextField(placeholder: "Contact Info (Optional)", text: $viewModel.contactInfo, keyboardType: .phonePad)
+            customTextField(placeholder: "Address (Optional)", text: $viewModel.address)
         }
     }
 
     /// Builds the section for editing dog name, breed, notes, and loyalty tags.
     private func dogInformationSection() -> some View {
         Section(header: Text("Dog Information")) {
-            customTextField(placeholder: "Dog Name", text: $dogName)
-            customTextField(placeholder: "Breed", text: $breed)
+            customTextField(placeholder: "Dog Name", text: $viewModel.dogName)
+            customTextField(placeholder: "Breed", text: $viewModel.breed)
             notesField()
-            if !notes.isEmpty {
+            if !viewModel.notes.isEmpty {
                 HStack {
                     Text("Behavior Tag")
                     Spacer()
@@ -159,12 +136,14 @@ struct EditDogOwnerView: View {
     private func dogImageSection() -> some View {
         Section(header: Text("Dog Image")) {
             PhotosPicker(
-                selection: $selectedImage,
+                selection: Binding(get: { nil }, set: { newValue in
+                    viewModel.handleImageSelection(newValue)
+                }),
                 matching: .images,
                 photoLibrary: .shared()
             ) {
                 HStack {
-                    if let selectedImageData, let uiImage = UIImage(data: selectedImageData) {
+                    if let selectedImageData = viewModel.selectedImageData, let uiImage = UIImage(data: selectedImageData) {
                         Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFill()
@@ -184,18 +163,15 @@ struct EditDogOwnerView: View {
                     Text("Select an Image")
                 }
             }
-            .onChange(of: selectedImage) { newValue in
-                handleImageSelection(newValue)
-            }
         }
     }
 
     /// Builds the notes input field with character limit enforcement.
     private func notesField() -> some View {
         VStack(alignment: .leading) {
-            customTextField(placeholder: "Notes (Optional)", text: $notes)
-                .onChange(of: notes) { _ in limitNotesLength() }
-            if notes.count > 250 {
+            customTextField(placeholder: "Notes (Optional)", text: $viewModel.notes)
+                .onChange(of: viewModel.notes) { _ in limitNotesLength() }
+            if viewModel.notes.count > 250 {
                 Text("Notes must be 250 characters or less.")
                     .font(.caption)
                     .foregroundColor(.red)
@@ -211,103 +187,16 @@ struct EditDogOwnerView: View {
             .autocapitalization(.words)
     }
 
-    // MARK: - Save Handling
-
-    /// Validates inputs, updates the model, and provides haptic feedback during save.
-    private func handleSave() {
-        if validateFields() {
-            isSaving = true
-            // Provide success haptic feedback
-            feedbackGenerator.notificationOccurred(.success)
-            let autoInactiveTag = "[AUTO-INACTIVE]"
-            let manualInactiveTag = "[INACTIVE]"
-
-            let inactiveTag: String
-            if markAsInactive {
-                inactiveTag = manualInactiveTag
-            } else if shouldBeAutoInactive() {
-                inactiveTag = autoInactiveTag
-            } else {
-                inactiveTag = ""
-            }
-
-            let updatedNotes = inactiveTag.isEmpty ? notes : "\(inactiveTag) \(notes)"
-            dogOwner.ownerName = ownerName
-            dogOwner.dogName = dogName
-            dogOwner.breed = breed
-            dogOwner.contactInfo = contactInfo
-            dogOwner.address = address
-            dogOwner.notes = updatedNotes
-            dogOwner.dogImage = selectedImageData
-            dogOwner.birthdate = Calendar.current.startOfDay(for: dogBirthdate)
-            onSave(dogOwner)
-            // Simulate a short delay to allow animations to complete
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                isSaving = false
-                dismiss()
-            }
-        } else {
-            showValidationError = true
-            // Provide error haptic feedback if fields are missing
-            feedbackGenerator.notificationOccurred(.error)
-        }
-    }
-
-    /// Applies user edits to the DogOwner and invokes onSave closure.
-    private func updateDogOwner() {
-        dogOwner.ownerName = ownerName
-        dogOwner.dogName = dogName
-        dogOwner.breed = breed
-        dogOwner.contactInfo = contactInfo
-        dogOwner.address = address
-        dogOwner.notes = notes
-        dogOwner.dogImage = selectedImageData
-        onSave(dogOwner)
-    }
-
-    // MARK: - Helper Methods
-
-    /// Loads and validates the selected image asynchronously.
-    private func handleImageSelection(_ newValue: PhotosPickerItem?) {
-        Task {
-            if let newValue, let data = try? await newValue.loadTransferable(type: Data.self) {
-                if isValidImage(data: data) {
-                    selectedImageData = data
-                } else {
-                    showImageError = true
-                    // Provide error haptic feedback for invalid image
-                    feedbackGenerator.notificationOccurred(.error)
-                }
-            }
-        }
-    }
-
-    private func validateFields() -> Bool {
-      do {
-        try FormValidator.validateRequired(ownerName, fieldName: "Owner Name")
-        try FormValidator.validateRequired(dogName, fieldName: "Dog Name")
-        try FormValidator.validateRequired(breed, fieldName: "Breed")
-        return true
-      } catch {
-        showValidationError = true
-        return false
-      }
-    }
-
     /// Truncates notes to a maximum of 250 characters.
     private func limitNotesLength() {
-        if notes.count > 250 {
-            notes = String(notes.prefix(250))
+        if viewModel.notes.count > 250 {
+            viewModel.notes = String(viewModel.notes.prefix(250))
         }
-    }
-
-    private func isValidImage(data: Data) -> Bool {
-      return ImageValidator.isAcceptableImage(data)
     }
 
     /// Computes an emoji badge based on keywords in the notes.
     private var computedBehaviorBadge: String {
-        let lowercased = notes.lowercased()
+        let lowercased = viewModel.notes.lowercased()
         if lowercased.contains("calm") || lowercased.contains("friendly") {
             return "🟢 Calm"
         } else if lowercased.contains("aggressive") || lowercased.contains("bite") {
@@ -317,12 +206,5 @@ struct EditDogOwnerView: View {
         } else {
             return "😐 Neutral"
         }
-    }
-    // Detects if the owner should be automatically marked as inactive (mock logic)
-    /// Determines if the owner should be auto-marked inactive based on last appointment date.
-    private func shouldBeAutoInactive() -> Bool {
-        guard let lastAppointment = dogOwner.appointments.map(\.date).max() else { return false }
-        let ninetyDaysAgo = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantPast
-        return lastAppointment < ninetyDaysAgo
     }
 }

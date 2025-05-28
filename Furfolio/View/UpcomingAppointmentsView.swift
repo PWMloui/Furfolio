@@ -1,4 +1,3 @@
-
 //
 //  UpcomingAppointmentsView.swift
 //  Furfolio
@@ -11,6 +10,26 @@ import SwiftUI
 import SwiftData
 
 // TODO: Move upcoming appointments fetching and grouping logic into a dedicated ViewModel for cleaner views and easier testing.
+
+@MainActor
+class UpcomingAppointmentsViewModel: ObservableObject {
+    @Published var groupedByDay: [(day: Date, appts: [Appointment])] = []
+
+    private static let calendar = Calendar.current
+
+    init(appointments: [Appointment]) {
+        updateGroupings(with: appointments)
+    }
+
+    func updateGroupings(with upcoming: [Appointment]) {
+        let dict = Dictionary(grouping: upcoming) { appt in
+            Self.calendar.startOfDay(for: appt.date)
+        }
+        self.groupedByDay = dict
+            .map { (day: $0.key, appts: $0.value) }
+            .sorted { $0.day < $1.day }
+    }
+}
 
 @MainActor
 /// View displaying upcoming (future) appointments grouped by calendar day.
@@ -26,6 +45,13 @@ struct UpcomingAppointmentsView: View {
     )
     private var upcoming: [Appointment]
 
+    @StateObject private var viewModel: UpcomingAppointmentsViewModel
+
+    init() {
+        let initialAppointments: [Appointment] = []
+        _viewModel = StateObject(wrappedValue: UpcomingAppointmentsViewModel(appointments: initialAppointments))
+    }
+
     /// Shared calendar and section header formatter.
     private static let calendar = Calendar.current
     private static let headerDateFormatter: DateFormatter = {
@@ -35,16 +61,6 @@ struct UpcomingAppointmentsView: View {
         return fmt
     }()
 
-    /// Groups appointments by the start-of-day date
-    private var groupedByDay: [(day: Date, appts: [Appointment])] {
-        let dict = Dictionary(grouping: upcoming) { appt in
-            Self.calendar.startOfDay(for: appt.date)
-        }
-        return dict
-            .map { (day: $0.key, appts: $0.value) }
-            .sorted { $0.day < $1.day }
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -53,7 +69,7 @@ struct UpcomingAppointmentsView: View {
                         .foregroundColor(.secondary)
                         .italic()
                 } else {
-                    ForEach(groupedByDay, id: \.day) { group in
+                    ForEach(viewModel.groupedByDay, id: \.day) { group in
                         Section(header: Text(headerText(for: group.day))) {
                             ForEach(group.appts) { appt in
                                 AppointmentRow(appointment: appt)
@@ -73,6 +89,12 @@ struct UpcomingAppointmentsView: View {
             .toolbar {
                 EditButton()
             }
+        }
+        .onAppear {
+            viewModel.updateGroupings(with: upcoming)
+        }
+        .onChange(of: upcoming) { newValue in
+            viewModel.updateGroupings(with: newValue)
         }
     }
 

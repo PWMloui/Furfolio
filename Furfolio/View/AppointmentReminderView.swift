@@ -6,38 +6,62 @@
 //  Updated on Jun 15, 2025 — fixed Section init and model binding.
 //
 
-
 import SwiftUI
 import UserNotifications
 import SwiftData
 
-// TODO: Move reminder logic into a dedicated ViewModel and use NotificationManager for scheduling
+@MainActor
+class AppointmentReminderViewModel: ObservableObject {
+    @Published var defaultOffset: Int = 24
+    @Published var showAlert: Bool = false
+    @Published var alertMessage: String = ""
+    
+    let dogOwners: [DogOwner]
+    
+    private let feedback = UINotificationFeedbackGenerator()
+    
+    init(dogOwners: [DogOwner]) {
+        self.dogOwners = dogOwners
+    }
+    
+    func schedule(_ appointment: Appointment, for ownerName: String) {
+        appointment.scheduleReminder()
+        alertMessage = "Reminder set for \(ownerName)"
+        feedback.notificationOccurred(.success)
+        showAlert = true
+    }
+    
+    func cancel(_ appointment: Appointment, for ownerName: String) {
+        appointment.cancelReminder()
+        alertMessage = "Reminder canceled for \(ownerName)"
+        feedback.notificationOccurred(.warning)
+        showAlert = true
+    }
+}
 
 @MainActor
 /// Displays a form for configuring default reminder offsets and per-owner appointment reminders.
 struct AppointmentReminderView: View {
-    let dogOwners: [DogOwner]
-    @State private var defaultOffset: Int = 24
-    @State private var showAlert = false
-    @State private var alertMessage = ""
+    @StateObject private var viewModel: AppointmentReminderViewModel
     
-    private let notificationCenter = UNUserNotificationCenter.current()
-    private let feedback = UINotificationFeedbackGenerator()
+    init(dogOwners: [DogOwner]) {
+        _viewModel = StateObject(wrappedValue: AppointmentReminderViewModel(dogOwners: dogOwners))
+    }
     
     var body: some View {
         NavigationStack {
             Form {
                 Section("Reminder Settings") {
                     Stepper(
-                        "\(defaultOffset)h before",
-                        value: $defaultOffset,
+                        "\(viewModel.defaultOffset)h before",
+                        value: $viewModel.defaultOffset,
                         in: 1...72
                     ) {_ in
                         Text("Default Offset")
                     }
                 }
                 
-                ForEach(dogOwners) { owner in
+                ForEach(viewModel.dogOwners) { owner in
                     let stats = ClientStats(owner: owner)
                     Section(
                         header: ownerHeader(owner, stats: stats)
@@ -46,9 +70,8 @@ struct AppointmentReminderView: View {
                             ReminderRow(
                                 appointment: next,
                                 ownerName: owner.ownerName,
-                                defaultOffset: defaultOffset,
-                                showAlert: $showAlert,
-                                alertMessage: $alertMessage
+                                defaultOffset: viewModel.defaultOffset,
+                                viewModel: viewModel
                             )
                         } else {
                             Text("No upcoming appointments.")
@@ -59,10 +82,10 @@ struct AppointmentReminderView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Appointment Reminders")
-            .alert("Notification", isPresented: $showAlert) {
+            .alert("Notification", isPresented: $viewModel.showAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
-                Text(alertMessage)
+                Text(viewModel.alertMessage)
             }
         }
     }
@@ -93,63 +116,24 @@ private struct ReminderRow: View {
     @Bindable var appointment: Appointment
     let ownerName: String
     let defaultOffset: Int
-    @Binding var showAlert: Bool
-    @Binding var alertMessage: String
-    
-    @State private var offset: Int
-    
-    private let feedback = UINotificationFeedbackGenerator()
-    
-    init(
-        appointment: Appointment,
-        ownerName: String,
-        defaultOffset: Int,
-        showAlert: Binding<Bool>,
-        alertMessage: Binding<String>
-    ) {
-        _appointment = Bindable(wrappedValue: appointment)
-        self.ownerName = ownerName
-        _showAlert = showAlert
-        _alertMessage = alertMessage
-        self.defaultOffset = defaultOffset
-        _offset = State(initialValue: appointment.reminderOffset)
-    }
+    @ObservedObject var viewModel: AppointmentReminderViewModel
     
     var body: some View {
         VStack(alignment: .leading) {
             Text("Next: \(appointment.formattedDate)")
                 .font(.headline)
             
-            Stepper("\(offset)h before", value: $offset, in: 1...72)
-                .onChange(of: offset) { new in
-                    appointment.reminderOffset = new
-                }
+            Stepper("\(appointment.reminderOffset)h before", value: $appointment.reminderOffset, in: 1...72)
             
             HStack {
                 if !appointment.isNotified {
-                    Button("Set Reminder", action: schedule)
+                    Button("Set Reminder") { viewModel.schedule(appointment, for: ownerName) }
                 } else {
-                    Button("Cancel", action: cancel)
-                    Button("Reschedule", action: schedule)
+                    Button("Cancel") { viewModel.cancel(appointment, for: ownerName) }
+                    Button("Reschedule") { viewModel.schedule(appointment, for: ownerName) }
                 }
             }
         }
         .padding(.vertical, 4)
-    }
-    
-    /// Schedules a local notification for the bound appointment.
-    private func schedule() {
-        appointment.scheduleReminder()
-        alertMessage = "Reminder set for \(ownerName)"
-        feedback.notificationOccurred(.success)
-        showAlert = true
-    }
-    
-    /// Cancels a previously scheduled notification for the bound appointment.
-    private func cancel() {
-        appointment.cancelReminder()
-        alertMessage = "Reminder canceled for \(ownerName)"
-        feedback.notificationOccurred(.warning)
-        showAlert = true
     }
 }

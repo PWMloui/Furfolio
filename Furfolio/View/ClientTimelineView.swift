@@ -1,4 +1,3 @@
-
 //
 //  ClientTimelineView.swift
 //  Furfolio
@@ -11,97 +10,21 @@
 import SwiftUI
 import SwiftData
 
-// TODO: Move timeline-building logic into a dedicated ViewModel for cleaner views and easier testing
-
 @MainActor
 /// View displaying a unified timeline of appointments, charges, behavior logs, and service history for a client.
 struct ClientTimelineView: View {
-    @Environment(\.modelContext) private var context
     let owner: DogOwner
+    @StateObject private var viewModel: ClientTimelineViewModel
 
-    /// Shared formatter for section headers.
-    private static let dateFormatter: DateFormatter = {
-      let fmt = DateFormatter()
-      fmt.dateStyle = .medium
-      fmt.timeStyle = .none
-      return fmt
-    }()
-    /// Shared calendar for day grouping.
-    private static let calendar = Calendar.current
-
-    /// Represents a single entry in the client timeline (sorted by date descending).
-    /// A unified event in the client timeline
-    private struct TimelineEntry: Identifiable, Comparable {
-        let id = UUID()
-        let date: Date
-        let title: String
-        let subtitle: String?
-        let icon: String
-
-        static func < (lhs: TimelineEntry, rhs: TimelineEntry) -> Bool {
-            lhs.date > rhs.date  // descending by date
-        }
-    }
-
-    /// Aggregates all event entries (appointments, charges, logs, history) sorted by descending date.
-    /// Build a sorted array of all timeline entries
-    private var timeline: [TimelineEntry] {
-        var entries: [TimelineEntry] = []
-
-        // Appointments
-        for appt in owner.appointments {
-            entries.append(
-                TimelineEntry(
-                    date: appt.date,
-                    title: "Appointment: \(appt.serviceType.localized)",
-                    subtitle: appt.notes,
-                    icon: "calendar"
-                )
-            )
-        }
-
-        // Charges
-        for charge in owner.charges {
-            entries.append(
-                TimelineEntry(
-                    date: charge.date,
-                    title: "Charge: \(charge.formattedAmount)",
-                    subtitle: charge.paymentMethod.localized,
-                    icon: "dollarsign.circle"
-                )
-            )
-        }
-
-        // Behavior Logs
-        for log in PetBehaviorLog.fetchAll(for: owner, in: context) {
-            entries.append(
-                TimelineEntry(
-                    date: log.dateLogged,
-                    title: "Behavior: \(log.tagEmoji ?? "")",
-                    subtitle: log.note,
-                    icon: "pawprint"
-                )
-            )
-        }
-
-        // Service History
-        for hist in ServiceHistory.fetchAll(for: owner, in: context) {
-            entries.append(
-                TimelineEntry(
-                    date: hist.date,
-                    title: "Service: \(hist.serviceType.localized)",
-                    subtitle: "Cost \(hist.formattedCost)",
-                    icon: "scissors"
-                )
-            )
-        }
-
-        return entries.sorted()
+    init(owner: DogOwner) {
+        self.owner = owner
+        let ctx = ModelContext.current
+        _viewModel = StateObject(wrappedValue: ClientTimelineViewModel(owner: owner, context: ctx))
     }
 
     var body: some View {
       List {
-          ForEach(groupedByDay(), id: \.key) { day, events in
+          ForEach(viewModel.groupedEntries, id: \.key) { day, events in
               Section(header: Text(day)) {
                   ForEach(events) { entry in
                       HStack(alignment: .top, spacing: 12) {
@@ -127,28 +50,6 @@ struct ClientTimelineView: View {
       }
       .listStyle(.insetGrouped)
       .navigationTitle("Timeline: \(owner.dogName)")
-    }
-
-    /// Groups timeline entries by calendar day, returning day-string and sorted events.
-    private func groupedByDay() -> [(key: String, events: [TimelineEntry])] {
-        let df = Self.dateFormatter
-
-        let dict = Dictionary(grouping: timeline) { entry in
-            df.string(from: entry.date)
-        }
-        // Sort keys descending by date value
-        return dict.keys
-            .compactMap { key -> (String, [TimelineEntry])? in
-                guard let first = dict[key]?.first else { return nil }
-                return (key, dict[key]!.sorted())
-            }
-            .sorted { lhs, rhs in
-                // parse back to Date for sorting descending
-                if let ld = df.date(from: lhs.0), let rd = df.date(from: rhs.0) {
-                    return ld > rd
-                }
-                return lhs.0 > rhs.0
-            }
     }
 }
 

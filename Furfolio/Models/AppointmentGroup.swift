@@ -123,14 +123,8 @@ struct AppointmentGroup {
     }
     
     /// Sections appointments by status with header titles from status raw values.
-    /// Now uses allCases to avoid Comparable constraint.
     static func statusSections(_ appts: [Appointment]) -> [(header: String, appointments: [Appointment])] {
-      return Appointment.AppointmentStatus.allCases
-        .map { status in
-          let matches = appts.filter { $0.status == status }
-          return (status.rawValue, matches)
-        }
-        .filter { !$0.appointments.isEmpty }
+      sections(appts, by: { $0.status }, header: { $0.rawValue })
     }
     
     
@@ -141,15 +135,9 @@ struct AppointmentGroup {
         groupBy(appts) { $0.serviceType }
     }
     
-    /// Sections appointments by service type, ordered according to ServiceType.allCases.
     /// Sections appointments by service type with localized header text.
     static func serviceTypeSections(_ appts: [Appointment]) -> [(header: String, appointments: [Appointment])] {
-      return Appointment.ServiceType.allCases
-        .map { type in
-          let matches = appts.filter { $0.serviceType == type }
-          return (type.localized, matches)
-        }
-        .filter { !$0.appointments.isEmpty }
+      sections(appts, by: { $0.serviceType }, header: { $0.serviceType.localized })
     }
 
     
@@ -193,23 +181,16 @@ struct AppointmentGroup {
     
     /// Sections grouped by behavior category with emoji headers.
     static func behaviorSections(_ appts: [Appointment]) -> [(header: String, appointments: [Appointment])] {
-      return BehaviorCategory.allCases
-        .map { category in
-          let matches = appts.filter { appt in
-            let text = appt.behaviorLog.joined(separator: " ").lowercased()
-            switch category {
-            case .aggressive:
-              return text.contains("aggressive") || text.contains("bite")
-            case .calm:
-              return text.contains("calm") || text.contains("friendly")
-            case .neutral:
-              return !text.contains("aggressive") && !text.contains("bite") &&
-                     !text.contains("calm") && !text.contains("friendly")
-            }
-          }
-          return (category.rawValue, matches)
+      sections(appts, by: {
+        let text = $0.behaviorLog.joined(separator: " ").lowercased()
+        if text.contains("aggressive") || text.contains("bite") {
+          return BehaviorCategory.aggressive
+        } else if text.contains("calm") || text.contains("friendly") {
+          return BehaviorCategory.calm
+        } else {
+          return BehaviorCategory.neutral
         }
-        .filter { !$0.appointments.isEmpty }
+      }, header: { $0.rawValue })
     }
     
     
@@ -228,18 +209,6 @@ struct AppointmentGroup {
     
     /// Sections appointments by loyalty category with reward/progress headers.
     static func loyaltySections(_ appts: [Appointment], threshold: Int = 10) -> [(header: String, appointments: [Appointment])] {
-      return LoyaltyCategory.allCases
-        .map { category in
-          let matches = appts.filter { appt in
-            switch category {
-            case .earned:
-              return appt.loyaltyPoints >= threshold
-            case .progressing:
-              return appt.loyaltyPoints < threshold
-            }
-          }
-          return (category.rawValue, matches)
-        }
-        .filter { !$0.appointments.isEmpty }
+      sections(appts, by: { $0.loyaltyPoints >= threshold ? .earned : .progressing }, header: { $0.rawValue })
     }
 }

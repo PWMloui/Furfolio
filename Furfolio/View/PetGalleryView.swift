@@ -13,19 +13,62 @@ import PhotosUI
 // TODO: Move gallery loading, deletion, and photo-picking logic into a dedicated ViewModel; use ImageValidator and ImageProcessor for input checks and resizing.
 
 @MainActor
-/// A grid-based gallery view displaying an owner’s pet photos with support for adding and deleting images.
-struct PetGalleryView: View {
+class PetGalleryViewModel: ObservableObject {
     @Environment(\.modelContext) private var modelContext
     let owner: DogOwner
+    @Published var images: [PetGalleryImage] = []
 
-    /// Fetches all PetGalleryImage entities for this owner, sorted newest first.
-    // Fetch all gallery images for this owner, newest first
-    @Query(
-        fetch: FetchDescriptor<PetGalleryImage>(
-            predicate: #Predicate { $0.dogOwner.id == owner.id },
-            sortBy: [SortDescriptor(\PetGalleryImage.dateAdded, order: .reverse)])
-    )
-    private var images: [PetGalleryImage]
+    init(owner: DogOwner, context: ModelContext) {
+        self.owner = owner
+        self.modelContext = context
+        loadImages()
+    }
+
+    func loadImages() {
+        images = try! modelContext.fetch(
+            FetchDescriptor<PetGalleryImage>(
+                predicate: #Predicate { $0.dogOwner.id == owner.id },
+                sortBy: [SortDescriptor(\PetGalleryImage.dateAdded, order: .reverse)]
+            )
+        )
+    }
+
+    func delete(_ img: PetGalleryImage) {
+        modelContext.delete(img)
+        saveAndReload()
+    }
+
+    func add(_ data: Data) {
+        guard let processed = ImageProcessor.resize(data: data, maxDimension: 1024),
+              ImageValidator.isValid(data: processed) else { return }
+        _ = PetGalleryImage.record(
+            imageData: processed,
+            caption: nil,
+            tags: [],
+            owner: owner,
+            appointment: nil,
+            in: modelContext
+        )
+        saveAndReload()
+    }
+
+    func saveAndReload() {
+        try? modelContext.save()
+        loadImages()
+    }
+
+    func refresh() async {
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        loadImages()
+    }
+}
+
+@MainActor
+/// A grid-based gallery view displaying an owner’s pet photos with support for adding and deleting images.
+struct PetGalleryView: View {
+    let owner: DogOwner
+
+    @StateObject private var viewModel: PetGalleryViewModel
 
     @State private var showingPicker = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
@@ -52,12 +95,17 @@ struct PetGalleryView: View {
     /// Defines a three-column flexible grid layout for the gallery thumbnails.
     var columns: [GridItem] = Array(repeating: .init(.flexible(), spacing: 8), count: 3)
 
+    init(owner: DogOwner, context: ModelContext) {
+        self.owner = owner
+        _viewModel = StateObject(wrappedValue: PetGalleryViewModel(owner: owner, context: context))
+    }
+
     /// Composes the gallery UI with a grid of images and an "Add Photo" button.
     var body: some View {
         VStack {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(images) { img in
+                    ForEach(viewModel.images) { img in
                         if let thumb = img.thumbnail {
                             Button {
                                 selectedImage = img
@@ -72,7 +120,7 @@ struct PetGalleryView: View {
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
-                                    modelContext.delete(img)
+                                    viewModel.delete(img)
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -93,12 +141,10 @@ struct PetGalleryView: View {
                     }
                 }
                 .padding()
-                .animation(.default, value: images)
+                .animation(.default, value: viewModel.images)
             }
             .refreshable {
-                isRefreshing = true
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                isRefreshing = false
+                await viewModel.refresh()
             }
             // Show loading indicator during refresh
             if isRefreshing {
@@ -144,7 +190,7 @@ struct PetGalleryView: View {
                         Button("Save") {
                             img.caption = newCaption.trimmingCharacters(in: .whitespacesAndNewlines)
                             do {
-                                try modelContext.save()
+                                try viewModel.modelContext.save()
                             } catch {
                                 errorMessage = error.localizedDescription
                                 showErrorAlert = true
@@ -177,20 +223,11 @@ struct PetGalleryView: View {
         .onChange(of: selectedPhotos) { newItems in
             for item in newItems {
                 Task {
-                    if let raw = try? await item.loadTransferable(type: Data.self),
-                       let processed = ImageProcessor.resize(data: raw, maxDimension: 1024) {
-                        _ = PetGalleryImage.record(
-                            imageData: processed,
-                            caption: nil,
-                            tags: [],
-                            owner: owner,
-                            appointment: nil,
-                            in: modelContext
-                        )
+                    if let raw = try? await item.loadTransferable(type: Data.self) {
+                       viewModel.add(raw)
                     }
                 }
             }
-            selectedPhotos = []
         }
     }
 }
@@ -214,7 +251,7 @@ struct PetGalleryView_Previews: PreviewProvider {
         PetGalleryImage.record(imageData: sampleData, caption: "After", tags: [], owner: owner, appointment: nil, in: ctx)
 
         return NavigationView {
-            PetGalleryView(owner: owner)
+            PetGalleryView(owner: owner, context: ctx)
                 .environment(\.modelContext, ctx)
         }
     }

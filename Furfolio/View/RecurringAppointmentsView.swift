@@ -33,7 +33,6 @@ struct RecurringAppointmentsView: View {
     private var recurringAppointments: [Appointment]
 
     @State private var editingAppointment: Appointment?
-    @State private var showEditSheet = false
 
     /// Main content: a list of recurring appointments or a placeholder when none exist.
     var body: some View {
@@ -68,7 +67,6 @@ struct RecurringAppointmentsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             editingAppointment = appt
-                            showEditSheet = true
                         }
                     }
                     .onDelete(perform: delete)
@@ -80,11 +78,9 @@ struct RecurringAppointmentsView: View {
             .toolbar {
                 EditButton()
             }
-            .sheet(isPresented: $showEditSheet) {
-                if let appt = editingAppointment {
-                    RecurrenceEditor(appointment: appt)
-                        .environment(\.modelContext, modelContext)
-                }
+            .sheet(item: $editingAppointment) { appt in
+                RecurrenceEditor(appointment: appt)
+                    .environment(\.modelContext, modelContext)
             }
         }
     }

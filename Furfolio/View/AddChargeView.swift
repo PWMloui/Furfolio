@@ -9,6 +9,7 @@
 import SwiftUI
 import SwiftData
 
+
 // TODO: Move business logic (validation and saving) into a dedicated ViewModel for better testability and separation of concerns.
 
 @MainActor
@@ -31,6 +32,7 @@ struct AddChargeView: View {
     @State private var errorMessage = ""
     @State private var isSaving = false
     @State private var showTooltip = false
+    @State private var selectedAddOns: Set<AddOnService> = []
 
     private let feedbackGenerator = UINotificationFeedbackGenerator()
 
@@ -83,6 +85,16 @@ struct AddChargeView: View {
             paymentMethodPicker()
             chargeAmountInput()
             notesField()
+        }
+        Section(header: Text("Add‑On Services")) {
+            AddOnServicesListView(selectedAddOns: $selectedAddOns)
+            HStack {
+                Text("Add‑Ons Total")
+                Spacer()
+                let addOnTotal = selectedAddOns.reduce(0) { $0 + $1.minPrice }
+                Text((addOnTotal) as Double?, format: Self.amountFormat)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 
@@ -258,6 +270,8 @@ struct AddChargeView: View {
           appointment: nil,
           in: modelContext
         )
+        // Attach selected add‑ons to the charge
+        newCharge.addOns = Array(selectedAddOns)
         // Apply notes if any
         let trimmed = chargeNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -284,7 +298,7 @@ struct AddChargeView: View {
 
     /// Returns true when all required form fields are valid.
     private func isFormValid() -> Bool {
-        (chargeAmount ?? 0) > 0
+        ((chargeAmount ?? 0) + selectedAddOns.reduce(0) { $0 + $1.minPrice }) > 0
     }
 
     /// Enforces the maximum notes length by truncating excess characters.

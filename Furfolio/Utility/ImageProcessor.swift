@@ -104,26 +104,25 @@ struct ImageProcessor {
         }
     }
     
-    
-    // MARK: — Asynchronous Methods
-    
-    static func asyncResize(
+    /// Asynchronously resizes image data on a background thread.
+    static func resizeAsync(
         data: Data?,
         targetWidth: CGFloat,
         as format: OutputFormat = .jpeg(quality: 0.8)
     ) async -> Data? {
-        return await Task(title: .userInitiated) {
-            resize(data: data, targetWidth: targetWidth, as: format)
+        await Task.detached(priority: .userInitiated) {
+            return resize(data: data, targetWidth: targetWidth, as: format)
         }.value
     }
     
-    static func asyncDownsample(
+    /// Asynchronously downsamples image data on a background thread.
+    static func downsampleAsync(
         data: Data?,
         maxDimension: CGFloat,
         as format: OutputFormat = .jpeg(quality: 0.8)
     ) async -> Data? {
-        return await Task(title: .userInitiated) {
-            downsample(data: data, maxDimension: maxDimension, as: format)
+        await Task.detached(priority: .userInitiated) {
+            return downsample(data: data, maxDimension: maxDimension, as: format)
         }.value
     }
 }

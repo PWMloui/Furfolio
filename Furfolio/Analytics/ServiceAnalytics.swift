@@ -12,6 +12,12 @@ import _Concurrency
 /// Provides analytics functions for appointments and charges, such as frequency, duration, and revenue metrics.
 struct ServiceAnalytics {
     
+    private static func runAsync<T>(
+        _ work: @Sendable @escaping () -> T
+    ) async -> T {
+        await Task.detached { work() }.value
+    }
+    
     /// Aggregated metrics for a specific service type.
     /// Aggregated metrics for a specific service type.
     struct ServiceMetrics {
@@ -49,9 +55,7 @@ struct ServiceAnalytics {
     static func appointmentFrequency(
         in appointments: [Appointment]
     ) async -> [Appointment.ServiceType: Int] {
-        await _Concurrency.Task.detached {
-            syncAppointmentFrequency(in: appointments)
-        }.value
+        await runAsync { syncAppointmentFrequency(in: appointments) }
     }
     
     
@@ -111,20 +115,43 @@ struct ServiceAnalytics {
         for appointments: [Appointment],
         charges: [Charge]
     ) async -> [Appointment.ServiceType: ServiceMetrics] {
-        await _Concurrency.Task.detached { () -> [Appointment.ServiceType: ServiceMetrics] in
-            let freq    = syncAppointmentFrequency(in: appointments)
-            let avg     = averageDuration(for: appointments)
-            let revenue = await revenueByService(for: appointments, charges: charges)
-            
-            return Appointment.ServiceType.allCases.reduce(into: [:]) { result, type in
-                let f = freq[type] ?? 0
-                let a = avg[type] ?? 0
-                let r = revenue[type] ?? 0
-                result[type] = ServiceMetrics(frequency: f,
-                                              averageDuration: a,
-                                              totalRevenue: r)
+        // Compute frequency and duration
+        async let freqAndDur: [Appointment.ServiceType: (frequency: Int, durationSum: Double, durationCount: Int)] = runAsync {
+            appointments.reduce(into: [:]) { acc, appt in
+                let type = appt.serviceType
+                var entry = acc[type] ?? (0, 0, 0)
+                entry.frequency += 1
+                if let dur = appt.durationMinutes {
+                    entry.durationSum += Double(dur)
+                    entry.durationCount += 1
+                }
+                acc[type] = entry
             }
-        }.value
+        }
+        // Compute revenue by service type
+        async let revenueMap: [Appointment.ServiceType: Double] = runAsync {
+            let serviceMap = Dictionary(uniqueKeysWithValues:
+                appointments.map { ($0.id, $0.serviceType) }
+            )
+            return charges.reduce(into: [:]) { sums, charge in
+                guard let appt = charge.appointment,
+                      let type = serviceMap[appt.id] else { return }
+                sums[type, default: 0] += charge.amount
+            }
+        }
+        // Await both
+        let (stats, revenues) = await (freqAndDur, revenueMap)
+        // Build result metrics
+        return Appointment.ServiceType.allCases.reduce(into: [:]) { result, type in
+            let (frequency, durationSum, durationCount) = stats[type] ?? (0, 0, 0)
+            let avgDuration = durationCount > 0 ? durationSum / Double(durationCount) : 0
+            let revenue = revenues[type] ?? 0
+            result[type] = ServiceMetrics(
+                frequency: frequency,
+                averageDuration: avgDuration,
+                totalRevenue: revenue
+            )
+        }
     }
     
     

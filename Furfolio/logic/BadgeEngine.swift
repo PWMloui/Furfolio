@@ -22,7 +22,7 @@ struct BadgeEngine {
         
         var id: String { rawValue }
         
-        /// Localized display
+        /// Localized display text for the behavior badge.
         var description: String {
             NSLocalizedString(rawValue, comment: "Behavior badge")
         }

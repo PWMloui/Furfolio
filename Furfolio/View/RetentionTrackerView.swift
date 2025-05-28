@@ -11,31 +11,21 @@ import SwiftUI
 @MainActor
 /// View showing dog owners at risk of churn (60+ days inactive), with key status badges.
 struct RetentionTrackerView: View {
-  let dogOwners: [DogOwner]
+  @StateObject private var viewModel: RetentionTrackerViewModel
 
-  /// Shared formatter for displaying last-visit dates.
-  private static let dateFormatter: DateFormatter = {
-    let fmt = DateFormatter()
-    fmt.dateStyle = .medium
-    fmt.timeStyle = .none
-    return fmt
-  }()
-
-  /// Dog owners filtered to those inactive 60+ days, sorted by last activity.
-  var retentionRisks: [DogOwner] {
-    dogOwners.filter { $0.retentionRisk }
-      .sorted { ($0.lastActivityDate ?? .distantPast) < ($1.lastActivityDate ?? .distantPast) }
+  init(dogOwners: [DogOwner]) {
+    _viewModel = StateObject(wrappedValue: RetentionTrackerViewModel(dogOwners: dogOwners))
   }
 
   var body: some View {
     NavigationStack {
       List {
         Section(header: Text("Retention Risks (60+ days inactive)")) {
-          if retentionRisks.isEmpty {
+          if viewModel.retentionRisks.isEmpty {
             Text("No clients are currently at risk.")
               .foregroundColor(.secondary)
           } else {
-            ForEach(retentionRisks) { owner in
+            ForEach(viewModel.retentionRisks) { owner in
               VStack(alignment: .leading, spacing: 8) {
                 HStack {
                   Text(owner.ownerName)
@@ -46,15 +36,9 @@ struct RetentionTrackerView: View {
                   }
                 }
 
-                if let last = owner.lastActivityDate {
-                  Text("Last Visit: \(last.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                } else {
-                  Text("No visits recorded")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                }
+                Text("Last Visit: \(viewModel.formattedDate(owner.lastActivityDate))")
+                  .font(.caption)
+                  .foregroundColor(.gray)
 
                 HStack(spacing: 8) {
                   if owner.hasBirthdayThisMonth {

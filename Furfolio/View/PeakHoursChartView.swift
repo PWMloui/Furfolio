@@ -8,39 +8,53 @@
 import SwiftUI
 import Charts
 
+/// ViewModel for PeakHoursChartView, handles data preparation.
+@MainActor
+final class PeakHoursChartViewModel: ObservableObject {
+  @Published var hourData: [DailyRevenue.HourEntry] = []
+
+  private let calendar = Calendar.current
+  private let appointments: [Appointment]
+ 
+  init(appointments: [Appointment]) {
+    self.appointments = appointments
+    loadData()
+  }
+
+  /// Computes hourly appointment frequency for today.
+  func loadData() {
+    let startOfToday = calendar.startOfDay(for: Date.now)
+    hourData = DailyRevenue.hourlyAppointmentFrequency(
+      for: startOfToday,
+      in: appointments
+    )
+  }
+}
+
 // TODO: Move data preparation and formatting into a PeakHoursChartViewModel; cache shared Calendar and date formatter for performance.
 
 @MainActor
 /// A chart view showing the frequency of appointments per hour for a given day.
 struct PeakHoursChartView: View {
-  /// Shared Calendar and reference 'now' to avoid repeated allocations.
-  private static let calendar = Calendar.current
-  private static var now: Date { Date.now }
+  @StateObject private var viewModel: PeakHoursChartViewModel
 
-  let appointments: [Appointment]
+  init(appointments: [Appointment]) {
+    _viewModel = StateObject(wrappedValue: PeakHoursChartViewModel(appointments: appointments))
+  }
 
   var body: some View {
     VStack(alignment: .leading) {
       Text("Peak Booking Hours")
         .font(.headline)
 
-      // Compute today’s start of day
-      let startOfToday = Self.calendar.startOfDay(for: Self.now)
-
-      /// Hourly appointment counts for the specified day.
-      let hourData = DailyRevenue.hourlyAppointmentFrequency(
-        for: startOfToday,
-        in: appointments
-      )
-
       /// Show placeholder when no data is available.
-      if hourData.isEmpty {
+      if viewModel.hourData.isEmpty {
         Text("No appointment time data available.")
           .foregroundColor(.gray)
       } else {
         /// Renders a bar chart of appointment counts by hour.
         Chart {
-          ForEach(hourData, id: \.hour) { entry in
+          ForEach(viewModel.hourData, id: \.hour) { entry in
             BarMark(
               x: .value("Hour", "\(entry.hour):00"),
               y: .value("Appointments", entry.count)

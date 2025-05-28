@@ -1,4 +1,3 @@
-
 //  DashboardView.swift
 //  Furfolio
 //
@@ -116,8 +115,19 @@ struct DashboardView: View {
 
         SectionBox(header: "Upcoming Appointments") {
             if upcoming.isEmpty {
-                Text("No upcoming appointments.")
-                    .foregroundColor(.secondary)
+                EmptyStateView(
+                  imageName: "calendar.badge.plus",
+                  title: "No Upcoming Appointments",
+                  message: "Tap below to add your first appointment.",
+                  actionTitle: "Add Appointment"
+                ) {
+                  // Present add appointment for first owner
+                  // Fallback if no owners: do nothing
+                  if let first = owners.first {
+                    // assuming AppState.activeSheet or similar; fallback to NavigationLink?
+                    // For now, open via NavigationLink hack: navigate by pushing view (could use coordinator)
+                  }
+                }
             } else {
                 ForEach(Array(upcoming), id: \.0.id) { appt, owner in
                     HStack {
@@ -152,8 +162,16 @@ struct DashboardView: View {
 
         SectionBox(header: "Recent Charges") {
             if charges.isEmpty {
-                Text("No charges recorded.")
-                    .foregroundColor(.secondary)
+                EmptyStateView(
+                  imageName: "dollarsign.circle",
+                  title: "No Charges Yet",
+                  message: "Record a charge to track your revenue.",
+                  actionTitle: "New Charge"
+                ) {
+                  if let first = owners.first {
+                    // present AddChargeView
+                  }
+                }
             } else {
                 ForEach(Array(charges), id: \.0.id) { charge, owner in
                     HStack {
@@ -251,4 +269,3 @@ private struct QuickActionButton: View {
                         .fill(Color(.secondarySystemBackground)))
     }
 }
-

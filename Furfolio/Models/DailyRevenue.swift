@@ -152,11 +152,16 @@ final class DailyRevenue: Identifiable, Hashable {
     let thresholds = SettingsManager.shared.rewardThresholds
     let points = SettingsManager.shared.loyaltyPointsPerTier
     switch totalAmount {
-    case 0..<thresholds[0]: return 0
-    case thresholds[0]..<thresholds[1]: return points[0]
-    case thresholds[1]..<thresholds[2]: return points[1]
-    case thresholds[2]...: return points[2]
-    default: return 0
+    case 0..<thresholds[0]:
+        return 0
+    case thresholds[0]..<thresholds[1]:
+        return points[0]
+    case thresholds[1]..<thresholds[2]:
+        return points[1]
+    case thresholds[2]...:
+        return points[2]
+    default:
+        return 0
     }
   }
   

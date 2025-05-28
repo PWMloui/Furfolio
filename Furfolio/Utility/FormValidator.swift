@@ -40,6 +40,12 @@ struct FormValidator {
         static let phonePattern = "^[0-9]{7,15}$"
         static let nameMaxLength = 50
         static let notesMaxLength = 200
+        static let emailRegex: NSRegularExpression? = {
+            return try? NSRegularExpression(pattern: emailPattern, options: .caseInsensitive)
+        }()
+        static let phoneRegex: NSRegularExpression? = {
+            return try? NSRegularExpression(pattern: phonePattern, options: .caseInsensitive)
+        }()
     }
 
     static func validateRequired(_ value: String?, fieldName: String) throws {
@@ -57,8 +63,20 @@ struct FormValidator {
 
     static func validatePattern(_ value: String?, pattern: String, fieldName: String, error: ValidationError) throws {
         try validateRequired(value, fieldName: fieldName)
-        let predicate = NSPredicate(format: "SELF MATCHES %@", pattern)
-        if !predicate.evaluate(with: value) {
+        guard let value = value else { throw error }
+        var regex: NSRegularExpression?
+        if pattern == Rules.emailPattern {
+            regex = Rules.emailRegex
+        } else if pattern == Rules.phonePattern {
+            regex = Rules.phoneRegex
+        }
+        if let regex = regex {
+            let range = NSRange(location: 0, length: value.utf16.count)
+            if regex.firstMatch(in: value, options: [], range: range) == nil {
+                throw error
+            }
+        } else {
+            // fallback: if unknown pattern, fail
             throw error
         }
     }

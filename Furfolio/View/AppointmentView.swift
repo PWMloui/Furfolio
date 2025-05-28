@@ -19,27 +19,14 @@ struct AddAppointmentView: View {
     @Environment(\.modelContext) private var modelContext
     let dogOwner: DogOwner
 
+    @StateObject private var vm: AddAppointmentViewModel
+    init(dogOwner: DogOwner) {
+        self.dogOwner = dogOwner
+        _vm = StateObject(wrappedValue: AddAppointmentViewModel(owner: dogOwner))
+    }
+
     // MARK: – Computed
     private var stats: ClientStats { ClientStats(owner: dogOwner) }
-
-    // MARK: – Form State
-    @State private var appointmentDate = Date()
-    @State private var serviceType: Appointment.ServiceType = .basic
-    @State private var appointmentDuration = Appointment.ServiceType.basic.defaultDurationMinutes
-    @State private var appointmentNotes = ""
-    @State private var linkChargeRecord = false
-    @State private var enableReminder = false
-
-    // MARK: – Conflict & Saving
-    @State private var conflictWarning: String? = nil
-    @State private var showConflictAlert = false
-    @State private var isSaving = false
-
-    // MARK: – Photos
-    @State private var beforePhotoData: Data? = nil
-    @State private var afterPhotoData: Data? = nil
-    @State private var beforePhotoItem: PhotosPickerItem? = nil
-    @State private var afterPhotoItem: PhotosPickerItem? = nil
 
     // MARK: – Feedback & Tooltip
     private let feedback = UINotificationFeedbackGenerator()
@@ -56,7 +43,7 @@ struct AddAppointmentView: View {
                     photosSection()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
 
-                    if let warning = conflictWarning {
+                    if let warning = vm.conflictWarning {
                         Section(header: Text("")) {
                             Text(warning)
                                 .foregroundColor(.red)
@@ -68,13 +55,13 @@ struct AddAppointmentView: View {
                 .listStyle(.insetGrouped)
                 .navigationTitle("Add Appointment")
                 .toolbar { toolbarContent() }
-                .alert("Conflict Detected", isPresented: $showConflictAlert) {
-                    Button("OK") { conflictWarning = nil }
+                .alert("Conflict Detected", isPresented: $vm.showConflictAlert) {
+                    Button("OK") { vm.conflictWarning = nil }
                 } message: {
-                    Text(conflictWarning ?? "")
+                    Text(vm.conflictWarning ?? "")
                 }
 
-                if isSaving {
+                if vm.isSaving {
                     Color.black.opacity(0.3).ignoresSafeArea()
                     ProgressView("Saving…")
                         .padding()
@@ -102,52 +89,47 @@ struct AddAppointmentView: View {
         Section(header: Text("Appointment Details")) {
             DatePicker(
                 "Date & Time",
-                selection: $appointmentDate,
+                selection: $vm.appointmentDate,
                 in: Date().addingTimeInterval(60)...,
                 displayedComponents: [.date, .hourAndMinute]
             )
-            .onChange(of: appointmentDate) { _ in conflictWarning = nil }
+            .onChange(of: vm.appointmentDate) { _ in vm.conflictWarning = nil }
             .accessibilityLabel("Select appointment date and time")
 
-            Picker("Service Type", selection: $serviceType) {
+            Picker("Service Type", selection: $vm.serviceType) {
                 ForEach(Appointment.ServiceType.allCases) { type in
                     Text(type.localizedName).tag(type)
                 }
             }
             .pickerStyle(.menu)
-            .onChange(of: serviceType) { appointmentDuration = $0.defaultDurationMinutes }
             .accessibilityLabel("Select service type")
 
-            Stepper("Duration: \(appointmentDuration) min", value: $appointmentDuration, in: 15...240, step: 15)
+            Stepper("Duration: \(vm.appointmentDuration) min", value: $vm.appointmentDuration, in: 15...240, step: 15)
                 .accessibilityLabel("Appointment duration in minutes")
 
             VStack(alignment: .leading, spacing: 4) {
-                TextField("Notes (optional)", text: $appointmentNotes)
+                TextField("Notes (optional)", text: $vm.appointmentNotes)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.sentences)
-                    .onChange(of: appointmentNotes) { _ in clampNotesLength() }
                     .accessibilityLabel("Enter any extra details (max 250 chars)")
 
-                if showTooltip && appointmentNotes.isEmpty {
+                if showTooltip && vm.appointmentNotes.isEmpty {
                     Text("Enter extra details (max 250 characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .transition(.opacity)
                 }
-                if appointmentNotes.count > 250 {
+                if vm.appointmentNotes.count > 250 {
                     Text("Notes must be ≤ 250 characters")
                         .font(.caption)
                         .foregroundColor(.red)
                 }
             }
 
-            Toggle("Link Charge Record", isOn: $linkChargeRecord)
+            Toggle("Link Charge Record", isOn: $vm.linkChargeRecord)
                 .accessibilityLabel("Toggle to link a charge record")
 
-            Toggle("Enable Reminder", isOn: $enableReminder)
-                .onChange(of: enableReminder) {
-                    if $0 { requestNotificationPermission() }
-                }
+            Toggle("Enable Reminder", isOn: $vm.enableReminder)
                 .accessibilityLabel("Toggle to enable reminder notification")
 
             if !stats.loyaltyProgressTag.isEmpty {
@@ -173,8 +155,8 @@ struct AddAppointmentView: View {
     @ViewBuilder
     private func photosSection() -> some View {
         Section(header: Text("Photos")) {
-            photoPicker(label: "Before Photo", data: $beforePhotoData, item: $beforePhotoItem)
-            photoPicker(label: "After Photo",  data: $afterPhotoData,  item: $afterPhotoItem)
+            photoPicker(label: "Before Photo", data: $vm.beforePhotoData, item: .constant(nil))
+            photoPicker(label: "After Photo",  data: $vm.afterPhotoData,  item: .constant(nil))
         }
     }
 
@@ -228,117 +210,8 @@ struct AddAppointmentView: View {
             Button("Cancel") { dismiss() }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button("Save", action: handleSave)
-                .disabled(!validateAppointment() || isSaving)
-        }
-    }
-
-    // MARK: – Save Handling
-
-    /// Validates and, if valid, saves the appointment and dismisses the view.
-    private func handleSave() {
-        guard validateAppointment() else {
-            showConflictAlert = true
-            return
-        }
-        isSaving = true
-        feedback.notificationOccurred(.success)
-        saveAppointment()
-
-        // bind the Task so it's not mis‐parsed
-        _ = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            isSaving = false
-            dismiss()
-        }
-    }
-
-    /// Inserts the new Appointment into the model context and links a charge if requested.
-    private func saveAppointment() {
-        let appt = Appointment(
-            date: appointmentDate,
-            dogOwner: dogOwner,
-            serviceType: serviceType,
-            notes: appointmentNotes,
-            beforePhoto: beforePhotoData,
-            afterPhoto: afterPhotoData
-        )
-        appt.durationMinutes = appointmentDuration
-
-        withAnimation {
-            modelContext.insert(appt)
-            if linkChargeRecord {
-                let charge = Charge.create(
-                    date: appointmentDate,
-                    serviceType: .custom,
-                    amount: 0,
-                    paymentMethod: .cash,
-                    owner: dogOwner,
-                    notes: "Linked to appointment",
-                    appointment: appt,
-                    in: modelContext
-                )
-                print("Linked charge \(charge.id) to appointment")
-            }
-        }
-
-        if enableReminder {
-            scheduleReminder(for: appt)
-        }
-    }
-
-    // MARK: – Validation & Conflict
-
-    /// Checks date validity and appointment conflict; sets conflictWarning if invalid.
-    private func validateAppointment() -> Bool {
-        guard appointmentDate > Date.now else {
-            conflictWarning = "Appointment must be in the future."
-            return false
-        }
-        if dogOwner.appointments.contains(where: {
-            abs($0.date.timeIntervalSince(appointmentDate)) < 3600
-        }) {
-            conflictWarning = "This appointment conflicts with another."
-            return false
-        }
-        return true
-    }
-
-    // MARK: – Notifications
-
-    /// Schedules a local notification reminder via NotificationManager.
-    private func scheduleReminder(for appointment: Appointment) {
-        var content = UNMutableNotificationContent()
-        content.title = "Upcoming Appointment"
-        content.body = "\(dogOwner.ownerName) at \(appointment.formattedDate)"
-        content.sound = .default
-
-        guard let triggerDate = Calendar.current.date(byAdding: .minute,
-                                                      value: -30,
-                                                      to: appointment.date)
-        else { return }
-        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
-        let req = UNNotificationRequest(
-            identifier: appointment.id.uuidString,
-            content: content,
-            trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
-        )
-        UNUserNotificationCenter.current().add(req)
-    }
-
-    /// Requests UNUserNotificationCenter authorization for alerts and sounds.
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            if !granted { enableReminder = false }
-        }
-    }
-
-    // MARK: – Utilities
-
-    /// Ensures the notes string does not exceed 250 characters.
-    private func clampNotesLength() {
-        if appointmentNotes.count > 250 {
-            appointmentNotes = String(appointmentNotes.prefix(250))
+            Button("Save") { vm.save { dismiss() } }
+                .disabled(vm.isSaving)
         }
     }
 }

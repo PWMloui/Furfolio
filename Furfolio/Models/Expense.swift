@@ -9,7 +9,7 @@ import UIKit
 
 @Model
 final class Expense: Identifiable, Hashable {
-  // MARK: – Persistent Properties
+  // MARK: - Persistent Properties
 
   @Attribute var id: UUID
   @Attribute var date: Date
@@ -17,9 +17,9 @@ final class Expense: Identifiable, Hashable {
   @Attribute var amount: Double
   @Attribute var notes: String?
   /// Stored as JPEG/PNG data
-  @Attribute var receiptImageData: Data?
+  @Attribute(.externalStorage) var receiptImageData: Data?
 
-  // MARK: – Init
+  // MARK: - Init
 
   init(
     id: UUID = UUID(),
@@ -41,7 +41,7 @@ final class Expense: Identifiable, Hashable {
     }
   }
 
-  // MARK: – Computed
+  // MARK: - Computed
 
   /// UI-friendly image
   @Transient
@@ -50,7 +50,7 @@ final class Expense: Identifiable, Hashable {
     return UIImage(data: data)
   }
 
-  // MARK: – Hashable
+  // MARK: - Hashable
 
   static func == (lhs: Expense, rhs: Expense) -> Bool {
     lhs.id == rhs.id
@@ -59,7 +59,7 @@ final class Expense: Identifiable, Hashable {
     hasher.combine(id)
   }
 
-  // MARK: – Fetch Helpers
+  // MARK: - Fetch Helpers
 
   /// All expenses sorted by date descending
   static func fetchAll(in context: ModelContext) -> [Expense] {

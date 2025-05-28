@@ -7,21 +7,21 @@
 
 import SwiftUI
 import Combine
+import UIKit
+
+enum ActiveSheet: Identifiable {
+  case addOwner, addAppointment, addCharge
+  case metricsDashboard
+  var id: Int { hashValue }
+}
 
 /// Global application state and quick-action handlers.
 final class AppState: ObservableObject {
   /// Shared singleton instance.
   static let shared = AppState()
 
-  /// Toggles presentation of the “Add Owner” sheet when a quick-action is invoked.
-  /// Controls presentation of the Add Owner sheet.
-  @Published var showAddOwnerSheet: Bool = false
-  /// Toggles presentation of the “Add Appointment” sheet when a quick-action is invoked.
-  /// Controls presentation of the Add Appointment sheet.
-  @Published var showAddAppointmentSheet: Bool = false
-  /// Toggles presentation of the “Add Charge” sheet when a quick-action is invoked.
-  /// Controls presentation of the Add Charge sheet.
-  @Published var showAddChargeSheet: Bool = false
+  /// Controls presentation of the active sheet.
+  @Published var activeSheet: ActiveSheet?
   /// Indicates whether the user is authenticated.
   @Published var isAuthenticated: Bool = false
   /// Number of visits required to earn a loyalty reward.
@@ -36,16 +36,77 @@ final class AppState: ObservableObject {
   /// Sets up NotificationCenter publishers for home-screen quick actions.
   private func registerQuickActionSubscriptions() {
     NotificationCenter.default.publisher(for: .shortcutAddOwner)
-      .sink { [weak self] _ in self?.showAddOwnerSheet = true }
+      .sink { [weak self] _ in self?.activeSheet = .addOwner }
       .store(in: &cancellables)
 
     NotificationCenter.default.publisher(for: .shortcutAddAppointment)
-      .sink { [weak self] _ in self?.showAddAppointmentSheet = true }
+      .sink { [weak self] _ in self?.activeSheet = .addAppointment }
       .store(in: &cancellables)
 
     NotificationCenter.default.publisher(for: .shortcutAddCharge)
-      .sink { [weak self] _ in self?.showAddChargeSheet = true }
+      .sink { [weak self] _ in self?.activeSheet = .addCharge }
       .store(in: &cancellables)
+
+    NotificationCenter.default.publisher(for: .shortcutViewMetrics)
+      .sink { [weak self] _ in self?.activeSheet = .metricsDashboard }
+      .store(in: &cancellables)
+  }
+
+  /// Begins observing app lifecycle to refresh Home Screen shortcuts dynamically.
+  func startListening() {
+    NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
+      .sink { [weak self] _ in
+        self?.refreshShortcuts()
+      }
+      .store(in: &cancellables)
+  }
+
+  /// Regenerates and registers Home Screen shortcut items based on current app data.
+  private func refreshShortcuts() {
+    var items: [UIApplicationShortcutItem] = []
+
+    // Always allow “Add Owner”
+    items.append(.init(
+      type: AppShortcutType.addOwner.rawValue,
+      localizedTitle: NSLocalizedString("Add Owner", comment: ""),
+      localizedSubtitle: nil,
+      icon: .init(systemImageName: "person.badge.plus"),
+      userInfo: nil
+    ))
+
+    // Placeholder: only show “Add Appointment” if there’s at least one owner
+    // TODO: replace `true` with your actual owns-count check
+    if true {
+      items.append(.init(
+        type: AppShortcutType.addAppointment.rawValue,
+        localizedTitle: NSLocalizedString("Add Appointment", comment: ""),
+        localizedSubtitle: NSLocalizedString("Quickly schedule a new grooming", comment: ""),
+        icon: .init(systemImageName: "calendar.badge.plus"),
+        userInfo: nil
+      ))
+    }
+
+    // Placeholder: only show “Add Charge” if there’s at least one appointment
+    if true {
+      items.append(.init(
+        type: AppShortcutType.addCharge.rawValue,
+        localizedTitle: NSLocalizedString("Add Charge", comment: ""),
+        localizedSubtitle: NSLocalizedString("Log a payment", comment: ""),
+        icon: .init(systemImageName: "dollarsign.circle"),
+        userInfo: nil
+      ))
+    }
+
+    // Always include “View Metrics”
+    items.append(.init(
+      type: AppShortcutType.viewMetrics.rawValue,
+      localizedTitle: NSLocalizedString("View Metrics", comment: ""),
+      localizedSubtitle: NSLocalizedString("See your dashboard", comment: ""),
+      icon: .init(systemImageName: "chart.bar.doc.horizontal"),
+      userInfo: nil
+    ))
+
+    UIApplication.shared.shortcutItems = items
   }
 
   /// Signs the user in by setting isAuthenticated to true.
@@ -71,5 +132,6 @@ final class AppState: ObservableObject {
       self.loyaltyThreshold = 10
     }
     registerQuickActionSubscriptions()
+    startListening()
   }
 }

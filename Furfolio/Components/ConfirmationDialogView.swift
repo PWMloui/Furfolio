@@ -22,6 +22,11 @@ struct ConfirmationDialogView<Presenting: View>: View {
   let cancelButtonRole: ButtonRole
   let presenting: Presenting
 
+  let backdropOpacity: Double
+  let dismissOnBackgroundTap: Bool
+  let animation: Animation
+  let enableHaptics: Bool
+
   /// Initializes the confirmation dialog wrapper.
   /// - Parameters:
   ///   - isPresented: Binding to control presentation state.
@@ -40,6 +45,10 @@ struct ConfirmationDialogView<Presenting: View>: View {
     onConfirm: @escaping () -> Void,
     cancelButtonTitle: String = "Cancel",
     cancelButtonRole: ButtonRole = .cancel,
+    backdropOpacity: Double = 0.4,
+    dismissOnBackgroundTap: Bool = true,
+    animation: Animation = .easeInOut(duration: 0.2),
+    enableHaptics: Bool = false,
     @ViewBuilder presenting: () -> Presenting
   ) {
     self._isPresented = isPresented
@@ -50,6 +59,10 @@ struct ConfirmationDialogView<Presenting: View>: View {
     self.onConfirm = onConfirm
     self.cancelButtonTitle = cancelButtonTitle
     self.cancelButtonRole = cancelButtonRole
+    self.backdropOpacity = backdropOpacity
+    self.dismissOnBackgroundTap = dismissOnBackgroundTap
+    self.animation = animation
+    self.enableHaptics = enableHaptics
     self.presenting = presenting()
   }
 
@@ -58,8 +71,17 @@ struct ConfirmationDialogView<Presenting: View>: View {
     ZStack {
       presenting
       if isPresented {
-        Color.black.opacity(0.4)
+        Rectangle()
+          .fill(Color.black.opacity(backdropOpacity))
           .ignoresSafeArea()
+          .contentShape(Rectangle())
+          .onTapGesture {
+            if dismissOnBackgroundTap {
+              withAnimation(animation) {
+                isPresented = false
+              }
+            }
+          }
         VStack(spacing: 16) {
           Text(title)
             .font(.headline)
@@ -69,10 +91,20 @@ struct ConfirmationDialogView<Presenting: View>: View {
           }
           HStack {
             Button(cancelButtonTitle) {
-              withAnimation { isPresented = false }
+              if enableHaptics {
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.impactOccurred()
+              }
+              withAnimation {
+                isPresented = false
+              }
             }
             .buttonStyle(.bordered)
             Button(confirmButtonTitle, role: confirmButtonRole) {
+              if enableHaptics {
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.impactOccurred()
+              }
               withAnimation {
                 isPresented = false
                 onConfirm()
@@ -87,8 +119,10 @@ struct ConfirmationDialogView<Presenting: View>: View {
         .transition(.scale.combined(with: .opacity))
       }
     }
+    .animation(animation, value: isPresented)
   }
 }
+
 
 /// Convenience modifier to attach a confirmation dialog using `ConfirmationDialogView`.
 extension View {
@@ -101,7 +135,11 @@ extension View {
     confirmButtonRole: ButtonRole = .destructive,
     onConfirm: @escaping () -> Void,
     cancelButtonTitle: String = "Cancel",
-    cancelButtonRole: ButtonRole = .cancel
+    cancelButtonRole: ButtonRole = .cancel,
+    backdropOpacity: Double = 0.4,
+    dismissOnBackgroundTap: Bool = true,
+    animation: Animation = .easeInOut(duration: 0.2),
+    enableHaptics: Bool = false
   ) -> some View {
     ConfirmationDialogView(
       isPresented: isPresented,
@@ -111,7 +149,11 @@ extension View {
       confirmButtonRole: confirmButtonRole,
       onConfirm: onConfirm,
       cancelButtonTitle: cancelButtonTitle,
-      cancelButtonRole: cancelButtonRole
+      cancelButtonRole: cancelButtonRole,
+      backdropOpacity: backdropOpacity,
+      dismissOnBackgroundTap: dismissOnBackgroundTap,
+      animation: animation,
+      enableHaptics: enableHaptics
     ) {
       self
     }

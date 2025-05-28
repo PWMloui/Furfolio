@@ -35,6 +35,7 @@ final class Charge: Identifiable, Hashable {
   var petBadges: [String] = []
   @Attribute                   var createdAt: Date = Date.now
   @Attribute                   var updatedAt: Date?
+  @Attribute                   var isArchived: Bool = false
     
     /// Designated initializer for Charge model.
     init(
@@ -169,6 +170,17 @@ final class Charge: Identifiable, Hashable {
         }
         updatedAt = Date.now
     }
+    /// Marks the charge as archived (soft-delete) and updates timestamp.
+    func archive() {
+        isArchived = true
+        updatedAt = Date.now
+    }
+
+    /// Restores an archived charge.
+    func restore() {
+        isArchived = false
+        updatedAt = Date.now
+    }
     
     // MARK: – Static Create & Fetch
     /// Creates and inserts a new Charge entity into the given context.
@@ -200,6 +212,7 @@ final class Charge: Identifiable, Hashable {
     /// Fetches all charges in reverse chronological order.
     static func fetchAll(in context: ModelContext) -> [Charge] {
         let descriptor = FetchDescriptor<Charge>(
+            predicate: #Predicate { !$0.isArchived },
             sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
         )
         return (try? context.fetch(descriptor)) ?? []
@@ -207,7 +220,15 @@ final class Charge: Identifiable, Hashable {
     /// Fetches charges for a specific owner in reverse chronological order.
     static func fetch(for owner: DogOwner, in context: ModelContext) -> [Charge] {
         let descriptor = FetchDescriptor<Charge>(
-            predicate: #Predicate { $0.dogOwner == owner },
+            predicate: #Predicate { $0.dogOwner == owner && !$0.isArchived },
+            sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    /// Fetches only archived charges.
+    static func fetchArchived(in context: ModelContext) -> [Charge] {
+        let descriptor = FetchDescriptor<Charge>(
+            predicate: #Predicate { $0.isArchived },
             sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
         )
         return (try? context.fetch(descriptor)) ?? []
@@ -229,4 +250,3 @@ final class Charge: Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     
 }
-

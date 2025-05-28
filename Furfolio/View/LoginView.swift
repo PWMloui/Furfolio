@@ -8,24 +8,81 @@
 import SwiftUI
 import LocalAuthentication
 
+@MainActor
+final class LoginViewModel: ObservableObject {
+  @Published var username: String = ""
+  @Published var password: String = ""
+  @Published var isAuthenticated: Bool = false
+  @Published var authenticationError: String? = nil
+  @Published var isLoading: Bool = false
+
+  private let feedbackGenerator = UINotificationFeedbackGenerator()
+  private static let storedCredentials: [String: String] = [
+    "lvconcepcion": "jesus2024"
+  ]
+
+  func login() async {
+    isLoading = true
+    authenticationError = nil
+    // Simulate network delay
+    try? await Task.sleep(nanoseconds: 1_500_000_000)
+    authenticateUser()
+    isLoading = false
+  }
+
+  private func authenticateUser() {
+    if let storedPassword = Self.storedCredentials[username], storedPassword == password {
+      withAnimation {
+        isAuthenticated = true
+        authenticationError = nil
+      }
+      feedbackGenerator.notificationOccurred(.success)
+    } else {
+      withAnimation {
+        isAuthenticated = false
+        authenticationError = NSLocalizedString("Invalid username or password. Please try again.", comment: "Error message for invalid login credentials")
+      }
+      feedbackGenerator.notificationOccurred(.error)
+    }
+  }
+
+  func biometricLogin() {
+    let context = LAContext()
+    var error: NSError?
+    if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+      let reason = NSLocalizedString("Authenticate with Face ID to access your account.", comment: "Biometric authentication reason")
+      context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, evaluateError in
+        DispatchQueue.main.async {
+          if success {
+            withAnimation {
+              self.isAuthenticated = true
+              self.authenticationError = nil
+            }
+            self.feedbackGenerator.notificationOccurred(.success)
+          } else {
+            withAnimation {
+              self.isAuthenticated = false
+              self.authenticationError = evaluateError?.localizedDescription ?? NSLocalizedString("Biometric authentication failed. Please try again.", comment: "Error message for failed biometric authentication")
+            }
+            self.feedbackGenerator.notificationOccurred(.error)
+          }
+        }
+      }
+    } else {
+      withAnimation {
+        authenticationError = NSLocalizedString("Biometric authentication is not available on this device.", comment: "Error message for unavailable biometrics")
+      }
+      feedbackGenerator.notificationOccurred(.error)
+    }
+  }
+}
+
 // TODO: Move authentication and error handling into LoginViewModel; use secure storage (Keychain) for credentials.
 
 @MainActor
 /// View for user authentication: handles username/password login, biometric authentication, and displays business tips.
 struct LoginView: View {
-  /// Example credentials; replace with secure Keychain-backed storage.
-  private static let storedCredentials: [String: String] = [
-    "lvconcepcion": "jesus2024"
-  ]
-
-  @State private var username: String = ""
-  @State private var password: String = ""
-  @State private var isAuthenticated = false
-  @State private var authenticationError: String? = nil
-  @State private var isLoading = false
-
-  // Haptic feedback generator for login outcomes
-  private let feedbackGenerator = UINotificationFeedbackGenerator()
+  @StateObject private var viewModel = LoginViewModel()
 
   var body: some View {
     VStack(spacing: 16) {
@@ -38,7 +95,7 @@ struct LoginView: View {
         .transition(.opacity)
       
       // Username Input
-      TextField(NSLocalizedString("Username", comment: "Placeholder for username input"), text: $username)
+      TextField(NSLocalizedString("Username", comment: "Placeholder for username input"), text: $viewModel.username)
         .padding()
         .autocapitalization(.none)
         .disableAutocorrection(true)
@@ -49,7 +106,7 @@ struct LoginView: View {
         .transition(.move(edge: .leading))
       
       // Password Input
-      SecureField(NSLocalizedString("Password", comment: "Placeholder for password input"), text: $password)
+      SecureField(NSLocalizedString("Password", comment: "Placeholder for password input"), text: $viewModel.password)
         .padding()
         .background(Color(UIColor.secondarySystemBackground))
         .cornerRadius(8)
@@ -59,9 +116,9 @@ struct LoginView: View {
       
       // Login Button
       Button(action: {
-        Task { await login() }
+        Task { await viewModel.login() }
       }) {
-        if isLoading {
+        if viewModel.isLoading {
           ProgressView()
             .progressViewStyle(CircularProgressViewStyle(tint: .white))
             .frame(maxWidth: .infinity)
@@ -77,12 +134,12 @@ struct LoginView: View {
       .background(Color.blue)
       .cornerRadius(8)
       .accessibilityLabel(NSLocalizedString("Login Button", comment: "Accessibility label for login button"))
-      .disabled(isLoading)
+      .disabled(viewModel.isLoading)
       .transition(.scale)
       
       // Biometric Login Button
       Button(action: {
-        biometricLogin()
+        viewModel.biometricLogin()
       }) {
         HStack {
           Image(systemName: "faceid")
@@ -96,14 +153,16 @@ struct LoginView: View {
       .background(Color.green)
       .cornerRadius(8)
       .accessibilityLabel(NSLocalizedString("Biometric Login Button", comment: "Accessibility label for biometric login button"))
-      .disabled(isLoading)
+      .disabled(viewModel.isLoading)
       .transition(.scale)
       
       Button(action: {
         withAnimation {
-          isAuthenticated = true
-          authenticationError = nil
+          viewModel.isAuthenticated = true
+          viewModel.authenticationError = nil
         }
+        // Haptic feedback handled in ViewModel, but here we can create a local generator for success
+        let feedbackGenerator = UINotificationFeedbackGenerator()
         feedbackGenerator.notificationOccurred(.success)
       }) {
         Text("Skip Login")
@@ -114,7 +173,7 @@ struct LoginView: View {
       .accessibilityLabel("Skip Login Button")
       
       // Authentication Error Message
-      if let error = authenticationError {
+      if let error = viewModel.authenticationError {
         Text(error)
           .foregroundColor(.red)
           .font(.footnote)
@@ -124,7 +183,7 @@ struct LoginView: View {
       }
       
       // Successful Authentication Message
-      if isAuthenticated {
+      if viewModel.isAuthenticated {
         Text(NSLocalizedString("Successfully Authenticated!", comment: "Message for successful login"))
           .foregroundColor(.green)
           .font(.headline)
@@ -132,80 +191,13 @@ struct LoginView: View {
           .transition(.opacity)
       }
       
-      if !isAuthenticated {
+      if !viewModel.isAuthenticated {
         businessTipsSection()
       }
     }
     .padding()
     .accessibilityElement(children: .combine)
-    .animation(.easeInOut, value: isAuthenticated)
-  }
-  
-  /// Initiates the login process with an artificial network delay.
-  private func login() async {
-    isLoading = true
-    authenticationError = nil
-    
-    // Simulate network delay
-    try? await Task.sleep(nanoseconds: 1_500_000_000)
-    authenticateUser(username: username, password: password)
-    isLoading = false
-  }
-  
-  /// Verifies the provided credentials; updates authentication state and triggers haptics.
-  private func authenticateUser(username: String, password: String) {
-    // Example: Replace with actual secure authentication logic (e.g., using a backend service)
-    let storedCredentials = Self.storedCredentials
-    
-    // Check if username exists in the dictionary and the password matches
-    if let storedPassword = storedCredentials[username], storedPassword == password {
-      withAnimation {
-        isAuthenticated = true
-        authenticationError = nil
-      }
-      feedbackGenerator.notificationOccurred(.success)
-    } else {
-      withAnimation {
-        isAuthenticated = false
-        authenticationError = NSLocalizedString("Invalid username or password. Please try again.", comment: "Error message for invalid login credentials")
-      }
-      feedbackGenerator.notificationOccurred(.error)
-    }
-  }
-  
-  /// Performs Face ID / Touch ID authentication; updates state and handles errors.
-  private func biometricLogin() {
-    let context = LAContext()
-    var error: NSError?
-    
-    // Check if biometric authentication is available
-    if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
-      let reason = NSLocalizedString("Authenticate with Face ID to access your account.", comment: "Biometric authentication reason")
-      context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, evaluateError in
-        DispatchQueue.main.async {
-          if success {
-            // On success, set isAuthenticated to true
-            withAnimation {
-              isAuthenticated = true
-              authenticationError = nil
-            }
-            feedbackGenerator.notificationOccurred(.success)
-          } else {
-            withAnimation {
-              isAuthenticated = false
-              authenticationError = evaluateError?.localizedDescription ?? NSLocalizedString("Biometric authentication failed. Please try again.", comment: "Error message for failed biometric authentication")
-            }
-            feedbackGenerator.notificationOccurred(.error)
-          }
-        }
-      }
-    } else {
-      // If biometrics are not available, show an error message
-      withAnimation {
-        authenticationError = NSLocalizedString("Biometric authentication is not available on this device.", comment: "Error message for unavailable biometrics")
-      }
-      feedbackGenerator.notificationOccurred(.error)
-    }
+    .animation(.easeInOut, value: viewModel.isAuthenticated)
   }
   
   /// Shows business-owner tips when not authenticated.

@@ -29,6 +29,7 @@ final class PersistenceController {
                  ExportProfile.self,
             configurations: .init(inMemory: inMemory)
         )
+        ServiceSeeder.seed(in: container.mainContext)
     }
 
     /// Registers all custom ValueTransformers for transformable @Attribute properties.

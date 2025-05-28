@@ -11,12 +11,26 @@ import SwiftData
 // TODO: Move client-stats calculation and top-clients filtering into a TopClientsViewModel for cleaner view code and better testability.
 
 @MainActor
+final class TopClientsViewModel: ObservableObject {
+    @Published private(set) var topClients: [(owner: DogOwner, stats: ClientStats)] = []
+    let maxCount = 5
+
+    func update(owners: [DogOwner]) {
+        topClients = owners
+            .map { (owner: $0, stats: ClientStats(owner: $0)) }
+            .sorted { $0.stats.totalCharges > $1.stats.totalCharges }
+    }
+}
+
+@MainActor
 /// Displays the top revenue-generating clients with their visit count and total charges.
 struct TopClientsView: View {
     @Environment(\.modelContext) private var modelContext
 
     /// Fetches all DogOwner entities sorted by name.
     @Query(sort: \.ownerName, order: .forward) private var owners: [DogOwner]
+
+    @StateObject private var viewModel = TopClientsViewModel()
 
     /// Shared formatter for currency values.
     private static let currencyFormatter: NumberFormatter = {
@@ -26,24 +40,14 @@ struct TopClientsView: View {
         return f
     }()
 
-    /// Computes and sorts owners by total charges descending.
-    private var topClients: [(owner: DogOwner, stats: ClientStats)] {
-        owners
-            .map { owner in (owner: owner, stats: ClientStats(owner: owner)) }
-            .sorted { $0.stats.totalCharges > $1.stats.totalCharges }
-    }
-
-    /// Maximum number of top clients to display.
-    private let maxCount = 5
-
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("Top \(maxCount) Clients by Revenue")) {
-                    ForEach(Array(topClients.prefix(maxCount).enumerated()), id: \.element.owner.id) { index, entry in
+                Section(header: Text("Top \(viewModel.maxCount) Clients by Revenue")) {
+                    ForEach(Array(viewModel.topClients.prefix(viewModel.maxCount).enumerated()), id: \.element.owner.id) { index, entry in
                         TopClientRow(rank: index + 1, owner: entry.owner, stats: entry.stats)
                     }
-                    if owners.count > maxCount {
+                    if owners.count > viewModel.maxCount {
                       /// Navigate to full client list when tapped.
                         Button("Show All Clients") {
                             // Could navigate to a full list view
@@ -57,6 +61,12 @@ struct TopClientsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Top Clients")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                viewModel.update(owners: owners)
+            }
+            .onChange(of: owners) { newOwners in
+                viewModel.update(owners: newOwners)
+            }
         }
     }
 }

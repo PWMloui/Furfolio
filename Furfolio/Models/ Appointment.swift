@@ -19,7 +19,7 @@ extension Appointment {
 }
 
 @Model
-final class Appointment: @preconcurrency Identifiable {
+final class Appointment: Identifiable {
   
   /// Shared calendar and formatter for display and comparisons.
   private static let calendar = Calendar.current
@@ -66,9 +66,9 @@ final class Appointment: @preconcurrency Identifiable {
   // MARK: – Enums
     
   enum ServiceType: String, Codable, CaseIterable, Identifiable {
-    case basic  = "Basic Package"
-    case full   = "Full Package"
-    case custom = "Custom Package"
+    case basicPackage  = "Basic Package"
+    case fullPackage   = "Full Package"
+    case customPackage = "Custom Package"
         
     var id: String { rawValue }
     var localized: String { NSLocalizedString(rawValue, comment: "") }

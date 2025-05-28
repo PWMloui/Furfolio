@@ -10,7 +10,6 @@
 import Foundation
 import SwiftData
 
-// TODO: Mark required fields with @Attribute(.required) and computed props as transient for SwiftData optimization
 
 @MainActor
 @Model
@@ -34,7 +33,7 @@ final class FeedbackNote: Identifiable, Hashable {
     var date: Date = Date.now             // was `.now`
     
     /// Content of the feedback note.
-    @Attribute
+    @Attribute(.required)
     var content: String
     
     /// Rating associated with the feedback note.
@@ -50,7 +49,7 @@ final class FeedbackNote: Identifiable, Hashable {
     var updatedAt: Date?
     
     /// The dog owner related to this feedback note.
-    @Relationship(deleteRule: .cascade)
+    @Relationship(.required, deleteRule: .cascade)
     var dogOwner: DogOwner
     
     /// The appointment related to this feedback note.

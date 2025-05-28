@@ -8,22 +8,29 @@
 import Foundation
 import SwiftData
 
+/// The type of action recorded in the audit log.
+enum AuditAction: String, Codable {
+    case create
+    case update
+    case delete
+}
+
 /// Records a single change (create/update/delete) to any entity in the system.
 @Model
 final class AuditLog: Identifiable {
     @Attribute var id: UUID
     @Attribute var entityName: String      // e.g. "DogOwner", "Charge"
     @Attribute var entityId: UUID          // the specific record's ID
-    @Attribute var action: String          // "create", "update", or "delete"
+    @Attribute var action: AuditAction     // "create", "update", or "delete"
     @Attribute var user: String?           // optional username or identifier
-    @Attribute var details: String?        // optional JSON or description of changed fields
+    @Attribute(.externalStorage) var details: String?        // optional JSON or description of changed fields
     @Attribute var timestamp: Date
 
     init(
         id: UUID = UUID(),
         entityName: String,
         entityId: UUID,
-        action: String,
+        action: AuditAction,
         user: String? = nil,
         details: String? = nil,
         timestamp: Date = Date()
@@ -44,7 +51,7 @@ extension AuditLog {
     static func create(
         entityName: String,
         entityId: UUID,
-        action: String,
+        action: AuditAction,
         user: String? = nil,
         details: String? = nil,
         in context: ModelContext

@@ -9,6 +9,45 @@
 import SwiftUI
 import SwiftData
 
+@MainActor
+class ChargeSummaryViewModel: ObservableObject {
+    @Published var charges: [Charge] = []
+    
+    private let owner: DogOwner
+    private let context: ModelContext
+    
+    init(owner: DogOwner, context: ModelContext) {
+        self.owner = owner
+        self.context = context
+        load()
+    }
+    
+    func load() {
+        charges = owner.charges.sorted { $0.date > $1.date }
+    }
+    
+    var totalAmount: Double {
+        charges.reduce(0) { $0 + $1.amount }
+    }
+    
+    var averageAmount: Double {
+        guard !charges.isEmpty else { return 0 }
+        return totalAmount / Double(charges.count)
+    }
+    
+    var paymentBreakdown: [Charge.PaymentMethod: Int] {
+        Dictionary(grouping: charges, by: \.paymentMethod).mapValues(\.count)
+    }
+    
+    func delete(at offsets: IndexSet) {
+        for idx in offsets {
+            let toDelete = charges[idx]
+            context.delete(toDelete)
+        }
+        load()
+    }
+}
+
 // TODO: Move summary logic and formatting into a dedicated ViewModel; use a shared NumberFormatter for performance.
 
 @MainActor
@@ -18,6 +57,7 @@ struct ChargeSummaryView: View {
     @Environment(\.modelContext) private var context
 
     let owner: DogOwner
+    @StateObject private var viewModel: ChargeSummaryViewModel
 
     /// Shared currency formatter to avoid repeated allocations.
     private static let currencyFormatter: NumberFormatter = {
@@ -27,28 +67,9 @@ struct ChargeSummaryView: View {
       return fmt
     }()
 
-    /// All charges for the owner, sorted newest first.
-    private var charges: [Charge] {
-      owner.charges.sorted { $0.date > $1.date }
-    }
-
-    /// Sum of all charge amounts.
-    private var totalAmount: Double {
-      charges.reduce(0) { $0 + $1.amount }
-    }
-
-    /// Average charge amount, or zero if no charges.
-    private var averageAmount: Double {
-      guard !charges.isEmpty else { return 0 }
-      return totalAmount / Double(charges.count)
-    }
-
-    /// Number of charges grouped by payment method.
-    private var paymentBreakdown: [Charge.PaymentMethod: Int] {
-      Dictionary(
-        grouping: charges,
-        by: \.paymentMethod
-      ).mapValues(\.count)
+    init(owner: DogOwner) {
+        self.owner = owner
+        _viewModel = StateObject(wrappedValue: ChargeSummaryViewModel(owner: owner, context: PreviewContext.container.mainContext))
     }
 
     var body: some View {
@@ -57,13 +78,13 @@ struct ChargeSummaryView: View {
                 // Header with totals
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Total Charged: \(formatted(totalAmount))")
+                        Text("Total Charged: \(formatted(viewModel.totalAmount))")
                             .font(.headline)
-                        Text("Average: \(formatted(averageAmount))")
+                        Text("Average: \(formatted(viewModel.averageAmount))")
                             .font(.subheadline)
                         HStack {
                             ForEach(Charge.PaymentMethod.allCases) { method in
-                                if let count = paymentBreakdown[method], count > 0 {
+                                if let count = viewModel.paymentBreakdown[method], count > 0 {
                                     Text("\(method.symbol) \(count)")
                                         .font(.caption)
                                         .padding(4)
@@ -79,14 +100,14 @@ struct ChargeSummaryView: View {
                 }
 
                 // Individual charges
-                if charges.isEmpty {
+                if viewModel.charges.isEmpty {
                     Section {
                         Text("No charges recorded yet.")
                             .foregroundColor(.secondary)
                     }
                 } else {
                     Section(header: Text("Charge History")) {
-                        ForEach(charges) { charge in
+                        ForEach(viewModel.charges) { charge in
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(charge.formattedDate)
@@ -110,7 +131,7 @@ struct ChargeSummaryView: View {
                             }
                             .padding(.vertical, 4)
                         }
-                        .onDelete(perform: delete)
+                        .onDelete(perform: viewModel.delete)
                     }
                 }
             }
@@ -124,17 +145,11 @@ struct ChargeSummaryView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .onAppear {
+                // Use the actual context at runtime
+                viewModel.load()
+            }
         }
-    }
-
-    // MARK: – Actions
-
-    /// Deletes selected charges from the context.
-    private func delete(at offsets: IndexSet) {
-      for idx in offsets {
-        let toDelete = charges[idx]
-        context.delete(toDelete)
-      }
     }
 
     // MARK: – Formatting

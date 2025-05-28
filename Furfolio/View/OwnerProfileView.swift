@@ -114,25 +114,16 @@ struct OwnerProfileView: View {
             Text(dogOwner.ownerName)
                 .font(.title)
                 .bold()
-            // Engagement and retention indicators
-            VStack(alignment: .leading, spacing: 4) {
-                if dogOwner.hasBirthdayThisMonth {
-                    TagLabelView(text: "🎂 Birthday Month", backgroundColor: .purple, textColor: .purple)
-                }
-                if dogOwner.retentionRisk {
-                    TagLabelView(text: "⚠️ Retention Risk", backgroundColor: .orange, textColor: .orange)
-                }
-                if let spenderTag = dogOwner.lifetimeValueTag {
-                    TagLabelView(text: spenderTag, backgroundColor: .yellow, textColor: .yellow)
-                }
-                // Loyalty reward progress
-                if !dogOwner.loyaltyProgressTag.isEmpty {
-                    TagLabelView(text: dogOwner.loyaltyProgressTag, backgroundColor: .green, textColor: .green)
-                }
-                // Behavior trend badge
-                if !dogOwner.behaviorTrendBadge.isEmpty {
-                    TagLabelView(text: dogOwner.behaviorTrendBadge, backgroundColor: .orange, textColor: .orange)
-                }
+            // Consolidate status tags into a single list
+            let badgeItems: [(text: String, color: Color)] = [
+                dogOwner.hasBirthdayThisMonth ? ("🎂 Birthday Month", .purple) : nil,
+                dogOwner.retentionRisk ? ("⚠️ Retention Risk", .orange) : nil,
+                dogOwner.lifetimeValueTag.map { ($0, .yellow) },
+                !dogOwner.loyaltyProgressTag.isEmpty ? (dogOwner.loyaltyProgressTag, .green) : nil,
+                !dogOwner.behaviorTrendBadge.isEmpty ? (dogOwner.behaviorTrendBadge, .orange) : nil
+            ].compactMap { $0 }
+            ForEach(badgeItems, id: \.text) { item in
+                TagLabelView(text: item.text, backgroundColor: item.color, textColor: item.color)
             }
             contactInfoText
             addressText

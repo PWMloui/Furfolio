@@ -19,7 +19,7 @@ final class VendorInvoice: Identifiable, Hashable {
     @Attribute var amount: Double
     @Attribute var isPaid: Bool
     @Attribute var notes: String?
-    @Relationship(deleteRule: .nullify) var attachments: [PetGalleryImage] // if you have a gallery image model
+    @Relationship(deleteRule: .nullify) var attachments: [VendorInvoiceAttachment] // references the invoice attachment model
 
     init(
       invoiceNumber: String,

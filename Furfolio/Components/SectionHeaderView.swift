@@ -44,8 +44,8 @@ extension EnvironmentValues {
 struct SectionHeaderView: View {
   /// The text displayed as the section header.
   let title: String
-  let padding: EdgeInsets
-  let backgroundColor: Color
+  let padding: EdgeInsets?
+  let backgroundColor: Color?
   let font: Font?
   let foregroundColor: Color?
 
@@ -62,19 +62,24 @@ struct SectionHeaderView: View {
     foregroundColor: Color? = nil
   ) {
     self.title = title
-    self.padding = padding ?? defaultPadding
-    self.backgroundColor = backgroundColor ?? defaultBackground
-    self.font = font ?? defaultFont
-    self.foregroundColor = foregroundColor ?? defaultForeground
+    self.padding = padding
+    self.backgroundColor = backgroundColor
+    self.font = font
+    self.foregroundColor = foregroundColor
   }
 
   /// The view body that renders the title text with the section header style.
   var body: some View {
+    let pad = padding ?? defaultPadding
+    let bg  = backgroundColor ?? defaultBackground
+    let fnt = font ?? defaultFont
+    let fg  = foregroundColor ?? defaultForeground
+
     Text(title)
-      .font(font)
-      .foregroundColor(foregroundColor)
-      .padding(padding)
-      .background(backgroundColor)
+      .font(fnt)
+      .foregroundColor(fg)
+      .padding(pad)
+      .background(bg)
   }
 }
 

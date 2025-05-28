@@ -7,29 +7,42 @@
 //
 
 import SwiftUI
-import SwiftData
+
 
 // TODO: Move loyalty logic into a dedicated ViewModel and use theme colors for consistency
 
 @MainActor
-/// Shows a client’s loyalty status and progress toward their next free bath.
-struct LoyaltyProgressView: View {
+class LoyaltyProgressViewModel: ObservableObject {
     let owner: DogOwner
+    private var stats: ClientStats { ClientStats(owner: owner) }
+    @Published var visits: Int
+    @Published var threshold: Int
 
-    /// ClientStats helper for computing loyalty-related values.
-    private var stats: ClientStats {
-        ClientStats(owner: owner)
+    var progressFraction: Double {
+        min(Double(visits) / Double(threshold), 1.0)
     }
 
-    /// Total number of completed visits.
-    private var visits: Int { stats.totalAppointments }
+    var loyaltyStatus: String {
+        stats.loyaltyStatus
+    }
 
-    /// Number of visits required to earn the next reward.
-    private let threshold = ClientStats.loyaltyThreshold
+    var loyaltyProgressTag: String {
+        stats.loyaltyProgressTag
+    }
 
-    /// Progress toward the reward as a fraction between 0 and 1.
-    private var progressFraction: Double {
-        min(Double(visits) / Double(threshold), 1.0)
+    init(owner: DogOwner) {
+        self.owner = owner
+        self.visits = stats.totalAppointments
+        self.threshold = ClientStats.loyaltyThreshold
+    }
+}
+
+/// Shows a client’s loyalty status and progress toward their next free bath.
+struct LoyaltyProgressView: View {
+    @StateObject private var viewModel: LoyaltyProgressViewModel
+
+    init(owner: DogOwner) {
+        _viewModel = StateObject(wrappedValue: LoyaltyProgressViewModel(owner: owner))
     }
 
     var body: some View {
@@ -38,22 +51,22 @@ struct LoyaltyProgressView: View {
                 Text("Loyalty Status")
                     .font(.headline)
                 Spacer()
-                Text(stats.loyaltyStatus)
+                Text(viewModel.loyaltyStatus)
                     .foregroundColor(.accentColor)
                     .fontWeight(.semibold)
             }
 
             // Progress bar
             VStack(alignment: .leading) {
-                ProgressView(value: progressFraction) {
-                    Text("Visits: \(visits)/\(threshold)")
+                ProgressView(value: viewModel.progressFraction) {
+                    Text("Visits: \(viewModel.visits)/\(viewModel.threshold)")
                 }
                 .progressViewStyle(LinearProgressViewStyle(tint: .appPrimary))
 
-                Text(stats.loyaltyProgressTag)
+                Text(viewModel.loyaltyProgressTag)
                     .font(.subheadline)
                     .foregroundColor(
-                        progressFraction >= 1.0
+                        viewModel.progressFraction >= 1.0
                             ? Color.green
                             : Color.secondary
                     )

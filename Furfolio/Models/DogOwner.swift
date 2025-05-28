@@ -10,11 +10,10 @@ import Foundation
 import SwiftData
 import UIKit
 
-// TODO: Centralize transformer registration in PersistenceController and move computed logic into a ViewModel for testability.
 @MainActor
 @Model
-final class DogOwner: Identifiable, Hashable {
-  
+final class DogOwner: Identifiable, Hashable, Encodable {
+
   // MARK: – Transformer Names
   
   private static let petArrayTransformerName    = "PetArrayTransformer"
@@ -306,7 +305,7 @@ final class DogOwner: Identifiable, Hashable {
 
   /// Asynchronously resizes the stored image data to the given width.
   func resizeImageAsync(to width: CGFloat) async -> Data? {
-    await ImageProcessor.asyncResize(data: dogImageData, targetWidth: width)
+    await ImageProcessor.resizeAsync(data: dogImageData, targetWidth: width)
   }
 
   /// Updates owner and dog information, trims inputs, and sets `updatedDate` to now.
@@ -329,7 +328,27 @@ final class DogOwner: Identifiable, Hashable {
     self.updatedDate  = Date.now
   }
 
-  // ... rest of methods unchanged ...
+  func encode(to encoder: Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+      try container.encode(id, forKey: .id)
+      try container.encode(ownerName, forKey: .ownerName)
+      try container.encode(dogName, forKey: .dogName)
+      try container.encode(breed, forKey: .breed)
+      try container.encode(contactInfo, forKey: .contactInfo)
+      try container.encodeIfPresent(email, forKey: .email)
+      try container.encode(address, forKey: .address)
+      try container.encode(notes, forKey: .notes)
+      try container.encodeIfPresent(birthdate, forKey: .birthdate)
+      try container.encode(loyaltyThreshold, forKey: .loyaltyThreshold)
+      try container.encode(pets, forKey: .pets)
+      try container.encode(emergencyContacts, forKey: .emergencyContacts)
+      try container.encode(documentAttachments, forKey: .documentAttachments)
+  }
+
+  private enum CodingKeys: String, CodingKey {
+      case id, ownerName, dogName, breed, contactInfo, email, address,
+           notes, birthdate, loyaltyThreshold, pets, emergencyContacts, documentAttachments
+  }
 
   // MARK: – Hashable
 

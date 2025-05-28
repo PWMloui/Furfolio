@@ -43,6 +43,30 @@ extension Color {
   /// Color used for disabled or inactive elements.
   static let disabled = Color.gray.opacity(0.6)
 
+  /// Color for tappable text links.
+  static let link = Color("LinkColor")
+
+  /// Color for highlighted UI elements (e.g. badges, tags).
+  static let highlight = Color("HighlightColor")
+
+  /// Color for borders and dividers.
+  static let border = Color("BorderColor")
+
+  /// Light variant of success (for dark backgrounds).
+  static var successLight: Color { success.opacity(0.7) }
+  /// Dark variant of success.
+  static var successDark: Color { success.opacity(1.3) }
+
+  /// Light variant of warning.
+  static var warningLight: Color { warning.opacity(0.7) }
+  /// Dark variant of warning.
+  static var warningDark: Color { warning.opacity(1.3) }
+
+  /// Light variant of error.
+  static var errorLight: Color { error.opacity(0.7) }
+  /// Dark variant of error.
+  static var errorDark: Color { error.opacity(1.3) }
+
   // MARK: - Brand Color Variants
 
   /// Lighter variant of the primary brand color.
@@ -83,10 +107,18 @@ extension Color {
     })
   }
 
+  /// Standard separator color that adapts to light/dark mode.
+  static var separator: Color {
+    Color(UIColor.separator)
+  }
+
   // MARK: - Hex Color Initialization
 
   /// Creates a Color from a hexadecimal color code string.
+  ///
   /// - Parameter hex: String in formats “RRGGBB”, “AARRGGBB”, or shorthand “RGB”.
+  ///                  Non-hex characters are ignored. If the string length
+  ///                  is unrecognized, returns black.
   init(hex: String) {
     let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
     var int = UInt64()

@@ -41,21 +41,23 @@ struct ProgressRingView<CenterContent: View>: View {
   var lineCap: CGLineCap
   var lineJoin: CGLineJoin
   var dash: [CGFloat]
+  var lineWidthParam: CGFloat?
   var animationStyle: AnimationStyle
   var onComplete: (() -> Void)?
   var isIndeterminate: Bool
 
   private let centerContent: (() -> CenterContent)?
 
-  @Environment(\.progressRingLineWidth) private var envLineWidth
-  @Environment(\.progressRingAnimation) private var envAnimation
-  @Environment(\.progressRingGradient) private var envGradient
-
   @State private var animateIndeterminate = false
+  @State private var previousProgress: Double = 0
 
-  var lineWidth: CGFloat { envLineWidth }
+  var lineWidth: CGFloat { lineWidthParam ?? envLineWidth }
 
   var body: some View {
+    let envLineWidth = Environment(\.progressRingLineWidth).wrappedValue
+    let envAnimation = Environment(\.progressRingAnimation).wrappedValue
+    let envGradient = Environment(\.progressRingGradient).wrappedValue
+
     GeometryReader { geo in
       ZStack {
         // Track circle
@@ -71,18 +73,19 @@ struct ProgressRingView<CenterContent: View>: View {
             style: StrokeStyle(lineWidth: lineWidth, lineCap: lineCap, lineJoin: lineJoin, dash: dash)
           )
           .rotationEffect(Angle(degrees: isIndeterminate ? (animateIndeterminate ? 360 : 0) : -90))
-          .animation(animationStyle.animation, value: progress)
+          .animation(isIndeterminate ? nil : (animationStyle.animation), value: progress)
           .onAppear {
             if isIndeterminate {
-              withAnimation(Animation.linear(duration: 1).repeatForever(autoreverses: false)) {
+              withAnimation(animationStyle.animation.repeatForever(autoreverses: isIndeterminate)) {
                 animateIndeterminate = true
               }
             }
           }
           .onChange(of: progress) { newValue in
-            if newValue >= 1.0 {
+            if newValue >= 1.0, previousProgress < 1.0 {
               onComplete?()
             }
+            previousProgress = newValue
           }
           .gesture(
             DragGesture(minimumDistance: 0)
@@ -116,6 +119,7 @@ extension ProgressRingView where CenterContent == AnyView {
     lineCap: CGLineCap = .round,
     lineJoin: CGLineJoin = .round,
     dash: [CGFloat] = [],
+    lineWidthParam: CGFloat? = nil,
     animationStyle: AnimationStyle = .ease,
     onComplete: (() -> Void)? = nil,
     isIndeterminate: Bool = false
@@ -125,6 +129,7 @@ extension ProgressRingView where CenterContent == AnyView {
     self.lineCap = lineCap
     self.lineJoin = lineJoin
     self.dash = dash
+    self.lineWidthParam = lineWidthParam
     self.animationStyle = animationStyle
     self.onComplete = onComplete
     self.isIndeterminate = isIndeterminate
@@ -150,6 +155,7 @@ extension ProgressRingView where CenterContent == AnyView {
     lineCap: CGLineCap = .round,
     lineJoin: CGLineJoin = .round,
     dash: [CGFloat] = [],
+    lineWidthParam: CGFloat? = nil,
     animationStyle: AnimationStyle = .ease,
     onComplete: (() -> Void)? = nil,
     isIndeterminate: Bool = false,
@@ -160,6 +166,7 @@ extension ProgressRingView where CenterContent == AnyView {
     self.lineCap = lineCap
     self.lineJoin = lineJoin
     self.dash = dash
+    self.lineWidthParam = lineWidthParam
     self.animationStyle = animationStyle
     self.onComplete = onComplete
     self.isIndeterminate = isIndeterminate

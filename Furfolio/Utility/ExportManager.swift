@@ -9,7 +9,6 @@ import Foundation
 import SwiftData
 
 // TODO: Refactor CSV formatting to a separate CSVBuilder for reuse and inject formatters for testability.
-@MainActor
 
 /// Central service for exporting application data as CSV files.
 /// Supports DogOwner, Appointment, and Charge exports with proper CSV escaping.
@@ -58,7 +57,7 @@ final class ExportManager {
   /// - Parameter owners: The list of DogOwner objects to export.
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
-  func exportOwnersCSV(_ owners: [DogOwner]) throws -> URL {
+  func exportOwnersCSV(_ owners: [DogOwner]) async throws -> URL {
     var builder = CSVBuilder(headers: ["Owner Name","Email","Phone","Address","Number of Dogs"])
     for owner in owners {
       let fields: [String] = [
@@ -70,15 +69,20 @@ final class ExportManager {
       ]
       builder.addRow(fields)
     }
-    let csv = builder.build(escape: escape)
-    return try write(csv: csv, fileName: fileNameWithTimestamp("DogOwners.csv"))
+    let csv = try await Task.detached(priority: .utility) {
+      builder.build(escape: escape)
+    }.value
+    let fileURL = try await Task.detached(priority: .utility) {
+      try write(csv: csv, fileName: fileNameWithTimestamp("DogOwners.csv"))
+    }.value
+    return fileURL
   }
 
   /// Exports an array of Appointment entities to a CSV file.
   /// - Parameter appointments: The list of Appointment objects to export.
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
-  func exportAppointmentsCSV(_ appointments: [Appointment]) throws -> URL {
+  func exportAppointmentsCSV(_ appointments: [Appointment]) async throws -> URL {
     var builder = CSVBuilder(headers: ["Date","Owner Name","Service Type","Notes"])
     for appt in appointments {
       let dateStr = isoFormatter.string(from: appt.date)
@@ -90,15 +94,20 @@ final class ExportManager {
       ]
       builder.addRow(fields)
     }
-    let csv = builder.build(escape: escape)
-    return try write(csv: csv, fileName: fileNameWithTimestamp("Appointments.csv"))
+    let csv = try await Task.detached(priority: .utility) {
+      builder.build(escape: escape)
+    }.value
+    let fileURL = try await Task.detached(priority: .utility) {
+      try write(csv: csv, fileName: fileNameWithTimestamp("Appointments.csv"))
+    }.value
+    return fileURL
   }
 
   /// Exports an array of Charge entities to a CSV file.
   /// - Parameter charges: The list of Charge objects to export.
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
-  func exportChargesCSV(_ charges: [Charge]) throws -> URL {
+  func exportChargesCSV(_ charges: [Charge]) async throws -> URL {
     var builder = CSVBuilder(headers: ["Date","Type","Amount","Notes"])
     for charge in charges {
       let dateStr = isoFormatter.string(from: charge.date)
@@ -110,8 +119,13 @@ final class ExportManager {
       ]
       builder.addRow(fields)
     }
-    let csv = builder.build(escape: escape)
-    return try write(csv: csv, fileName: fileNameWithTimestamp("Charges.csv"))
+    let csv = try await Task.detached(priority: .utility) {
+      builder.build(escape: escape)
+    }.value
+    let fileURL = try await Task.detached(priority: .utility) {
+      try write(csv: csv, fileName: fileNameWithTimestamp("Charges.csv"))
+    }.value
+    return fileURL
   }
 
   private func fileNameWithTimestamp(_ base: String) -> String {

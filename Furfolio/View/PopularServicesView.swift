@@ -8,12 +8,10 @@
 import SwiftUI
 import SwiftData
 
-// TODO: Move service-frequency calculation into a dedicated ViewModel for cleaner view code and easier testing
-
 @MainActor
 /// Displays the service types most frequently booked, in descending order of count.
 struct PopularServicesView: View {
-    // Fetch all appointments, sorted by date ascending
+    @StateObject private var viewModel = PopularServicesViewModel()
     @Query(
         predicate: nil,
         sort: [ SortDescriptor(\Appointment.date, order: .forward) ]
@@ -22,20 +20,11 @@ struct PopularServicesView: View {
 
     init() {}
 
-    /// Computes and sorts service types by booking frequency.
-    private var serviceFrequency: [(type: Appointment.ServiceType, count: Int)] {
-        let counts = Dictionary(grouping: appointments, by: \.serviceType)
-            .mapValues(\.count)
-        return counts
-            .map { (type: $0.key, count: $0.value) }
-            .sorted { $0.count > $1.count }
-    }
-
     var body: some View {
         NavigationStack {
             List {
                 Section(header: Text("Popular Services")) {
-                    ForEach(serviceFrequency, id: \.type) { entry in
+                    ForEach(viewModel.serviceFrequency, id: \.type) { entry in
                         HStack {
                             Text(entry.type.localized)
                             Spacer()
@@ -50,6 +39,10 @@ struct PopularServicesView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Popular Services")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .onAppear { viewModel.update(from: appointments) }
+        .onChange(of: appointments) { newAppointments in
+            viewModel.update(from: newAppointments)
         }
     }
 }

@@ -8,7 +8,15 @@
 
 import SwiftUI
 
-// TODO: Extract date-range management into a ViewModel and allow custom range validation/injection for testing.
+
+
+private extension Date {
+    var startOfDay: Date { Calendar.current.startOfDay(for: self) }
+    var endOfDay: Date {
+        let start = Calendar.current.startOfDay(for: self)
+        return Calendar.current.date(byAdding: DateComponents(day: 1, second: -1), to: start)!
+    }
+}
 
 @MainActor
 /// A picker allowing selection of predefined or custom date ranges, syncing custom dates with the chosen range.
@@ -33,7 +41,7 @@ struct DateRangePicker: View {
     private var activeIntervalText: String {
         guard let interval = selectedDateRange.interval else { return "" }
         let fmt = Self.dateFormatter
-        return "\(fmt.string(from: interval.start)) – \(fmt.string(from: interval.end))"
+        return "\(fmt.string(from: interval.start.startOfDay)) – \(fmt.string(from: interval.end.endOfDay))"
     }
 
     /// The view body containing a segmented picker and conditional date pickers or interval display.
@@ -51,8 +59,8 @@ struct DateRangePicker: View {
 
                 // Seed custom dates when switching to a predefined range
                 if let interval = new.interval {
-                    customStartDate = interval.start
-                    customEndDate   = interval.end
+                    customStartDate = interval.start.startOfDay
+                    customEndDate   = interval.end.endOfDay
                 }
             }
 

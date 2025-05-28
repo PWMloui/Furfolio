@@ -5,7 +5,6 @@
 //  Created by mac on 5/15/25.
 //
 
-
 import SwiftUI
 
 private struct TagLabelFontKey: EnvironmentKey {
@@ -86,21 +85,22 @@ struct TagLabelView: View {
   @Environment(\.tagLabelBackgroundColor) private var defaultBackgroundColor
   @Environment(\.tagLabelTextColor) private var defaultTextColor
 
-  private var resolvedFont: Font { font ?? defaultFont }
-  private var resolvedCornerRadius: CGFloat { cornerRadius ?? defaultCornerRadius }
-  private var resolvedHorizontalPadding: CGFloat { defaultHorizontalPadding }
-  private var resolvedVerticalPadding: CGFloat { defaultVerticalPadding }
-  private var resolvedBackgroundColor: Color { backgroundColor ?? defaultBackgroundColor }
-  private var resolvedTextColor: Color { textColor ?? defaultTextColor }
-
   var body: some View {
+    // Resolve styling here
+    let fontToUse = font ?? defaultFont
+    let cornerRadiusToUse = cornerRadius ?? defaultCornerRadius
+    let hPadding = defaultHorizontalPadding
+    let vPadding = defaultVerticalPadding
+    let bgColor = backgroundColor ?? defaultBackgroundColor
+    let fgColor = textColor ?? defaultTextColor
+
     Text(text)
-      .font(resolvedFont)
-      .padding(.horizontal, resolvedHorizontalPadding)
-      .padding(.vertical, resolvedVerticalPadding)
-      .background(resolvedBackgroundColor)
-      .foregroundColor(resolvedTextColor)
-      .cornerRadius(resolvedCornerRadius)
+      .font(fontToUse)
+      .padding(.horizontal, hPadding)
+      .padding(.vertical, vPadding)
+      .background(bgColor)
+      .foregroundColor(fgColor)
+      .cornerRadius(cornerRadiusToUse)
       .accessibilityLabel(Text(text))
       .accessibilityAddTraits(.isStaticText)
   }

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Services
 // TODO: Move dashboard logic into a dedicated ViewModel and cache formatters for performance
 
 @MainActor
@@ -14,32 +15,10 @@ import SwiftData
 struct InventoryDashboardView: View {
     @Environment(\.modelContext) private var modelContext
     
+    @StateObject private var viewModel = InventoryDashboardViewModel()
+    
     /// Shared NumberFormatter for currency values to avoid repeated allocations.
     private static let currencyFormatter = NumberFormatter.currency
-    
-    // Fetch all items, sorted by name
-    @Query(sort: \.name, order: .forward) private var allItems: [InventoryItem]
-    
-    /// Items with stock at or below the reorder threshold.
-    private var lowStockItems: [InventoryItem] {
-        allItems.filter(\.isLowStock)
-    }
-    /// Top five inventory items sorted by total value.
-    private var topValueItems: [InventoryItem] {
-        Array(allItems
-            .sorted { $0.totalValue > $1.totalValue }
-            .prefix(5)
-        )
-    }
-    
-    /// Combined total value of all inventory items.
-    private var totalValue: Double {
-        allItems.reduce(0) { $0 + $1.totalValue }
-    }
-    /// Total count of inventory items.
-    private var totalItemsCount: Int {
-        allItems.count
-    }
     
     var body: some View {
         NavigationStack {
@@ -49,21 +28,21 @@ struct InventoryDashboardView: View {
                     HStack {
                         Text("Total Items")
                         Spacer()
-                        Text("\(totalItemsCount)")
+                        Text("\(viewModel.totalItemsCount)")
                             .foregroundColor(.secondary)
                     }
                     HStack {
                         Text("Inventory Value")
                         Spacer()
-                        Text(Self.currencyFormatter.string(from: NSNumber(value: totalValue)) ?? "")
+                        Text(Self.currencyFormatter.string(from: NSNumber(value: viewModel.totalValue)) ?? "")
                             .foregroundColor(.secondary)
                     }
                 }
                 
                 // MARK: Low Stock
-                if !lowStockItems.isEmpty {
+                if !viewModel.lowStockItems.isEmpty {
                     Section(header: Text("Low Stock")) {
-                        ForEach(lowStockItems) { item in
+                        ForEach(viewModel.lowStockItems) { item in
                             HStack {
                                 Text(item.name)
                                 Spacer()
@@ -76,7 +55,7 @@ struct InventoryDashboardView: View {
                 
                 // MARK: Top Value
                 Section(header: Text("Top Value Items")) {
-                    ForEach(topValueItems) { item in
+                    ForEach(viewModel.topValueItems) { item in
                         HStack {
                             Text(item.name)
                             Spacer()
@@ -88,7 +67,7 @@ struct InventoryDashboardView: View {
                 
                 // MARK: All Items
                 Section(header: Text("All Inventory")) {
-                    ForEach(allItems) { item in
+                    ForEach(viewModel.allItems) { item in
                         InventoryRow(item: item)
                     }
                 }
@@ -96,6 +75,9 @@ struct InventoryDashboardView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Inventory Dashboard")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .onAppear {
+            viewModel.loadItems(context: modelContext)
         }
     }
 }

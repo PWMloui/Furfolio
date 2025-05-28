@@ -9,7 +9,6 @@
 import Foundation
 import SwiftData
 
-// TODO: Centralize transformer registration in PersistenceController and move business logic into a ViewModel for testability.
 @MainActor
 
 

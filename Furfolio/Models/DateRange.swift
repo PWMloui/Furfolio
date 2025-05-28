@@ -8,7 +8,6 @@
 
 import Foundation
 
-// TODO: Allow localization of titles and injection of a custom calendar for testing.
 
 @MainActor
 /// Predefined date ranges for filtering metrics, with computed start/end dates.
@@ -32,9 +31,11 @@ enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
 
     var id: String { rawValue }
     
-    /// The end of the range, always the current date.
+    /// The end of the range, always the end of the current day.
     var endDate: Date {
-        Self.now
+        let todayStart = Self.calendar.startOfDay(for: Self.now)
+        // end of day at 23:59:59
+        return Self.calendar.date(byAdding: .second, value: 86_399, to: todayStart)!
     }
     
     /// The start of the range, or `nil` if the range is `.custom`.
@@ -44,9 +45,11 @@ enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
         
         switch self {
         case .lastWeek:
-            return cal.date(byAdding: .day, value: -7, to: now)
+            let start = cal.date(byAdding: .day, value: -7, to: now)!
+            return cal.startOfDay(for: start)
         case .lastMonth:
-            return cal.date(byAdding: .month, value: -1, to: now)
+            let start = cal.date(byAdding: .month, value: -1, to: now)!
+            return cal.startOfDay(for: start)
         case .custom:
             return nil
         }

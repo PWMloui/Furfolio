@@ -1,4 +1,3 @@
-
 //  TaskManagerView.swift
 //  Furfolio
 //
@@ -9,109 +8,150 @@
 import SwiftUI
 import SwiftData
 
+@MainActor
+class TaskManagerViewModel: ObservableObject {
+  private let context: ModelContext
+
+  @Published var pendingTasks: [Task] = []
+  @Published var overdueTasks: [Task] = []
+  @Published var completedTasks: [Task] = []
+
+  init(context: ModelContext) {
+    self.context = context
+    fetchAll()
+  }
+
+  func fetchAll() {
+    pendingTasks = context.fetch(
+      Query(Task.self)
+        .filter(!\Task.isCompleted && (\Task.dueDate ?? .distantFuture) >= Date.now)
+        .sortBy(\.dueDate, order: .forward)
+        .then(\.priority, order: .forward)
+    )
+    overdueTasks = context.fetch(
+      Query(Task.self)
+        .filter(!\Task.isCompleted && (\Task.dueDate ?? .distantPast) < Date.now)
+        .sortBy(\.dueDate, order: .forward)
+    )
+    completedTasks = context.fetch(
+      Query(Task.self)
+        .filter(\.isCompleted)
+        .sortBy(\.updatedAt, order: .reverse)
+    )
+  }
+
+  func delete(at offsets: IndexSet, in list: TaskList) {
+    let tasks = tasks(for: list)
+    for index in offsets {
+      context.delete(tasks[index])
+    }
+    fetchAll()
+  }
+
+  func markCompleted(_ task: Task) {
+    task.markCompleted()
+    fetchAll()
+  }
+
+  private func tasks(for list: TaskList) -> [Task] {
+    switch list {
+    case .pending: return pendingTasks
+    case .overdue: return overdueTasks
+    case .completed: return completedTasks
+    }
+  }
+
+  enum TaskList { case pending, overdue, completed }
+}
+
 // TODO: Move task-fetching, deletion, and sheet presentation logic into a dedicated TaskManagerViewModel for cleaner views and easier testing.
 
 @MainActor
 /// Manages and displays lists of pending, overdue, and completed tasks, with support for adding new tasks.
 struct TaskManagerView: View {
-    @Environment(\.modelContext) private var modelContext
+  @Environment(\.modelContext) private var modelContext
+  @StateObject private var viewModel: TaskManagerViewModel
 
-    /// Shared formatter for displaying due dates.
-    private static let dateFormatter: DateFormatter = {
-      let fmt = DateFormatter()
-      fmt.dateStyle = .medium
-      fmt.timeStyle = .short
-      return fmt
-    }()
-    /// Shared calendar reference for date computations.
-    private static let calendar = Calendar.current
+  init() {
+    let context = Environment(\.modelContext).wrappedValue
+    _viewModel = StateObject(wrappedValue: TaskManagerViewModel(context: context))
+  }
 
-    // MARK: — Fetch descriptors for different task states
-    /// Tasks not yet completed and due today or in the future, sorted by due date then priority.
-    @Query(
-      predicate: #Predicate { !$0.isCompleted && ($0.dueDate ?? .distantFuture) >= Date.now },
-      sort: [ SortDescriptor(\Task.dueDate, order: .forward), SortDescriptor(\Task.priority, order: .forward) ]
-    )
-    private var pendingTasks: [Task]
+  @State private var showingAddSheet = false
 
-    /// Tasks marked completed, sorted by most recently updated.
-    @Query(
-      predicate: #Predicate { $0.isCompleted },
-      sort: [ SortDescriptor(\Task.updatedAt, order: .reverse) ]
-    )
-    private var completedTasks: [Task]
+  /// Shared formatter for displaying due dates.
+  private static let dateFormatter: DateFormatter = {
+    let fmt = DateFormatter()
+    fmt.dateStyle = .medium
+    fmt.timeStyle = .short
+    return fmt
+  }()
+  /// Shared calendar reference for date computations.
+  private static let calendar = Calendar.current
 
-    /// Tasks not completed and past their due date, sorted by due date.
-    @Query(
-      predicate: #Predicate { !$0.isCompleted && ($0.dueDate ?? .distantPast) < Date.now },
-      sort: [ SortDescriptor(\Task.dueDate, order: .forward) ]
-    )
-    private var overdueTasks: [Task]
-
-    @State private var showingAddSheet = false
-
-    var body: some View {
-      NavigationStack {
-        List {
-          // Pending
-          /// Section listing all pending tasks.
-          if !pendingTasks.isEmpty {
-            Section("Pending Tasks") {
-              ForEach(pendingTasks) { task in
-                TaskRow(task: task)
-              }
-              .onDelete { idx in
-                for i in idx { modelContext.delete(pendingTasks[i]) }
-              }
+  var body: some View {
+    NavigationStack {
+      List {
+        // Pending
+        /// Section listing all pending tasks.
+        if !viewModel.pendingTasks.isEmpty {
+          Section("Pending Tasks") {
+            ForEach(viewModel.pendingTasks) { task in
+              TaskRow(task: task, viewModel: viewModel)
             }
-          }
-
-          // Overdue
-          /// Section listing tasks that are overdue.
-          if !overdueTasks.isEmpty {
-            Section("Overdue") {
-              ForEach(overdueTasks) { task in
-                TaskRow(task: task)
-              }
-              .onDelete { idx in
-                for i in idx { modelContext.delete(overdueTasks[i]) }
-              }
-            }
-          }
-
-          // Completed
-          /// Section listing all completed tasks.
-          if !completedTasks.isEmpty {
-            Section("Completed") {
-              ForEach(completedTasks) { task in
-                TaskRow(task: task)
-              }
-              .onDelete { idx in
-                for i in idx { modelContext.delete(completedTasks[i]) }
-              }
+            .onDelete { idx in
+              viewModel.delete(at: idx, in: .pending)
             }
           }
         }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Tasks")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-          ToolbarItem(placement: .navigationBarTrailing) {
-            Button(action: { showingAddSheet = true }) {
-              Image(systemName: "plus")
+
+        // Overdue
+        /// Section listing tasks that are overdue.
+        if !viewModel.overdueTasks.isEmpty {
+          Section("Overdue") {
+            ForEach(viewModel.overdueTasks) { task in
+              TaskRow(task: task, viewModel: viewModel)
+            }
+            .onDelete { idx in
+              viewModel.delete(at: idx, in: .overdue)
             }
           }
         }
-        /// Sheet for adding a new task.
-        .sheet(isPresented: $showingAddSheet) {
-          AddTaskView { newTask in
-            modelContext.insert(newTask)
-            showingAddSheet = false
+
+        // Completed
+        /// Section listing all completed tasks.
+        if !viewModel.completedTasks.isEmpty {
+          Section("Completed") {
+            ForEach(viewModel.completedTasks) { task in
+              TaskRow(task: task, viewModel: viewModel)
+            }
+            .onDelete { idx in
+              viewModel.delete(at: idx, in: .completed)
+            }
           }
-          .environment(\.modelContext, modelContext)
         }
       }
+      .listStyle(.insetGrouped)
+      .navigationTitle("Tasks")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .navigationBarTrailing) {
+          Button(action: { showingAddSheet = true }) {
+            Image(systemName: "plus")
+          }
+        }
+      }
+      /// Sheet for adding a new task.
+      .sheet(isPresented: $showingAddSheet) {
+        AddTaskView { newTask in
+          modelContext.insert(newTask)
+          viewModel.fetchAll()
+          showingAddSheet = false
+        }
+        .environment(\.modelContext, modelContext)
+      }
     }
+  }
 }
 
 
@@ -120,6 +160,7 @@ struct TaskManagerView: View {
 private struct TaskRow: View {
   @Bindable var task: Task
   @Environment(\.modelContext) private var modelContext
+  var viewModel: TaskManagerViewModel
 
   /// Shared formatters for due date display.
   private static let dateFormatter: DateFormatter = {
@@ -154,7 +195,7 @@ private struct TaskRow: View {
       Spacer()
       Button(action: {
         withAnimation {
-          task.markCompleted()
+          viewModel.markCompleted(task)
         }
       }) {
         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")

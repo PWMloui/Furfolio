@@ -10,6 +10,33 @@ import SwiftUI
 // TODO: Move business logic (tag generation, haptic feedback, and deletion) into a dedicated ViewModel for cleaner views and testing.
 
 @MainActor
+class DogOwnerRowViewModel: ObservableObject {
+  static let imageCache = NSCache<NSString, UIImage>()
+  @Published var uiImage: UIImage?
+
+  func loadImage(from data: Data?) {
+    guard let data = data else {
+      uiImage = nil
+      return
+    }
+    let key = NSString(string: "\(data.hashValue)")
+    if let cachedImage = DogOwnerRowViewModel.imageCache.object(forKey: key) {
+      uiImage = cachedImage
+    } else if let image = UIImage(data: data) {
+      DogOwnerRowViewModel.imageCache.setObject(image, forKey: key)
+      uiImage = image
+    } else {
+      uiImage = nil
+    }
+  }
+
+  func select(owner: DogOwner, selected: Binding<DogOwner?>) {
+    let generator = UIImpactFeedbackGenerator(style: .medium)
+    generator.impactOccurred()
+    selected.wrappedValue = owner
+  }
+}
+
 /// Row view displaying a dog owner’s avatar, details, and status badges, with tap, swipe, and haptic interactions.
 struct DogOwnerRowView: View {
   @Environment(\.modelContext) private var modelContext
@@ -17,36 +44,27 @@ struct DogOwnerRowView: View {
   @State private var showDeleteAlert = false
   @Binding var selectedOwner: DogOwner?
   let dogOwner: DogOwner
+  @StateObject private var viewModel = DogOwnerRowViewModel()
 
   var body: some View {
     Button {
-      let generator = UIImpactFeedbackGenerator(style: .medium)
-      generator.impactOccurred()
-      selectedOwner = dogOwner
+      viewModel.select(owner: dogOwner, selected: $selectedOwner)
     } label: {
       HStack(spacing: 12) {
         // Dog image section with scaling and opacity transitions.
         dogImageSection()
-          .transition(.scale.combined(with: .opacity))
-          .animation(.spring(), value: dogOwner.dogImage)
 
         // Owner details section fades in.
         ownerDetailsSection()
-          .transition(.opacity)
-          .animation(.easeIn(duration: 0.3), value: dogOwner.ownerName)
 
         Spacer()
 
         // Tag for upcoming appointments (if any).
         upcomingAppointmentsTag()
-          .transition(.scale.combined(with: .opacity))
-          .animation(.spring(), value: dogOwner.hasUpcomingAppointments)
 
         // If essential owner info is missing, show an "Incomplete" badge.
         if !dogOwner.isValidOwner {
           incompleteInfoTag()
-            .transition(.opacity)
-            .animation(.easeIn(duration: 0.3), value: dogOwner.isValidOwner)
         }
 
         if !dogOwner.loyaltyStatus.isEmpty && dogOwner.loyaltyStatus != "New" {
@@ -71,6 +89,7 @@ struct DogOwnerRowView: View {
       }
       .padding(.vertical, 8)
       .accessibilityElement(children: .combine)
+      .animation(.spring(), value: dogOwner)
     }
     .buttonStyle(PlainButtonStyle())
     .swipeActions(edge: .trailing) {
@@ -94,11 +113,14 @@ struct DogOwnerRowView: View {
       }
       Button("Cancel", role: .cancel) { }
     }
+    .onAppear {
+      viewModel.loadImage(from: dogOwner.dogImage)
+    }
   }
 
   /// Displays the owner’s image or initials with styling and accessibility.
   @ViewBuilder private func dogImageSection() -> some View {
-    if let imageData = dogOwner.dogImage, let image = UIImage(data: imageData) {
+    if let image = viewModel.uiImage {
       Image(uiImage: image)
         .resizable()
         .scaledToFill()

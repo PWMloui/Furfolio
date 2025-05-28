@@ -119,4 +119,42 @@ extension String {
     var isValidURL: Bool {
       URL(string: self) != nil
     }
+
+    /// Returns only the numeric digits from the string.
+    var digitsOnly: String {
+        filter { $0.isNumber }
+    }
+
+    /// Replaces occurrences matching the regex pattern with the given template.
+    func regexReplace(
+        pattern: String,
+        with template: String
+    ) -> String {
+        let range = NSRange(startIndex..<endIndex, in: self)
+        return (try? NSRegularExpression(pattern: pattern)
+            .stringByReplacingMatches(
+                in: self,
+                options: [],
+                range: range,
+                withTemplate: template
+            )) ?? self
+    }
+
+    /// Safely returns substring for the given integer range, else returns an empty string.
+    subscript(safe range: Range<Int>) -> String {
+        let lowerIndex = index(startIndex,
+                               offsetBy: max(0, range.lowerBound),
+                               limitedBy: endIndex) ?? endIndex
+        let upperIndex = index(startIndex,
+                               offsetBy: min(count, range.upperBound),
+                               limitedBy: endIndex) ?? endIndex
+        return String(self[lowerIndex..<upperIndex])
+    }
+
+    /// Converts the string to Decimal using the given locale’s decimal formatter.
+    func toDecimal(locale: Locale = .current) -> Decimal? {
+        let formatter = Self.currencyFormatter(for: locale)
+        formatter.numberStyle = .decimal
+        return formatter.number(from: self)?.decimalValue
+    }
 }

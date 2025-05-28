@@ -159,12 +159,16 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.segmented)
-            
+
             let filtered = filterDogOwners()
             if filtered.isEmpty {
-                Text("No dog owners found.")
-                    .foregroundColor(.gray)
-                    .italic()
+                EmptyStateView(
+                    imageName: "person.3.fill",
+                    title: "No Dog Owners",
+                    message: "Tap + to add your first dog owner.",
+                    actionTitle: "Add Owner",
+                    action: { isShowingAddOwnerSheet = true }
+                )
             } else {
                 ForEach(filtered) { owner in
                     NavigationLink(value: owner) {

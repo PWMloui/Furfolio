@@ -13,14 +13,6 @@ import SwiftData
 @Model
 final class PetBehaviorLog: Identifiable, Hashable {
   
-  /// Shared calendar and formatter to avoid repeated allocations.
-  private static let calendar = Calendar.current
-  private static let dateFormatter: DateFormatter = {
-    let fmt = DateFormatter()
-    fmt.dateStyle = .medium
-    fmt.timeStyle = .short
-    return fmt
-  }()
   
   // MARK: – Persistent Properties
   

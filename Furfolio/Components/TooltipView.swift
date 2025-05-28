@@ -76,6 +76,7 @@ struct TooltipView<Content: View>: View {
   let animation: Animation
   let content: () -> Content
   @State private var isPresented: Bool = false
+  @State private var hideTask: Task<Void, Never>? = nil
 
   @Environment(\.tooltipDisplayDuration) private var defaultDisplayDuration
   @Environment(\.tooltipFont) private var defaultFont
@@ -119,14 +120,24 @@ struct TooltipView<Content: View>: View {
     ZStack {
       content()
         .onTapGesture {
+          // Cancel any pending hide
+          hideTask?.cancel()
+          
+          // Show tooltip
           withAnimation(animation) {
-            isPresented.toggle()
+            isPresented = true
           }
-          DispatchQueue.main.asyncAfter(deadline: .now() + resolvedDisplayDuration) {
-            withAnimation(animation) {
-              isPresented = false
+          
+          // Schedule hide via Task
+          hideTask = Task {
+            try await Task.sleep(nanoseconds: UInt64(resolvedDisplayDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+              withAnimation(animation) {
+                isPresented = false
+              }
+              onDismiss?()
             }
-            onDismiss?()
           }
         }
       /// Renders the tooltip overlay when `isPresented` is true.

@@ -1,4 +1,3 @@
-
 //
 //   View+Modifiers.swift
 //  Furfolio
@@ -36,48 +35,82 @@ extension EnvironmentValues {
 /// Common view modifiers for consistent styling across the app.
 extension View {
     /// Applies a card style with background, corner radius, and shadow.
-    func cardStyle() -> some View {
+    func cardStyle(
+        cornerRadius: CGFloat,
+        shadowRadius: CGFloat
+    ) -> some View {
         self
             .padding()
             .background(Color.cardBackground)
-            .cornerRadius(Environment(\.cardCornerRadius).wrappedValue)
+            .cornerRadius(cornerRadius)
             .shadow(color: Color.black.opacity(0.1),
-                    radius: Environment(\.cardShadowRadius).wrappedValue,
+                    radius: shadowRadius,
                     x: 0,
                     y: 2)
     }
 
+    func cardStyle() -> some View {
+        cardStyle(
+            cornerRadius: Environment(\.cardCornerRadius).wrappedValue,
+            shadowRadius: Environment(\.cardShadowRadius).wrappedValue
+        )
+    }
+
+    /// Applies an animated card style with fade-in effect.
+    func animatedCardStyle() -> some View {
+        self
+            .cardStyle()
+            .opacity(0)
+            .onAppear {
+                withAnimation(.easeIn(duration: 0.3)) {
+                    // Trigger fade-in
+                }
+            }
+    }
+
+    /// Applies an error card style with red border.
+    func errorCardStyle() -> some View {
+        self
+            .padding()
+            .background(Color.cardBackground)
+            .cornerRadius(Environment(\.cardCornerRadius).wrappedValue)
+            .overlay(
+                RoundedRectangle(cornerRadius: Environment(\.cardCornerRadius).wrappedValue)
+                    .stroke(Color.warning, lineWidth: 2)
+            )
+    }
+
     /// Styles a view as the primary app button.
-    func primaryButtonStyle() -> some View {
+    func primaryButtonStyle(cornerRadius: CGFloat = 8) -> some View {
         self
             .font(.headline)
             .foregroundColor(.white)
             .padding()
             .frame(maxWidth: .infinity)
             .background(Color.appPrimary)
-            .cornerRadius(8)
+            .cornerRadius(cornerRadius)
     }
 
     /// Styles a view as the secondary app button.
-    func secondaryButtonStyle() -> some View {
+    func secondaryButtonStyle(cornerRadius: CGFloat = 8) -> some View {
         self
             .font(.headline)
             .foregroundColor(.white)
             .padding()
             .frame(maxWidth: .infinity)
             .background(Color.appSecondary)
-            .cornerRadius(8)
+            .cornerRadius(cornerRadius)
     }
 
     /// Applies styling for input fields.
-    func inputFieldStyle() -> some View {
+    func inputFieldStyle(borderColor: Color = Color.disabled) -> some View {
         self
             .padding(10)
             .background(Color.background)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.disabled, lineWidth: 1)
+                    .stroke(borderColor, lineWidth: 1)
             )
     }
 

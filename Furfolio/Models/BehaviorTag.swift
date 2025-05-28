@@ -32,6 +32,9 @@ final class BehaviorTag: Identifiable, Hashable {
     @Attribute
     var updatedAt: Date?
     
+    @Attribute
+    var isArchived: Bool = false
+    
     @Relationship(deleteRule: .nullify)
     var appointments: [Appointment] = []
     
@@ -110,12 +113,14 @@ final class BehaviorTag: Identifiable, Hashable {
     ) -> BehaviorTag {
         let tag = BehaviorTag(name: name, icon: icon, detail: detail)
         context.insert(tag)
+        AuditLog.create(entity: "BehaviorTag", entityID: tag.id.uuidString, action: "create", in: context)
         return tag
     }
     
     /// Fetches all BehaviorTags sorted by name. Returns empty array on error.
     static func fetchAll(in context: ModelContext) -> [BehaviorTag] {
         let descriptor = FetchDescriptor<BehaviorTag>(
+            predicate: #Predicate { !$0.isArchived },
             sortBy: [ SortDescriptor(\BehaviorTag.name, order: .forward) ]
         )
         do {
@@ -130,7 +135,7 @@ final class BehaviorTag: Identifiable, Hashable {
     static func fetch(named name: String, in context: ModelContext) -> BehaviorTag? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let descriptor = FetchDescriptor<BehaviorTag>(
-            predicate: #Predicate { $0.name == trimmed },
+            predicate: #Predicate { $0.name == trimmed && !$0.isArchived },
             sortBy: [ SortDescriptor(\BehaviorTag.createdAt, order: .reverse) ]
         )
         do {
@@ -154,6 +159,7 @@ final class BehaviorTag: Identifiable, Hashable {
         self.icon      = icon
         self.detail    = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.updatedAt = Date.now
+        AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "update", in: context)
     }
     
     
@@ -163,16 +169,19 @@ final class BehaviorTag: Identifiable, Hashable {
     func tag(_ appointment: Appointment) {
         guard !appointments.contains(where: { $0.id == appointment.id }) else { return }
         appointments.append(appointment)
+        AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "tag", metadata: ["appointmentID": appointment.id.uuidString], in: context)
     }
     
     /// Removes the tag from the given appointment.
     func untag(_ appointment: Appointment) {
         appointments.removeAll { $0.id == appointment.id }
+        AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "untag", metadata: ["appointmentID": appointment.id.uuidString], in: context)
     }
     
     /// Removes this tag from all associated appointments.
     func clearAllTags() {
         appointments.removeAll()
+        AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "clearAll", in: context)
     }
     
     // MARK: – Presets
@@ -235,7 +244,7 @@ import SwiftUI
 struct BehaviorTag_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 12) {
-            ForEach(BehaviorTag.samples, id: \.id) { tag in
+            ForEach(BehaviorTag.samples.filter { !$0.isArchived }, id: \.id) { tag in
                 Text(tag.summary)
                     .padding()
                     .background(RoundedRectangle(cornerRadius: 8).stroke())

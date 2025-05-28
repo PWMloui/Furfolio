@@ -9,6 +9,13 @@ import Foundation
 
 @MainActor
 enum ChurnRiskEngine {
+    /// Runs synchronous work off the main thread and returns its result.
+    private static func runAsync<T>(
+        _ work: @Sendable @escaping () -> T
+    ) async -> T {
+        await Task.detached { work() }.value
+    }
+    
     static func rfm(in appointments: [Appointment], charges: [Charge], referenceDate: Date = Date()) -> (recency: Double, frequency: Double, monetary: Double) {
         let largeRecencyDefault = 365.0 * 10 // 10 years in days
         
@@ -43,15 +50,22 @@ enum ChurnRiskEngine {
         return riskScore
     }
     
-    static func rfmAsync(in appointments: [Appointment], charges: [Charge], referenceDate: Date = Date()) async -> (recency: Double, frequency: Double, monetary: Double) {
-        return await Task.detached {
+    static func rfmAsync(
+        in appointments: [Appointment],
+        charges: [Charge],
+        referenceDate: Date = Date()
+    ) async -> (recency: Double, frequency: Double, monetary: Double) {
+        await runAsync {
             rfm(in: appointments, charges: charges, referenceDate: referenceDate)
-        }.value
+        }
     }
 
-    static func churnRiskScoreAsync(in appointments: [Appointment], charges: [Charge]) async -> Double {
-        return await Task.detached {
+    static func churnRiskScoreAsync(
+        in appointments: [Appointment],
+        charges: [Charge]
+    ) async -> Double {
+        await runAsync {
             churnRiskScore(in: appointments, charges: charges)
-        }.value
+        }
     }
 }

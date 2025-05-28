@@ -1,4 +1,3 @@
-
 //  QuickAddMenuView.swift
 //  Furfolio
 //
@@ -6,11 +5,9 @@
 //  Updated on Jun 16, 2025 — added full SwiftUI quick-add menu with sheets for core actions.
 //
 
-
 import SwiftUI
 import SwiftData
-
-// TODO: Move presentation state and quick-add action logic into QuickAddMenuViewModel for better separation of concerns.
+import QuickAddMenuViewModel
 
 @MainActor
 /// View presenting a grid of quick-add actions (owner, appointment, charge, behavior log).
@@ -18,14 +15,15 @@ struct QuickAddMenuView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    // Sheet presentation states
-    @State private var showingAddOwner = false
-    @State private var showingAddAppointment = false
-    @State private var showingAddCharge = false
-    @State private var showingLogBehavior = false
+    @StateObject private var viewModel: QuickAddMenuViewModel
 
     /// Pass in your existing owners so you can choose one for appointment/charge.
     let dogOwners: [DogOwner]
+
+    init(dogOwners: [DogOwner], modelContext: ModelContext) {
+        _viewModel = StateObject(wrappedValue: QuickAddMenuViewModel(dogOwners: dogOwners, modelContext: modelContext))
+        self.dogOwners = dogOwners
+    }
 
     var body: some View {
       NavigationStack {
@@ -40,7 +38,7 @@ struct QuickAddMenuView: View {
           LazyVGrid(columns: Self.gridColumns, spacing: 20) {
             /// Quick-add a new dog owner.
             Button {
-              showingAddOwner = true
+              viewModel.showOwner()
             } label: {
               VStack {
                 Image(systemName: "person.crop.circle.badge.plus")
@@ -49,17 +47,13 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .sheet(isPresented: $showingAddOwner) {
-              AddDogOwnerView()
-                .environment(\.modelContext, modelContext)
-            }
             .buttonStyle(PlainButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
 
             /// Quick-add a new appointment.
             Button {
-              showingAddAppointment = true
+              viewModel.showAppointment()
             } label: {
               VStack {
                 Image(systemName: "calendar.badge.plus")
@@ -68,21 +62,13 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .sheet(isPresented: $showingAddAppointment) {
-              if let owner = dogOwners.first {
-                AddAppointmentView(dogOwner: owner)
-                  .environment(\.modelContext, modelContext)
-              } else {
-                Text("No owner selected")
-              }
-            }
             .buttonStyle(PlainButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
 
             /// Quick-add a new charge.
             Button {
-              showingAddCharge = true
+              viewModel.showCharge()
             } label: {
               VStack {
                 Image(systemName: "creditcard.fill")
@@ -91,35 +77,19 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .sheet(isPresented: $showingAddCharge) {
-              if let owner = dogOwners.first {
-                AddChargeView(dogOwner: owner)
-                  .environment(\.modelContext, modelContext)
-              } else {
-                Text("No owner selected")
-              }
-            }
             .buttonStyle(PlainButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
 
             /// Log a new behavior.
             Button {
-              showingLogBehavior = true
+              viewModel.showBehavior()
             } label: {
               VStack {
                 Image(systemName: "exclamationmark.bubble.fill")
                   .font(.largeTitle)
                 Text("Log Behavior")
                   .font(.caption)
-              }
-            }
-            .sheet(isPresented: $showingLogBehavior) {
-              if let owner = dogOwners.first {
-                BehaviorBadgeEditorView(dogOwner: owner)
-                  .environment(\.modelContext, modelContext)
-              } else {
-                Text("No owner selected")
               }
             }
             .buttonStyle(PlainButtonStyle())
@@ -137,10 +107,35 @@ struct QuickAddMenuView: View {
             }
           }
         }
-        .animation(.easeInOut, value: showingAddOwner)
-        .animation(.easeInOut, value: showingAddAppointment)
-        .animation(.easeInOut, value: showingAddCharge)
-        .animation(.easeInOut, value: showingLogBehavior)
+        .sheet(item: $viewModel.activeSheet) { sheet in
+          switch sheet {
+          case .addOwner:
+            AddDogOwnerView()
+              .environment(\.modelContext, modelContext)
+          case .addAppointment:
+            if let owner = dogOwners.first {
+              AddAppointmentView(dogOwner: owner)
+                .environment(\.modelContext, modelContext)
+            } else {
+              Text("No owner selected")
+            }
+          case .addCharge:
+            if let owner = dogOwners.first {
+              AddChargeView(dogOwner: owner)
+                .environment(\.modelContext, modelContext)
+            } else {
+              Text("No owner selected")
+            }
+          case .logBehavior:
+            if let owner = dogOwners.first {
+              BehaviorBadgeEditorView(dogOwner: owner)
+                .environment(\.modelContext, modelContext)
+            } else {
+              Text("No owner selected")
+            }
+          }
+        }
+        .animation(.easeInOut, value: viewModel.activeSheet)
       }
     }
 }
@@ -160,7 +155,7 @@ struct QuickAddMenuView_Previews: PreviewProvider {
         let owner = DogOwner.sample
         ctx.insert(owner)
 
-        return QuickAddMenuView(dogOwners: [owner])
+        return QuickAddMenuView(dogOwners: [owner], modelContext: ctx)
             .environment(\.modelContext, ctx)
     }
 }

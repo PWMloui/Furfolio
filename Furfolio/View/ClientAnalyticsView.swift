@@ -8,16 +8,16 @@
 
 import SwiftUI
 import SwiftData
-
-// TODO: Move analytics logic into a dedicated ViewModel; cache formatters to improve performance.
+import Combine
 
 @MainActor
-/// Displays client metrics including summary cards, overview details, visits, revenue, and behavior stats.
-struct ClientAnalyticsView: View {
-  @Environment(\.modelContext) private var context
-  let owner: DogOwner
+class ClientAnalyticsViewModel: ObservableObject {
+  @Published var formattedAverageCharge: String = ""
+  @Published var totalVisits: Int = 0
+  @Published var totalRevenue: String = ""
+  @Published var behaviorRiskCategory: String = ""
+  @Published var behaviorRiskColor: Color = .green
 
-  /// Shared currency formatter for average and total charges.
   private static let currencyFormatter: NumberFormatter = {
     let fmt = NumberFormatter()
     fmt.numberStyle = .currency
@@ -25,15 +25,32 @@ struct ClientAnalyticsView: View {
     return fmt
   }()
 
-  /// All derived metrics for this client
-  private var stats: ClientStats { ClientStats(owner: owner) }
+  init(owner: DogOwner) {
+    totalVisits = owner.charges.count
 
-  /// Computes and formats the average charge amount for the client.
-  private var formattedAverageCharge: String {
-    let avg = owner.charges.isEmpty
-      ? 0
-      : owner.charges.reduce(0) { $0 + $1.amount } / Double(owner.charges.count)
-    return Self.currencyFormatter.string(from: NSNumber(value: avg)) ?? "\(avg)"
+    let totalAmount = owner.charges.reduce(0) { $0 + $1.amount }
+    totalRevenue = Self.currencyFormatter.string(from: NSNumber(value: totalAmount)) ?? "\(totalAmount)"
+
+    let avg = owner.charges.isEmpty ? 0 : totalAmount / Double(owner.charges.count)
+    formattedAverageCharge = Self.currencyFormatter.string(from: NSNumber(value: avg)) ?? "\(avg)"
+
+    let stats = ClientStats(owner: owner)
+    behaviorRiskCategory = stats.behaviorRiskCategory
+    behaviorRiskColor = stats.isBehaviorRisk ? .red : .green
+  }
+}
+
+@MainActor
+/// Displays client metrics including summary cards, overview details, visits, revenue, and behavior stats.
+struct ClientAnalyticsView: View {
+  @Environment(\.modelContext) private var context
+  let owner: DogOwner
+
+  @StateObject private var viewModel: ClientAnalyticsViewModel
+
+  init(owner: DogOwner) {
+    self.owner = owner
+    _viewModel = StateObject(wrappedValue: ClientAnalyticsViewModel(owner: owner))
   }
 
   var body: some View {
@@ -46,19 +63,19 @@ struct ClientAnalyticsView: View {
         Section {
           LabeledContent("Name") { Text(owner.ownerName) }
           LabeledContent("Pup") { Text(owner.dogName) }
-          LabeledContent("Loyalty") { Text(stats.loyaltyStatus) }
-          LabeledContent("Reward Progress") { Text(stats.loyaltyProgressTag) }
+          LabeledContent("Loyalty") { Text(ClientStats(owner: owner).loyaltyStatus) }
+          LabeledContent("Reward Progress") { Text(ClientStats(owner: owner).loyaltyProgressTag) }
         } header: {
           Text("Overview")
         }
 
         // MARK: — Visits & Revenue
         Section {
-          LabeledContent("Total Visits") { Text("\(stats.totalAppointments)") }
-          LabeledContent("Upcoming Visits") { Text("\(stats.upcomingAppointmentsCount)") }
-          LabeledContent("Past Visits") { Text("\(stats.pastAppointmentsCount)") }
-          LabeledContent("Total Charged") { Text(stats.formattedTotalCharges) }
-          LabeledContent("Average Charge") { Text(formattedAverageCharge) }
+          LabeledContent("Total Visits") { Text("\(viewModel.totalVisits)") }
+          LabeledContent("Upcoming Visits") { Text("\(ClientStats(owner: owner).upcomingAppointmentsCount)") }
+          LabeledContent("Past Visits") { Text("\(ClientStats(owner: owner).pastAppointmentsCount)") }
+          LabeledContent("Total Charged") { Text(viewModel.totalRevenue) }
+          LabeledContent("Average Charge") { Text(viewModel.formattedAverageCharge) }
         } header: {
           Text("Visits & Revenue")
         }
@@ -66,16 +83,16 @@ struct ClientAnalyticsView: View {
         // MARK: — Behavior
         Section {
           LabeledContent("Avg. Severity") {
-            Text(String(format: "%.1f", stats.averageBehaviorSeverity))
+            Text(String(format: "%.1f", ClientStats(owner: owner).averageBehaviorSeverity))
           }
           LabeledContent("Risk Level") {
-            Text(stats.behaviorRiskCategory)
-              .foregroundColor(stats.isBehaviorRisk ? .red : .green)
+            Text(viewModel.behaviorRiskCategory)
+              .foregroundColor(viewModel.behaviorRiskColor)
           }
-          if !stats.recentBehaviorBadges.isEmpty {
+          if !ClientStats(owner: owner).recentBehaviorBadges.isEmpty {
             Text("Recent Badges")
               .font(.subheadline).bold()
-            ForEach(stats.recentBehaviorBadges.prefix(3), id: \.self) { badge in
+            ForEach(ClientStats(owner: owner).recentBehaviorBadges.prefix(3), id: \.self) { badge in
               Text("• \(badge)")
                 .font(.caption)
             }
@@ -86,7 +103,7 @@ struct ClientAnalyticsView: View {
 
         // MARK: — Appointments
         Section {
-          if let next = stats.nextAppointment {
+          if let next = ClientStats(owner: owner).nextAppointment {
             VStack(alignment: .leading) {
               Text("Next appointment:")
               Text(next.formattedDate)
@@ -97,10 +114,10 @@ struct ClientAnalyticsView: View {
             Text("No upcoming appointments")
               .foregroundColor(.secondary)
           }
-          if !stats.recentAppointments.isEmpty {
+          if !ClientStats(owner: owner).recentAppointments.isEmpty {
             Text("Recent appointments:")
               .font(.subheadline).bold()
-            ForEach(stats.recentAppointments.prefix(3)) { appt in
+            ForEach(ClientStats(owner: owner).recentAppointments.prefix(3)) { appt in
               Text("• \(appt.formattedDate) — \(appt.serviceType.localized)")
                 .font(.caption)
             }
@@ -130,10 +147,10 @@ struct ClientAnalyticsView: View {
   private func summaryCardsSection() -> some View {
     ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: 12) {
-        summaryCard(title: "Visits", value: "\(stats.totalAppointments)", color: .blue)
-        summaryCard(title: "Revenue", value: stats.formattedTotalCharges, color: .green)
-        summaryCard(title: "Avg Charge", value: formattedAverageCharge, color: .purple)
-        summaryCard(title: "Behavior Risk", value: stats.behaviorRiskCategory, color: stats.isBehaviorRisk ? .red : .orange)
+        summaryCard(title: "Visits", value: "\(viewModel.totalVisits)", color: .blue)
+        summaryCard(title: "Revenue", value: viewModel.totalRevenue, color: .green)
+        summaryCard(title: "Avg Charge", value: viewModel.formattedAverageCharge, color: .purple)
+        summaryCard(title: "Behavior Risk", value: viewModel.behaviorRiskCategory, color: viewModel.behaviorRiskColor)
       }
       .padding(.vertical, 8)
     }

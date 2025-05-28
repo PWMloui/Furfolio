@@ -8,7 +8,7 @@ import SwiftData
 
 @Model
 final class EquipmentAsset: Identifiable, Hashable {
-  // MARK: – Persistent Properties
+  // MARK: - Persistent Properties
 
   @Attribute var id: UUID
   @Attribute var name: String
@@ -17,7 +17,7 @@ final class EquipmentAsset: Identifiable, Hashable {
   @Attribute var nextServiceDue: Date?
   @Attribute var notes: String?
 
-  // MARK: – Init
+  // MARK: - Init
 
   init(
     id: UUID = UUID(),
@@ -35,7 +35,7 @@ final class EquipmentAsset: Identifiable, Hashable {
     self.notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  // MARK: – Computed
+  // MARK: - Computed
 
   /// True if maintenance is overdue
   @Transient
@@ -52,7 +52,13 @@ final class EquipmentAsset: Identifiable, Hashable {
     return comps.day
   }
 
-  // MARK: – Hashable
+  /// Schedule the next maintenance service after a given number of days.
+  func scheduleNextService(inDays days: Int) {
+    let baseDate = lastServiceDate ?? Date()
+    nextServiceDue = Calendar.current.date(byAdding: .day, value: days, to: baseDate)
+  }
+
+  // MARK: - Hashable
 
   static func == (lhs: EquipmentAsset, rhs: EquipmentAsset) -> Bool {
     lhs.id == rhs.id
@@ -61,7 +67,7 @@ final class EquipmentAsset: Identifiable, Hashable {
     hasher.combine(id)
   }
 
-  // MARK: – Fetch Helpers
+  // MARK: - Fetch Helpers
 
   /// All assets sorted by name
   static func fetchAll(in context: ModelContext) -> [EquipmentAsset] {

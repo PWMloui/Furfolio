@@ -16,9 +16,9 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     /// Cache of currency formatters keyed by locale identifier.
     private static let currencyFormatterCache = NSCache<NSString, NumberFormatter>()
     
-    case basic    = "Basic Package"
-    case full     = "Full Package"
-    case custom   = "Custom Package"
+    case basicPackage   = "Basic Package"
+    case fullPackage    = "Full Package"
+    case spaBath  = "Custom Package"
     
     // MARK: – Identifiable
     
@@ -48,18 +48,18 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     /// Emoji representing this service.
     var emojiIcon: String {
         switch self {
-        case .basic:  return "🛁"
-        case .full:   return "✂️"
-        case .custom: return "⚙️"
+        case .basicPackage:  return "🛁"
+        case .fullPackage:   return "✂️"
+        case .spaBath: return "⚙️"
         }
     }
     
     /// SF Symbol name used for UI icons.
     var symbolName: String {
         switch self {
-        case .basic:  return "bathtub.fill"
-        case .full:   return "scissors"
-        case .custom: return "gearshape.fill"
+        case .basicPackage:  return "bathtub.fill"
+        case .fullPackage:   return "scissors"
+        case .spaBath: return "gearshape.fill"
         }
     }
     
@@ -80,9 +80,9 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     /// Suggested default duration (minutes) for scheduling.
     var defaultDurationMinutes: Int {
         switch self {
-        case .basic:  return 60
-        case .full:   return 90
-        case .custom: return 0  // Custom—you must set manually
+        case .basicPackage:  return 60
+        case .fullPackage:   return 90
+        case .spaBath: return 0  // Custom—you must set manually
         }
     }
     
@@ -91,9 +91,9 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     /// Suggested base price (USD) for quoting.
     var defaultPrice: Double {
         switch self {
-        case .basic:  return 40.00
-        case .full:   return 80.00
-        case .custom: return 0.00  // Custom—you must set manually
+        case .basicPackage:  return 40.00
+        case .fullPackage:   return 80.00
+        case .spaBath: return 0.00  // Custom—you must set manually
         }
     }
     
@@ -123,7 +123,7 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     
     /// All service types except `.custom`.
     static var predefined: [ServiceType] {
-        allCases.filter { $0 != .custom }
+        allCases.filter { $0 != .spaBath }
     }
     
     // MARK: – Formatters

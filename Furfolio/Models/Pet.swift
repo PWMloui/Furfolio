@@ -8,18 +8,35 @@
 
 import Foundation
 
-// TODO: Inject Calendar and DateFormatter for testability; consider caching shared instances in a FormatterService.
-
 @MainActor
 /// Represents a pet with identity, validation, and birthday utilities.
 struct Pet: Codable, Identifiable, Hashable {
-  // TODO: Use shared Calendar and DateFormatter to reduce allocations
-  private static let calendar = Calendar.current
-  private static let dateFormatter: DateFormatter = {
-    let fmt = DateFormatter()
-    fmt.dateStyle = .medium
-    return fmt
-  }()
+  // MARK: – Dependencies
+  private let calendar: Calendar
+  private let dateFormatter: DateFormatter
+
+  /// Creates a new Pet.
+  init(
+    id: UUID = .init(),
+    name: String,
+    breed: String,
+    birthdate: Date? = nil,
+    specialInstructions: String? = nil,
+    calendar: Calendar = .current,
+    dateFormatter: DateFormatter = {
+      let fmt = DateFormatter()
+      fmt.dateStyle = .medium
+      return fmt
+    }()
+  ) {
+    self.id = id
+    self.name = name
+    self.breed = breed
+    self.birthdate = birthdate
+    self.specialInstructions = specialInstructions
+    self.calendar = calendar
+    self.dateFormatter = dateFormatter
+  }
 
   // MARK: – Properties
 
@@ -57,7 +74,7 @@ struct Pet: Codable, Identifiable, Hashable {
   /// Age in whole years, if birthdate is known.
   var age: Int? {
     guard let bd = birthdate else { return nil }
-    return Self.calendar.dateComponents([.year], from: bd, to: Date.now).year
+    return calendar.dateComponents([.year], from: bd, to: Date.now).year
   }
 
   /// Formatted birthdate string, or “Unknown” if not set.
@@ -65,24 +82,24 @@ struct Pet: Codable, Identifiable, Hashable {
     guard let bd = birthdate else {
       return NSLocalizedString("Unknown", comment: "No birthdate available")
     }
-    return Self.dateFormatter.string(from: bd)
+    return dateFormatter.string(from: bd)
   }
 
   /// The next birthday date (this year or next), if birthdate is known.
   var nextBirthday: Date? {
     guard let bd = birthdate else { return nil }
-    var comps = Self.calendar.dateComponents([.month, .day], from: bd)
-    comps.year = Self.calendar.component(.year, from: Date.now)
-    guard let candidate = Self.calendar.date(from: comps) else { return nil }
+    var comps = calendar.dateComponents([.month, .day], from: bd)
+    comps.year = calendar.component(.year, from: Date.now)
+    guard let candidate = calendar.date(from: comps) else { return nil }
     return candidate < Date.now
-      ? Self.calendar.date(byAdding: .year, value: 1, to: candidate)
+      ? calendar.date(byAdding: .year, value: 1, to: candidate)
       : candidate
   }
 
   /// Number of days until the next birthday, or nil if birthdate is unknown.
   var daysUntilNextBirthday: Int? {
     guard let next = nextBirthday else { return nil }
-    return Self.calendar.dateComponents([.day], from: Self.calendar.startOfDay(for: Date.now), to: next).day
+    return calendar.dateComponents([.day], from: calendar.startOfDay(for: Date.now), to: next).day
   }
 
   /// A user‐friendly string for days until next birthday.
@@ -95,7 +112,7 @@ struct Pet: Codable, Identifiable, Hashable {
   /// True if today is the pet’s birthday.
   var isBirthdayToday: Bool {
     guard let next = nextBirthday else { return false }
-    return Self.calendar.isDateInToday(next)
+    return calendar.isDateInToday(next)
   }
 
   /// A brief, formatted summary of the pet's details.
@@ -144,7 +161,7 @@ struct Pet: Codable, Identifiable, Hashable {
     id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
     name: "Rex",
     breed: "Labrador",
-    birthdate: Pet.calendar.date(byAdding: .year, value: -3, to: Date.now),
+    birthdate: Calendar.current.date(byAdding: .year, value: -3, to: Date.now),
     specialInstructions: "Loves belly rubs and long walks"
   )
   #endif

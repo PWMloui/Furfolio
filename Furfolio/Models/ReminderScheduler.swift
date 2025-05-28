@@ -29,30 +29,31 @@ struct ReminderScheduler {
     
     /// Schedules a reminder notification for the given appointment with a specified offset.
     static func scheduleReminder(for appointment: Appointment, offset: Int) {
-        let body = appointment.notes?.isEmpty == false
-            ? appointment.notes!
-            : "You have an appointment at \(appointment.formattedDate)."
-        
-        ReminderScheduler().schedule(
-          appointmentID: appointment.id.uuidString,
-          at: appointment.date,
-          offsetMinutes: offset,
-          title: "Upcoming Appointment",
-          body: body,
-          category: Appointment.notificationCategory
-        ) { result in
-          switch result {
-          case .success: break
-          case .failure(let err):
-            // if needed, log or handle error
-            print("🔔 Failed to schedule for \(appointment.id):", err)
+        Task {
+          do {
+            let body = appointment.notes?.isEmpty == false
+                ? appointment.notes!
+                : "You have an appointment at \(appointment.formattedDate)."
+            try await ReminderScheduler().scheduleAsync(
+              appointmentID: appointment.id.uuidString,
+              at: appointment.date,
+              offsetMinutes: offset,
+              title: "Upcoming Appointment",
+              body: body,
+              category: Appointment.notificationCategory
+            )
+          } catch {
+            Logger(subsystem: "com.yourapp.furfolio", category: "ReminderScheduler")
+              .error("Failed to schedule async for \(appointment.id): \(error.localizedDescription)")
           }
         }
     }
     
     /// Cancels any pending reminder notification for the given appointment.
     static func cancelReminder(for appointment: Appointment) {
-      ReminderScheduler().cancel(appointmentID: appointment.id.uuidString)
+      Task {
+        await ReminderScheduler().cancelAsync(appointmentID: appointment.id.uuidString)
+      }
     }
     
     

@@ -14,14 +14,6 @@ import UIKit
 @Model
 final class PetGalleryImage: Identifiable, Hashable {
     
-    /// Shared calendar and date formatter to avoid repeated allocations.
-    private static let calendar = Calendar.current
-    private static let dateFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.dateStyle = .medium
-        return fmt
-    }()
-    
     // MARK: – Transformer Name
     
     static let stringArrayTransformerName = "StringArrayTransformer"
@@ -42,7 +34,7 @@ final class PetGalleryImage: Identifiable, Hashable {
     
     /// Date when the image was added.
     @Attribute(.required)
-    var dateAdded: Date = Date.now                    // was `.now`
+    var dateAdded: Date = Date()                    // was `.now`
     
     /// Last-updated timestamp.
     @Attribute
@@ -85,7 +77,7 @@ final class PetGalleryImage: Identifiable, Hashable {
       tags: [String] = [],
       dogOwner: DogOwner,
       appointment: Appointment? = nil,
-      dateAdded: Date = Date.now,
+      dateAdded: Date = Date(),
       updatedAt: Date? = nil
     ) {
       self.id = id
@@ -126,19 +118,19 @@ final class PetGalleryImage: Identifiable, Hashable {
         let t = tag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, !tags.contains(t) else { return }
         tags.append(t)
-        updatedAt = Date.now                         // was `.now`
+        updatedAt = Date()                         // was `.now`
     }
     
     /// Removes the specified tag, stamping `updatedAt`.
     func removeTag(_ tag: String) {
         tags.removeAll { $0 == tag }
-        updatedAt = Date.now
+        updatedAt = Date()
     }
     
     /// Clears all tags and updates `updatedAt`.
     func clearTags() {
         tags.removeAll()
-        updatedAt = Date.now
+        updatedAt = Date()
     }
     
     
@@ -147,13 +139,13 @@ final class PetGalleryImage: Identifiable, Hashable {
     /// Updates the caption text, trimming whitespace and stamping `updatedAt`.
     func update(caption: String?) {
         self.caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
-        updatedAt = Date.now
+        updatedAt = Date()
     }
     
     /// Updates the associated appointment and stamps `updatedAt`.
     func update(appointment: Appointment?) {
         self.appointment = appointment
-        updatedAt = Date.now
+        updatedAt = Date()
     }
     
     
@@ -255,8 +247,8 @@ extension PetGalleryImage {
         entry.dateAdded = Calendar.current.date(
             byAdding: .day,
             value: -1,
-            to: Date.now                        // was `.now`
-        ) ?? Date.now
+            to: Date()                        // was `.now`
+        ) ?? Date()
         return entry
     }
 }

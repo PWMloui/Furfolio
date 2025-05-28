@@ -1,5 +1,5 @@
 //
-//  Task.swift
+//  ScheduledTask.swift
 //  Furfolio
 //
 //  Created by mac on 5/15/25.
@@ -15,7 +15,7 @@ import UserNotifications
 /// Model representing a user task with scheduling, reminders, and status helpers.
 @MainActor
 @Model
-final class Task: Identifiable, Hashable, CustomStringConvertible {
+final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringConvertible {
     /// Notification center, injectable for testing.
     static var notificationCenter: UNUserNotificationCenter = .current()
 
@@ -81,14 +81,14 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     /// Formatted like “May 17, 3:00 PM”
     var dueDateFormatted: String? {
         guard let d = dueDate else { return nil }
-        return Task.dateFormatter.string(from: d)
+        return ScheduledTask.dateFormatter.string(from: d)
     }
 
     @Transient
     /// “in 2 days” or “yesterday”
     var dueDateRelative: String? {
         guard let d = dueDate else { return nil }
-        return Task.relativeFormatter.localizedString(for: d, relativeTo: Date.now)
+        return ScheduledTask.relativeFormatter.localizedString(for: d, relativeTo: Date.now)
     }
 
     @Transient
@@ -102,7 +102,7 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     /// True if due today
     var isDueToday: Bool {
         guard let d = dueDate else { return false }
-        return Task.calendar.isDateInToday(d)
+        return ScheduledTask.calendar.isDateInToday(d)
     }
 
     /// Emoji icon for priority
@@ -211,8 +211,8 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     // MARK: – Fetch Helpers
 
     /// Fetches all tasks sorted by due date and priority.
-    static func fetchAll(in context: ModelContext) -> [Task] {
-        let desc = FetchDescriptor<Task>(
+    static func fetchAll(in context: ModelContext) -> [ScheduledTask] {
+        let desc = FetchDescriptor<ScheduledTask>(
             sortBy: [
                 SortDescriptor(\.dueDate, order: .forward),
                 SortDescriptor(\.priority, order: .forward)
@@ -222,8 +222,8 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     }
 
     /// Fetches all pending (not completed) tasks.
-    static func fetchPending(in context: ModelContext) -> [Task] {
-        let desc = FetchDescriptor<Task>(
+    static func fetchPending(in context: ModelContext) -> [ScheduledTask] {
+        let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate { !$0.isCompleted },
             sortBy: [ SortDescriptor(\.dueDate, order: .forward) ]
         )
@@ -231,8 +231,8 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     }
 
     /// Fetches all completed tasks.
-    static func fetchCompleted(in context: ModelContext) -> [Task] {
-        let desc = FetchDescriptor<Task>(
+    static func fetchCompleted(in context: ModelContext) -> [ScheduledTask] {
+        let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate { $0.isCompleted },
             sortBy: [ SortDescriptor(\.updatedAt, order: .reverse) ]
         )
@@ -240,8 +240,8 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     }
 
     /// Fetches all overdue tasks.
-    static func fetchOverdue(in context: ModelContext) -> [Task] {
-        let desc = FetchDescriptor<Task>(
+    static func fetchOverdue(in context: ModelContext) -> [ScheduledTask] {
+        let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate { !$0.isCompleted && ($0.dueDate ?? .distantPast) < Date.now },
             sortBy: [ SortDescriptor(\.dueDate, order: .forward) ]
         )
@@ -249,10 +249,10 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
     }
 
     /// Fetches tasks due between the start of today and tomorrow.
-    static func fetchDueToday(in context: ModelContext) -> [Task] {
-        let start = Self.calendar.startOfDay(for: Date.now)
-        guard let end = Self.calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-        let desc = FetchDescriptor<Task>(
+    static func fetchDueToday(in context: ModelContext) -> [ScheduledTask] {
+        let start = ScheduledTask.calendar.startOfDay(for: Date.now)
+        guard let end = ScheduledTask.calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
+        let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate {
                 guard let d = $0.dueDate else { return false }
                 return d >= start && d < end
@@ -271,15 +271,15 @@ final class Task: Identifiable, Hashable, CustomStringConvertible {
         priority: TaskPriority = .medium,
         owner: DogOwner? = nil,
         in context: ModelContext
-    ) -> Task {
-        let t = Task(title: title, details: details, dueDate: dueDate, priority: priority, owner: owner)
+    ) -> ScheduledTask {
+        let t = ScheduledTask(title: title, details: details, dueDate: dueDate, priority: priority, owner: owner)
         context.insert(t)
         return t
     }
 
     // MARK: – Hashable
 
-    static func == (lhs: Task, rhs: Task) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: ScheduledTask, rhs: ScheduledTask) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
     // MARK: – CustomStringConvertible

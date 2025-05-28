@@ -8,6 +8,8 @@
 
 import Foundation
 import SwiftData
+
+@MainActor
 @Model
 final class ServiceHistory: Identifiable, Hashable {
     
@@ -178,6 +180,7 @@ final class ServiceHistory: Identifiable, Hashable {
             appointment: appointment
         )
         context.insert(entry)
+        entry.updatedAt = entry.createdAt
         return entry
     }
     
@@ -205,6 +208,27 @@ final class ServiceHistory: Identifiable, Hashable {
             sortBy: [SortDescriptor(\ServiceHistory.date, order: .reverse)]
         )
         return (try? context.fetch(desc)) ?? []
+    }
+
+    /// Async fetch all ServiceHistory entries in reverse date order.
+    static func fetchAllAsync(in context: ModelContext) async throws -> [ServiceHistory] {
+        try await context.perform {
+            let desc = FetchDescriptor<ServiceHistory>(
+                sortBy: [SortDescriptor(\ServiceHistory.date, order: .reverse)]
+            )
+            return try context.fetch(desc)
+        }
+    }
+
+    /// Async fetch ServiceHistory entries for a specific owner, newest first.
+    static func fetchAllAsync(for owner: DogOwner, in context: ModelContext) async throws -> [ServiceHistory] {
+        try await context.perform {
+            let desc = FetchDescriptor<ServiceHistory>(
+                predicate: #Predicate { $0.dogOwner.id == owner.id },
+                sortBy: [SortDescriptor(\ServiceHistory.date, order: .reverse)]
+            )
+            return try context.fetch(desc)
+        }
     }
     
     
@@ -244,7 +268,8 @@ final class ServiceHistory: Identifiable, Hashable {
     ///         Use only on the main thread.
     /// Tuple representing aggregated metrics for a service type.
     typealias ServiceHistoryMetrics = (count: Int, averageDuration: Double, totalRevenue: Double)
-    static func metrics(
+
+    nonisolated static func metrics(
         for histories: [ServiceHistory]
     ) -> [Appointment.ServiceType: ServiceHistoryMetrics] {
         let freq = frequencyByService(histories)
@@ -262,6 +287,12 @@ final class ServiceHistory: Identifiable, Hashable {
         }
     }
     
+    static func metricsAsync(
+        for histories: [ServiceHistory]
+    ) async -> [Appointment.ServiceType: ServiceHistoryMetrics] {
+        return await Task.detached(priority: .userInitiated) { metrics(for: histories) }.value
+    }
+    
     
     // MARK: – Hashable
     
@@ -273,4 +304,8 @@ final class ServiceHistory: Identifiable, Hashable {
         hasher.combine(id)
     }
     
+}
+public protocol EquatableBytes: Equatable {
+    init(bytes: [UInt8])
+    var bytes: [UInt8] { get }
 }
