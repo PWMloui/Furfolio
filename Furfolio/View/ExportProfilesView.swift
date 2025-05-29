@@ -7,8 +7,10 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 struct ExportProfilesView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ExportProfilesView")
     @Environment(\.modelContext) private var context
     @Query(sort: [SortDescriptor(\.name)]) private var profiles: [ExportProfile]
     @State private var showingNewProfileSheet = false
@@ -22,12 +24,16 @@ struct ExportProfilesView: View {
                         Text(profile.name)
                         Spacer()
                         Button(action: {
+                            logger.log("Export button tapped for profile: \(profile.name)")
                             ExportManager.shared.export(profile: profile, in: context)
                         }) {
                             Image(systemName: "square.and.arrow.up")
                                 .accessibilityLabel("Export \(profile.name)")
                         }
-                        .buttonStyle(BorderlessButtonStyle())
+                        .buttonStyle(FurfolioButtonStyle())
+                    }
+                    .onAppear {
+                        logger.log("Displaying export profile: \(profile.name)")
                     }
                 }
                 .onDelete { indexSet in
@@ -37,10 +43,16 @@ struct ExportProfilesView: View {
                     }
                 }
             }
+            .onAppear {
+                logger.log("ExportProfilesView appeared with \(profiles.count) profiles")
+            }
             .navigationTitle("Export Profiles")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: { showingNewProfileSheet = true }) {
+                    Button(action: {
+                        logger.log("Add Export Profile button tapped")
+                        showingNewProfileSheet = true
+                    }) {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("Add Export Profile")
@@ -54,6 +66,7 @@ struct ExportProfilesView: View {
                         }
                         Section {
                             Button("Save") {
+                                logger.log("Saving new export profile: \(newProfileName)")
                                 let profile = ExportProfile(id: UUID(), name: newProfileName, template: "{}")
                                 context.insert(profile)
                                 newProfileName = ""
@@ -65,7 +78,10 @@ struct ExportProfilesView: View {
                     .navigationTitle("New Profile")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { showingNewProfileSheet = false }
+                            Button("Cancel") {
+                                logger.log("New Profile sheet canceled")
+                                showingNewProfileSheet = false
+                            }
                         }
                     }
                 }

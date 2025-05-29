@@ -9,10 +9,13 @@
 import Foundation
 import SwiftData
 import UIKit
+import os
 
 @MainActor
 @Model
 final class DogOwner: Identifiable, Hashable, Encodable {
+
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogOwner")
 
   // MARK: – Transformer Names
   
@@ -134,6 +137,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
     self.emergencyContacts   = emergencyContacts
     self.documentAttachments = documentAttachments
     self.updatedDate         = nil
+    logger.log("Initialized DogOwner id: \(id), ownerName: \(ownerName), dogName: \(dogName)")
   }
 
   /// Designated initializer for DogOwner.
@@ -171,6 +175,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
     self.documentAttachments = documentAttachments
     self.createdDate = createdDate
     self.updatedDate = updatedDate
+    logger.log("Initialized DogOwner id: \(id), ownerName: \(ownerName), dogName: \(dogName)")
   }
 
   // MARK: – Computed Properties
@@ -191,6 +196,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
   /// True if no activity in the past 90 days.
   @Transient
   var isInactive: Bool {
+    logger.log("Computing isInactive for DogOwner \(id)")
     guard let last = lastActivityDate else { return true }
     let cutoff = Self.calendar.date(byAdding: .day, value: -90, to: Date.now) ?? .distantPast
     return last < cutoff
@@ -199,6 +205,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
   /// Loyalty status based on appointment count; controlled by loyaltyThreshold cut-off.
   @Transient
   var loyaltyStatus: String {
+    logger.log("Computing loyaltyStatus for DogOwner \(id), appointmentsCount: \(appointments.count)")
     switch appointments.count {
     case 0:      return "New"
     case 1:      return "🐾 First Timer"
@@ -210,6 +217,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
   /// Display title combining owner and pet names.
   @Transient
   var displayTitle: String {
+    logger.log("Computing displayTitle for DogOwner \(id)")
     let names = pets.isEmpty
       ? dogName
       : pets.map(\.name).joined(separator: ", ")
@@ -219,6 +227,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
   /// Formatted birthdate or “Unknown”.
   @Transient
   var formattedBirthdate: String {
+    logger.log("Computing formattedBirthdate for DogOwner \(id)")
     guard let bd = birthdate else { return NSLocalizedString("Unknown", comment: "") }
     return Self.dateFormatter.string(from: bd)
   }
@@ -295,7 +304,8 @@ final class DogOwner: Identifiable, Hashable, Encodable {
 
   /// Validates the stored dog image using `ImageValidator`.
   func isValidImage() -> Bool {
-    ImageValidator.isAcceptableImage(dogImageData)
+    logger.log("Validating image for DogOwner \(id)")
+    return ImageValidator.isAcceptableImage(dogImageData)
   }
 
   /// Synchronously resizes the stored image data to the given width.
@@ -305,7 +315,8 @@ final class DogOwner: Identifiable, Hashable, Encodable {
 
   /// Asynchronously resizes the stored image data to the given width.
   func resizeImageAsync(to width: CGFloat) async -> Data? {
-    await ImageProcessor.resizeAsync(data: dogImageData, targetWidth: width)
+    logger.log("resizeImageAsync called for DogOwner \(id), targetWidth: \(width)")
+    return await ImageProcessor.resizeAsync(data: dogImageData, targetWidth: width)
   }
 
   /// Updates owner and dog information, trims inputs, and sets `updatedDate` to now.
@@ -318,6 +329,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
     dogImageData: Data?,
     notes: String
   ) {
+    logger.log("Updating DogOwner \(id): ownerName=\(ownerName), dogName=\(dogName), breed=\(breed), contactInfo=\(contactInfo), address=\(address), notes=\(notes)")
     self.ownerName    = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
     self.dogName      = dogName.trimmingCharacters(in: .whitespacesAndNewlines)
     self.breed        = breed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -326,6 +338,7 @@ final class DogOwner: Identifiable, Hashable, Encodable {
     self.dogImageData = dogImageData
     self.notes        = notes.trimmingCharacters(in: .whitespacesAndNewlines)
     self.updatedDate  = Date.now
+    logger.log("Updated DogOwner \(id) at \(updatedDate!)")
   }
 
   func encode(to encoder: Encoder) throws {

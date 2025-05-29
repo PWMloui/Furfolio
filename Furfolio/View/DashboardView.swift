@@ -7,12 +7,14 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // TODO: Move dashboard summary and filtering logic into a dedicated ViewModel; cache formatters to improve performance.
 
 @MainActor
 /// Root dashboard presenting summary cards, upcoming appointments, recent charges, and quick actions for all clients.
 struct DashboardView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DashboardView")
     @Environment(\.modelContext) private var context
 
     /// Shared currency formatter for summary values.
@@ -59,6 +61,9 @@ struct DashboardView: View {
         }
         .navigationTitle("Dashboard")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            logger.log("DashboardView appeared: totalOwners=\(owners.count)")
+        }
       }
     }
 
@@ -85,21 +90,25 @@ struct DashboardView: View {
             .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity)
+        .onAppear {
+            logger.log("Summary cards displayed: Clients=\(totalClients), Upcoming=\(upcoming), Revenue=\(totalCharges), AvgCharge=\(avgCharge)")
+        }
     }
 
     private func summaryCard(title: String, value: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(AppTheme.caption)
+                .foregroundColor(AppTheme.secondaryText)
             Text(value)
-                .font(.title3).bold()
+                .font(AppTheme.title)
+                .fontWeight(.bold)
                 .foregroundColor(color)
         }
         .padding()
         .background(RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(.systemBackground))
-                        .shadow(radius: 2))
+                        .fill(AppTheme.background)
+                        .shadow(color: Color.black.opacity(0.2), radius: AppTheme.cornerRadius))
     }
 
     // MARK: — Upcoming Appointments
@@ -113,7 +122,8 @@ struct DashboardView: View {
             .sorted { $0.0.date < $1.0.date }
             .prefix(5)
 
-        SectionBox(header: "Upcoming Appointments") {
+        SectionBox(header: "Upcoming Appointments")
+            .onAppear { logger.log("UpcomingAppointmentsSection displayed with count: \(upcoming.count)") } {
             if upcoming.isEmpty {
                 EmptyStateView(
                   imageName: "calendar.badge.plus",
@@ -133,16 +143,18 @@ struct DashboardView: View {
                     HStack {
                         VStack(alignment: .leading) {
                             Text(owner.ownerName)
-                                .font(.subheadline).bold()
+                                .font(AppTheme.body)
+                                .fontWeight(.semibold)
+                                .foregroundColor(AppTheme.primaryText)
                             Text(appt.formattedDate)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(AppTheme.caption)
+                                .foregroundColor(AppTheme.secondaryText)
                         }
                         Spacer()
                         Text(appt.serviceType.localized)
-                            .font(.caption2)
+                            .font(AppTheme.caption)
                             .padding(4)
-                            .background(Color.blue.opacity(0.1))
+                            .background(AppTheme.accent.opacity(0.1))
                             .cornerRadius(4)
                     }
                     .padding(.vertical, 4)
@@ -160,7 +172,8 @@ struct DashboardView: View {
             .sorted { $0.0.date > $1.0.date }
             .prefix(5)
 
-        SectionBox(header: "Recent Charges") {
+        SectionBox(header: "Recent Charges")
+            .onAppear { logger.log("RecentChargesSection displayed with count: \(charges.count)") } {
             if charges.isEmpty {
                 EmptyStateView(
                   imageName: "dollarsign.circle",
@@ -177,17 +190,20 @@ struct DashboardView: View {
                     HStack {
                         VStack(alignment: .leading) {
                             Text(owner.ownerName)
-                                .font(.subheadline).bold()
+                                .font(AppTheme.body)
+                                .fontWeight(.semibold)
+                                .foregroundColor(AppTheme.primaryText)
                             Text(charge.formattedDate)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(AppTheme.caption)
+                                .foregroundColor(AppTheme.secondaryText)
                         }
                         Spacer()
                         Text(charge.formattedAmount)
-                            .font(.caption2)
+                            .font(AppTheme.caption)
                             .padding(4)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(4)
+                            .background(AppTheme.info.opacity(0.1))
+                            .cornerRadius(AppTheme.cornerRadius)
+                            .foregroundColor(AppTheme.info)
                     }
                     .padding(.vertical, 4)
                 }
@@ -200,7 +216,8 @@ struct DashboardView: View {
     /// Provides quick navigation buttons for common actions like adding appointments or charges.
     @ViewBuilder
     private func quickActionsSection() -> some View {
-        SectionBox(header: "Quick Actions") {
+        SectionBox(header: "Quick Actions")
+            .onAppear { logger.log("QuickActionsSection displayed") } {
             HStack(spacing: 12) {
                 NavigationLink {
                     AddAppointmentView(dogOwner: owners.first!)
@@ -218,6 +235,7 @@ struct DashboardView: View {
                     QuickActionButton(icon: "clock", label: "Timeline")
                 }
             }
+            .onAppear { logger.log("Displayed quick action buttons") }
         }
     }
 
@@ -260,12 +278,13 @@ private struct QuickActionButton: View {
     var body: some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.title2)
+                .font(AppTheme.header)
             Text(label)
-                .font(.caption)
+                .font(AppTheme.caption)
+                .foregroundColor(AppTheme.primaryText)
         }
         .padding()
         .background(RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.secondarySystemBackground)))
+                        .fill(AppTheme.disabled))
     }
 }

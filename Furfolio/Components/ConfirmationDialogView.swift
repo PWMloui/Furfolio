@@ -7,9 +7,11 @@
 //
 
 import SwiftUI
+import os
 
 /// A reusable overlay that presents a confirmation dialog with customizable title, message, and actions.
 struct ConfirmationDialogView<Presenting: View>: View {
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ConfirmationDialogView")
   @Binding var isPresented: Bool
   let title: String
   let message: String?
@@ -84,13 +86,14 @@ struct ConfirmationDialogView<Presenting: View>: View {
           }
         VStack(spacing: 16) {
           Text(title)
-            .font(.headline)
+            .font(AppTheme.header)
           if let message = message {
             Text(message)
-              .font(.subheadline)
+              .font(AppTheme.body)
           }
           HStack {
             Button(cancelButtonTitle) {
+              logger.log("ConfirmationDialog cancelled")
               if enableHaptics {
                 let generator = UIImpactFeedbackGenerator(style: .medium)
                 generator.impactOccurred()
@@ -101,6 +104,7 @@ struct ConfirmationDialogView<Presenting: View>: View {
             }
             .buttonStyle(.bordered)
             Button(confirmButtonTitle, role: confirmButtonRole) {
+              logger.log("ConfirmationDialog confirmed")
               if enableHaptics {
                 let generator = UIImpactFeedbackGenerator(style: .medium)
                 generator.impactOccurred()
@@ -113,9 +117,12 @@ struct ConfirmationDialogView<Presenting: View>: View {
             .buttonStyle(.borderedProminent)
           }
         }
+        .onAppear {
+          logger.log("ConfirmationDialog presented: \(title)")
+        }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemBackground)))
-        .shadow(radius: 10)
+        .background(RoundedRectangle(cornerRadius: 12).fill(AppTheme.background))
+        .shadow(color: Color.black.opacity(0.2), radius: AppTheme.cornerRadius)
         .transition(.scale.combined(with: .opacity))
       }
     }

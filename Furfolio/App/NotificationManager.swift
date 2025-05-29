@@ -9,7 +9,9 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 import os
+import ReminderScheduler
 
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "NotificationManager")
 
 // MARK: - Model Container Holder
 
@@ -83,18 +85,18 @@ struct FurfolioApp: App {
           // Listen for shortcut notifications and update the activeSheet state accordingly.
           .onReceive(NotificationCenter.default.publisher(for: .addDogOwnerShortcut)) { _ in
             activeSheet = .addOwner
-            print("Add Dog Owner shortcut triggered, presenting AddOwnerView")
+            NotificationManager.shared.logger.log("Add Dog Owner shortcut triggered, presenting AddOwnerView")
           }
           .onReceive(NotificationCenter.default.publisher(for: .viewMetricsShortcut)) { _ in
             activeSheet = .metricsDashboard
-            print("View Metrics Dashboard shortcut triggered, presenting MetricsDashboardView")
+            NotificationManager.shared.logger.log("View Metrics Dashboard shortcut triggered, presenting MetricsDashboardView")
           }
           // Present the appropriate sheet based on activeSheet.
           .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .addOwner:
               AddDogOwnerView { ownerName, dogName, breed, contactInfo, address, notes, selectedImageData, birthdate in
-                print("New owner information received: \(ownerName), \(dogName), etc.")
+                NotificationManager.shared.logger.log("New owner information received: \(ownerName), \(dogName), etc.")
               }
             case .metricsDashboard:
               NavigationStack {
@@ -129,13 +131,13 @@ struct FurfolioApp: App {
         CommandMenu("Shortcuts") {
           Button("Add New Dog Owner") {
             NotificationCenter.default.post(name: .addDogOwnerShortcut, object: nil)
-            print("Add Dog Owner shortcut triggered")
+            NotificationManager.shared.logger.log("Add Dog Owner shortcut triggered")
           }
           .keyboardShortcut("N", modifiers: [.command])
           
           Button("View Metrics Dashboard") {
             NotificationCenter.default.post(name: .viewMetricsShortcut, object: nil)
-            print("View Metrics Dashboard shortcut triggered")
+            NotificationManager.shared.logger.log("View Metrics Dashboard shortcut triggered")
           }
           .keyboardShortcut("M", modifiers: [.command])
         }
@@ -159,6 +161,8 @@ extension Notification.Name {
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   static let shared = NotificationManager()
   
+  public let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "NotificationManager")
+  
   private override init() {
     super.init()
   }
@@ -167,6 +171,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   func configure() {
     let center = UNUserNotificationCenter.current()
     center.delegate = self
+    logger.log("Notification center delegate configured")
     requestPermissions()
   }
   
@@ -175,9 +180,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
       DispatchQueue.main.async {
         if let err = error {
-          print("Error:", err.localizedDescription)
+          self.logger.error("Permission request failed: \(err.localizedDescription)")
         } else {
-          print("Notification permission \(granted ? "granted" : "denied")")
+          self.logger.log("Notification permission \(granted ? "granted" : "denied")")
         }
       }
     }
@@ -198,6 +203,24 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
+    logger.log("Notification response received: \(response.notification.request.identifier)")
+    NotificationCenter.default.post(name: .didReceiveNotificationResponse, object: response)
     completionHandler()
   }
+  
+  /// Schedules a local notification through ReminderScheduler.
+  func scheduleReminder(id: String, title: String, body: String, date: Date) {
+      logger.log("Scheduling local notification \(id) at \(date)")
+      ReminderScheduler.shared.scheduleReminder(id: id, date: date, title: title, body: body)
+  }
+
+  /// Cancels a scheduled local notification.
+  func cancelReminder(id: String) {
+      logger.log("Cancelling local notification \(id)")
+      ReminderScheduler.shared.cancelReminder(id: id)
+  }
+}
+
+extension Notification.Name {
+    static let didReceiveNotificationResponse = Notification.Name("didReceiveNotificationResponse")
 }

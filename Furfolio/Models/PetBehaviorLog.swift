@@ -8,10 +8,12 @@
 
 import Foundation
 import SwiftData
+import os
 
 @MainActor
 @Model
 final class PetBehaviorLog: Identifiable, Hashable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetBehaviorLog")
   
   
   // MARK: – Persistent Properties
@@ -63,6 +65,7 @@ final class PetBehaviorLog: Identifiable, Hashable {
     self.appointment = appointment
     self.dogOwner    = owner
     // `createdAt` default of Date.now applies
+    logger.log("Initialized PetBehaviorLog id: \(id), note: '\(note)', tagEmoji: \(tagEmoji ?? "nil"), dateLogged: \(dateLogged)")
   }
   
   /// Designated initializer for PetBehaviorLog.
@@ -84,6 +87,7 @@ final class PetBehaviorLog: Identifiable, Hashable {
     self.dogOwner = dogOwner
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    logger.log("Initialized PetBehaviorLog id: \(id), note: '\(note)', tagEmoji: \(tagEmoji ?? "nil"), dateLogged: \(dateLogged)")
   }
     
     
@@ -92,6 +96,7 @@ final class PetBehaviorLog: Identifiable, Hashable {
   @Transient
   /// “May 30, 2025 at 3:45 PM”
   var formattedDate: String {
+    logger.log("Accessing formattedDate for PetBehaviorLog id: \(id)")
     dateLogged.formatted(
       .dateTime
         .month(.wide)
@@ -105,12 +110,14 @@ final class PetBehaviorLog: Identifiable, Hashable {
   @Transient
   /// “2 hours ago”, “yesterday”, etc.
   var relativeDate: String {
+    logger.log("Accessing relativeDate for PetBehaviorLog id: \(id)")
     Self.relativeFormatter.localizedString(for: dateLogged, relativeTo: Date.now)
   }
   
   @Transient
   /// “[May 30, 2025 at 3:45 PM] Played fetch 🟢”
   var summary: String {
+    logger.log("Generating summary for PetBehaviorLog id: \(id)")
     var s = "[\(formattedDate)] \(note)"
     if let tag = tagEmoji {
       s += " \(tag)"
@@ -124,6 +131,7 @@ final class PetBehaviorLog: Identifiable, Hashable {
     /// Updates the note and/or tag, stamping `updatedAt`.
     /// Update the note and/or tag, stamping `updatedAt`
     func update(note: String? = nil, tagEmoji: String? = nil) {
+        logger.log("Updating PetBehaviorLog \(id): newNote='\(note ?? "nil")', newTagEmoji=\(tagEmoji ?? "nil")")
         if let newNote = note?.trimmingCharacters(in: .whitespacesAndNewlines), !newNote.isEmpty {
             self.note = newNote
         }
@@ -131,6 +139,7 @@ final class PetBehaviorLog: Identifiable, Hashable {
             self.tagEmoji = newTag
         }
         self.updatedAt = Date.now                // was `.now`
+        logger.log("Updated PetBehaviorLog \(id) at \(updatedAt!)")
     }
     
     
@@ -153,7 +162,9 @@ final class PetBehaviorLog: Identifiable, Hashable {
             appointment: appointment,
             owner: owner
         )
+        entry.logger.log("Recording PetBehaviorLog: note='\(note)', tagEmoji=\(tagEmoji ?? "nil"), owner=\(owner.id)")
         context.insert(entry)
+        entry.logger.log("Recorded PetBehaviorLog id: \(entry.id)")
         return entry
     }
     
@@ -166,14 +177,18 @@ final class PetBehaviorLog: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> [PetBehaviorLog] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetBehaviorLog")
+        logger.log("PetBehaviorLog.fetchAll called with parameters: owner=\(owner.id)")
         let descriptor = FetchDescriptor<PetBehaviorLog>(
             predicate: #Predicate { $0.dogOwner.id == owner.id },
             sortBy: [SortDescriptor(\PetBehaviorLog.dateLogged, order: .reverse)]
         )
         do {
-            return try context.fetch(descriptor)
+            let results = try context.fetch(descriptor)
+            logger.log("Fetched \(results.count) PetBehaviorLog entries")
+            return results
         } catch {
-            print("⚠️ PetBehaviorLog.fetchAll failed:", error)
+            logger.error("PetBehaviorLog.fetchAll failed: \(error.localizedDescription)")
             return []
         }
     }
@@ -184,14 +199,18 @@ final class PetBehaviorLog: Identifiable, Hashable {
         for appointment: Appointment,
         in context: ModelContext
     ) -> [PetBehaviorLog] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetBehaviorLog")
+        logger.log("PetBehaviorLog.fetch called with parameters: appointment=\(appointment.id)")
         let descriptor = FetchDescriptor<PetBehaviorLog>(
             predicate: #Predicate { $0.appointment?.id == appointment.id },
             sortBy: [SortDescriptor(\PetBehaviorLog.dateLogged, order: .reverse)]
         )
         do {
-            return try context.fetch(descriptor)
+            let results = try context.fetch(descriptor)
+            logger.log("Fetched \(results.count) PetBehaviorLog entries")
+            return results
         } catch {
-            print("⚠️ PetBehaviorLog.fetch(for:) failed:", error)
+            logger.error("PetBehaviorLog.fetch(for:) failed: \(error.localizedDescription)")
             return []
         }
     }
@@ -203,6 +222,8 @@ final class PetBehaviorLog: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> [PetBehaviorLog] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetBehaviorLog")
+        logger.log("PetBehaviorLog.fetch called with parameters: range=\(range), owner=\(owner.id)")
         let descriptor = FetchDescriptor<PetBehaviorLog>(
             predicate: #Predicate {
                 $0.dogOwner.id == owner.id &&
@@ -212,9 +233,11 @@ final class PetBehaviorLog: Identifiable, Hashable {
             sortBy: [SortDescriptor(\PetBehaviorLog.dateLogged, order: .reverse)]
         )
         do {
-            return try context.fetch(descriptor)
+            let results = try context.fetch(descriptor)
+            logger.log("Fetched \(results.count) PetBehaviorLog entries")
+            return results
         } catch {
-            print("⚠️ PetBehaviorLog.fetch(in:for:) failed:", error)
+            logger.error("PetBehaviorLog.fetch(in:for:) failed: \(error.localizedDescription)")
             return []
         }
     }

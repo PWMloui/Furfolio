@@ -9,11 +9,14 @@
 
 import Foundation
 import SwiftData
+import os
 
 
 @MainActor
 @Model
 final class FeedbackNote: Identifiable, Hashable {
+    
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "FeedbackNote")
     
     /// Shared date formatter to avoid repeated allocations.
     private static let dateFormatter: DateFormatter = {
@@ -73,6 +76,7 @@ final class FeedbackNote: Identifiable, Hashable {
         self.dogOwner    = owner
         self.appointment = appointment
         // `date`, `createdAt` default to Date.now
+        logger.log("Initialized FeedbackNote id: \(id), contentPreview: \(contentPreview), rating: \(rating ?? -1)")
     }
     
     /// Designated initializer for FeedbackNote model.
@@ -95,6 +99,7 @@ final class FeedbackNote: Identifiable, Hashable {
       self.appointment = appointment
       self.createdAt = createdAt
       self.updatedAt = updatedAt
+      logger.log("Initialized FeedbackNote id: \(id), contentPreview: \(contentPreview), rating: \(rating ?? -1)")
     }
     
     
@@ -103,13 +108,17 @@ final class FeedbackNote: Identifiable, Hashable {
     /// True when the content is non-empty.
     /// True if there's non-empty feedback text.
     var isValid: Bool {
-        !content.isEmpty
+        let valid = !content.isEmpty
+        logger.log("isValid check: \(valid) for content length: \(content.count)")
+        return valid
     }
     
     /// True when the rating is within 1…5.
     /// True if rating is within 1…5.
     var hasValidRating: Bool {
-        rating.map { (1...5).contains($0) } ?? false
+        let valid = rating.map { (1...5).contains($0) } ?? false
+        logger.log("hasValidRating check: \(valid) for rating: \(rating ?? -1)")
+        return valid
     }
     
     
@@ -118,43 +127,67 @@ final class FeedbackNote: Identifiable, Hashable {
     @Transient
     /// “May 16, 2025”
     var formattedDate: String {
-        date.formatted(.dateTime.month().day().year())
+        logger.log("Accessing formattedDate for FeedbackNote \(id)")
+        let result = date.formatted(.dateTime.month().day().year())
+        logger.log("formattedDate: \(result)")
+        return result
     }
-    
+
     @Transient
     /// “⭐️⭐️⭐️” or nil if no rating.
     var ratingStars: String? {
-        guard let r = rating, (1...5).contains(r) else { return nil }
-        return String(repeating: "⭐️", count: r)
+        logger.log("Accessing ratingStars for FeedbackNote \(id)")
+        guard let r = rating, (1...5).contains(r) else {
+            logger.log("ratingStars: nil")
+            return nil
+        }
+        let stars = String(repeating: "⭐️", count: r)
+        logger.log("ratingStars: \(stars)")
+        return stars
     }
-    
+
     @Transient
     /// First 60 chars of content, with ellipsis if truncated.
     var contentPreview: String {
+        logger.log("Accessing contentPreview for FeedbackNote \(id)")
+        let preview: String
         if content.count > 60 {
             let idx = content.index(content.startIndex, offsetBy: 60)
-            return String(content[..<idx]) + "…"
+            preview = String(content[..<idx]) + "…"
+        } else {
+            preview = content
         }
-        return content
+        logger.log("contentPreview: \(preview)")
+        return preview
     }
-    
+
     @Transient
     /// “May 16, 2025 ⭐️⭐️ : Great service…”
     var summary: String {
+        logger.log("Accessing summary for FeedbackNote \(id)")
         let stars = ratingStars.map { " \($0)" } ?? ""
-        return "\(formattedDate)\(stars): \(contentPreview)"
+        let result = "\(formattedDate)\(stars): \(contentPreview)"
+        logger.log("summary: \(result)")
+        return result
     }
-    
+
     @Transient
     /// Simple sentiment based on rating.
     var sentiment: String {
-        guard let r = rating else { return "No rating" }
-        switch r {
-        case 1...2: return "Negative"
-        case 3:     return "Neutral"
-        case 4...5: return "Positive"
-        default:    return "Unknown"
+        logger.log("Accessing sentiment for FeedbackNote \(id)")
+        guard let r = rating else {
+            logger.log("sentiment: No rating")
+            return "No rating"
         }
+        let result: String
+        switch r {
+        case 1...2: result = "Negative"
+        case 3:     result = "Neutral"
+        case 4...5: result = "Positive"
+        default:    result = "Unknown"
+        }
+        logger.log("sentiment: \(result)")
+        return result
     }
     
     
@@ -167,6 +200,7 @@ final class FeedbackNote: Identifiable, Hashable {
         rating: Int? = nil,
         appointment: Appointment? = nil
     ) {
+        logger.log("Updating FeedbackNote \(id): newContentPreview: \(contentPreview), newRating: \(rating ?? -1)")
         if let txt = content?.trimmingCharacters(in: .whitespacesAndNewlines), !txt.isEmpty {
             self.content = txt
         }
@@ -177,6 +211,7 @@ final class FeedbackNote: Identifiable, Hashable {
             self.appointment = appt
         }
         updatedAt = Date.now               // was `.now`
+        logger.log("Updated FeedbackNote \(id) at \(updatedAt!)")
     }
     
     
@@ -192,6 +227,8 @@ final class FeedbackNote: Identifiable, Hashable {
         appointment: Appointment? = nil,
         in context: ModelContext
     ) -> FeedbackNote? {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "FeedbackNote")
+        logger.log("Recording FeedbackNote with contentPreview: \(String(content.prefix(20)))")
         let note = FeedbackNote(
             content: content,
             rating: rating,
@@ -200,6 +237,7 @@ final class FeedbackNote: Identifiable, Hashable {
         )
         guard note.isValid else { return nil }
         context.insert(note)
+        logger.log("Inserted FeedbackNote id: \(note.id)")
         return note
     }
     
@@ -209,30 +247,42 @@ final class FeedbackNote: Identifiable, Hashable {
     /// Fetches FeedbackNotes all, newest first.
     /// All notes, newest first.
     static func fetchAll(in context: ModelContext) -> [FeedbackNote] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "FeedbackNote")
+        logger.log("Fetching FeedbackNotes (filter: all)")
         let desc = FetchDescriptor<FeedbackNote>(
             sortBy: [ SortDescriptor(\FeedbackNote.date, order: .reverse) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) FeedbackNotes")
+        return results
     }
     
     /// Fetches FeedbackNotes for a specific owner.
     /// Notes for a specific owner.
     static func fetch(for owner: DogOwner, in context: ModelContext) -> [FeedbackNote] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "FeedbackNote")
+        logger.log("Fetching FeedbackNotes (filter: owner/\(owner.id))")
         let desc = FetchDescriptor<FeedbackNote>(
             predicate: #Predicate { $0.dogOwner.id == owner.id },
             sortBy: [ SortDescriptor(\FeedbackNote.date, order: .reverse) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) FeedbackNotes")
+        return results
     }
     
     /// Fetches FeedbackNotes for a specific appointment.
     /// Notes for a specific appointment.
     static func fetch(for appointment: Appointment, in context: ModelContext) -> [FeedbackNote] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "FeedbackNote")
+        logger.log("Fetching FeedbackNotes (filter: appointment/\(appointment.id))")
         let desc = FetchDescriptor<FeedbackNote>(
             predicate: #Predicate { $0.appointment?.id == appointment.id },
             sortBy: [ SortDescriptor(\FeedbackNote.date, order: .reverse) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) FeedbackNotes")
+        return results
     }
     
     

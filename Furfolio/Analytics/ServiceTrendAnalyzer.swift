@@ -7,11 +7,14 @@
 
 
 import Foundation
+import os
+private let trendLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ServiceTrendAnalyzer")
 import _Concurrency
 
 
 /// Analyzes appointment data to surface service usage trends, including frequency, trend scoring, and forecasting.
 struct ServiceTrendAnalyzer {
+    private static let logger = trendLogger
   /// Shared calendar for date calculations.
   private static let calendar = Calendar.current
 
@@ -21,8 +24,10 @@ struct ServiceTrendAnalyzer {
   static func frequency(
     in appointments: [Appointment]
   ) -> [Appointment.ServiceType: Int] {
-    Dictionary(grouping: appointments, by: \.serviceType)
-      .mapValues { $0.count }
+      logger.log("frequency: starting with \(appointments.count) appointments")
+      let result = Dictionary(grouping: appointments, by: \.serviceType).mapValues { $0.count }
+      logger.log("frequency: result \(result)")
+      return result
   }
 
   /// Returns the top-N most frequently used services.
@@ -34,10 +39,11 @@ struct ServiceTrendAnalyzer {
     in appointments: [Appointment],
     top n: Int
   ) -> [(service: Appointment.ServiceType, count: Int)] {
-    frequency(in: appointments)
-      .sorted { $0.value > $1.value }
-      .prefix(n)
-      .map { ($0.key, $0.value) }
+      logger.log("topServices: computing top \(n) from \(appointments.count) appointments")
+      let freqs = frequency(in: appointments)
+      let sorted = freqs.sorted { $0.value > $1.value }.prefix(n).map { ($0.key, $0.value) }
+      logger.log("topServices: result \(sorted)")
+      return sorted
   }
 
   /// Computes trend scores by comparing usage in the recent window to the previous window.
@@ -49,6 +55,7 @@ struct ServiceTrendAnalyzer {
     in appointments: [Appointment],
     recentWindow days: Int = 30
   ) -> [Appointment.ServiceType: Double] {
+      logger.log("trendScores: computing with \(appointments.count) appointments over \(days)-day windows")
     let now = Date.now
     let cal = Self.calendar
 
@@ -75,6 +82,7 @@ struct ServiceTrendAnalyzer {
       }
       scores[service] = change
     }
+      logger.log("trendScores: result \(scores)")
     return scores
   }
 
@@ -89,10 +97,11 @@ struct ServiceTrendAnalyzer {
     top n: Int,
     recentWindow days: Int = 30
   ) -> [(service: Appointment.ServiceType, score: Double)] {
-    trendScores(in: appointments, recentWindow: days)
-      .sorted { $0.value > $1.value }
-      .prefix(n)
-      .map { ($0.key, $0.value) }
+      logger.log("topTrendingServices: computing top \(n) trending over \(days)-day window")
+      let scores = trendScores(in: appointments, recentWindow: days)
+      let sorted = scores.sorted { $0.value > $1.value }.prefix(n).map { ($0.key, $0.value) }
+      logger.log("topTrendingServices: result \(sorted)")
+      return sorted
   }
 
   /// Forecasts future usage using exponential smoothing over daily counts.
@@ -108,6 +117,7 @@ struct ServiceTrendAnalyzer {
     overPast days: Int = 30,
     alpha: Double = 0.3
   ) -> Double {
+      logger.log("forecast: starting for service \(service) over past \(days) days with alpha \(alpha)")
     let now = Date.now
     let cal = Self.calendar
     let start = cal.date(byAdding: .day, value: -days, to: now)!
@@ -130,6 +140,7 @@ struct ServiceTrendAnalyzer {
     for count in dailyCounts.dropFirst() {
       forecast = alpha * Double(count) + (1 - alpha) * forecast
     }
+      logger.log("forecast: result \(forecast)")
     return forecast
   }
 
@@ -137,6 +148,7 @@ struct ServiceTrendAnalyzer {
   static func frequency(
     in appointments: [Appointment]
   ) async -> [Appointment.ServiceType: Int] {
+      logger.log("frequency async: invoked")
     await _Concurrency.Task.detached { frequency(in: appointments) }.value
   }
 
@@ -145,6 +157,7 @@ struct ServiceTrendAnalyzer {
     in appointments: [Appointment],
     top n: Int
   ) async -> [(service: Appointment.ServiceType, count: Int)] {
+      logger.log("topServices async: invoked")
     await _Concurrency.Task.detached { topServices(in: appointments, top: n) }.value
   }
 
@@ -153,6 +166,7 @@ struct ServiceTrendAnalyzer {
     in appointments: [Appointment],
     recentWindow days: Int = 30
   ) async -> [Appointment.ServiceType: Double] {
+      logger.log("trendScores async: invoked")
     await _Concurrency.Task.detached { trendScores(in: appointments, recentWindow: days) }.value
   }
 
@@ -162,6 +176,7 @@ struct ServiceTrendAnalyzer {
     top n: Int,
     recentWindow days: Int = 30
   ) async -> [(service: Appointment.ServiceType, score: Double)] {
+      logger.log("topTrendingServices async: invoked")
     await _Concurrency.Task.detached { topTrendingServices(in: appointments, top: n, recentWindow: days) }.value
   }
 
@@ -172,6 +187,7 @@ struct ServiceTrendAnalyzer {
     overPast days: Int = 30,
     alpha: Double = 0.3
   ) async -> Double {
+      logger.log("forecast async: invoked")
     await _Concurrency.Task.detached { forecast(for: service, in: appointments, overPast: days, alpha: alpha) }.value
   }
 }

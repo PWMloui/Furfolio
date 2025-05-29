@@ -7,6 +7,8 @@
 
 
 import Foundation
+import os
+private let stringExtLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "String+Extensions")
 
 /// Utility extensions for String: trimming, localization, validation, and format-based conversions.
 extension String {
@@ -15,13 +17,16 @@ extension String {
 
   /// Retrieves a cached DateFormatter or creates and caches one for the given format.
   private static func dateFormatter(for format: String) -> DateFormatter {
+    stringExtLogger.log("Requesting DateFormatter for format: \(format)")
     let key = format as NSString
     if let cached = dateFormatterCache.object(forKey: key) {
+      stringExtLogger.log("Using cached DateFormatter for format: \(format)")
       return cached
     }
     let fmt = DateFormatter()
     fmt.dateFormat = format
     dateFormatterCache.setObject(fmt, forKey: key)
+    stringExtLogger.log("Created new DateFormatter for format: \(format)")
     return fmt
   }
 
@@ -30,14 +35,17 @@ extension String {
 
   /// Retrieves a cached NumberFormatter or creates and caches one for currency formatting for the given locale.
   private static func currencyFormatter(for locale: Locale) -> NumberFormatter {
+    stringExtLogger.log("Requesting NumberFormatter for locale: \(locale.identifier)")
     let key = locale.identifier as NSString
     if let cached = currencyFormatterCache.object(forKey: key) {
+      stringExtLogger.log("Using cached NumberFormatter for locale: \(locale.identifier)")
       return cached
     }
     let fmt = NumberFormatter()
     fmt.numberStyle = .currency
     fmt.locale = locale
     currencyFormatterCache.setObject(fmt, forKey: key)
+    stringExtLogger.log("Created new NumberFormatter for locale: \(locale.identifier)")
     return fmt
   }
     /// Checks if the string contains only numeric digits.
@@ -57,7 +65,14 @@ extension String {
 
     /// Converts the string to an Int, if possible.
     var toInt: Int? {
-      Int(self)
+      stringExtLogger.log("Converting to Int from string: \(self)")
+      let result = Int(self)
+      if let value = result {
+        stringExtLogger.log("Conversion to Int succeeded: \(value)")
+      } else {
+        stringExtLogger.log("Conversion to Int failed: nil")
+      }
+      return result
     }
 
     /// Returns a URL if the string is a valid URL.
@@ -101,18 +116,44 @@ extension String {
 
     /// Converts the string to a Double, if possible.
     var toDouble: Double? {
-        Double(self)
+        stringExtLogger.log("Converting to Double from string: \(self)")
+        let result = Double(self)
+        if let value = result {
+            stringExtLogger.log("Conversion to Double succeeded: \(value)")
+        } else {
+            stringExtLogger.log("Conversion to Double failed: nil")
+        }
+        return result
     }
 
     /// Converts the string to a Date using the provided format.
     func toDate(format: String = "yyyy-MM-dd'T'HH:mm:ssZ") -> Date? {
-      return Self.dateFormatter(for: format).date(from: self)
+      stringExtLogger.log("Converting to Date from string: \(self) with format: \(format)")
+      let formatter = Self.dateFormatter(for: format)
+      let result = formatter.date(from: self)
+      if let value = result {
+        stringExtLogger.log("Conversion to Date succeeded: \(String(describing: value))")
+      } else {
+        stringExtLogger.log("Conversion to Date failed: nil")
+      }
+      return result
     }
 
     /// Formats the string as currency for the given locale.
     func asCurrency(locale: Locale = .current) -> String? {
-      guard let value = Double(self) else { return nil }
-      return Self.currencyFormatter(for: locale).string(from: NSNumber(value: value))
+      stringExtLogger.log("Formatting as currency from string: \(self) for locale: \(locale.identifier)")
+      guard let value = Double(self) else {
+        stringExtLogger.log("Formatting as currency failed: input is not a valid Double")
+        return nil
+      }
+      let formatter = Self.currencyFormatter(for: locale)
+      let result = formatter.string(from: NSNumber(value: value))
+      if let formatted = result {
+        stringExtLogger.log("Formatting as currency succeeded: \(formatted)")
+      } else {
+        stringExtLogger.log("Formatting as currency failed: nil")
+      }
+      return result
     }
 
     /// Checks if the string is a valid URL.
@@ -153,8 +194,16 @@ extension String {
 
     /// Converts the string to Decimal using the given locale’s decimal formatter.
     func toDecimal(locale: Locale = .current) -> Decimal? {
+        stringExtLogger.log("Converting to Decimal from string: \(self) for locale: \(locale.identifier)")
         let formatter = Self.currencyFormatter(for: locale)
         formatter.numberStyle = .decimal
-        return formatter.number(from: self)?.decimalValue
+        let number = formatter.number(from: self)
+        let result = number?.decimalValue
+        if let value = result {
+            stringExtLogger.log("Conversion to Decimal succeeded: \(value as NSNumber)")
+        } else {
+            stringExtLogger.log("Conversion to Decimal failed: nil")
+        }
+        return result
     }
 }

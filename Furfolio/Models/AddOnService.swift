@@ -7,9 +7,18 @@
 
 import Foundation
 import SwiftData
+import os
 
 @Model
 final class AddOnService: Identifiable, Hashable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AddOnService")
+    
+    /// Shared currency formatter for price display.
+    private static let currencyFormatter: NumberFormatter = {
+        let fmt = NumberFormatter()
+        fmt.numberStyle = .currency
+        return fmt
+    }()
     enum ServiceType: String, Codable, CaseIterable, Hashable {
         case bath
         case haircut
@@ -66,11 +75,12 @@ final class AddOnService: Identifiable, Hashable {
 
     /// Human-friendly price range text, e.g. "$40–85"
     var priceRangeText: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        let min = formatter.string(from: NSNumber(value: minPrice)) ?? ""
-        let max = formatter.string(from: NSNumber(value: maxPrice)) ?? ""
-        return "\(min)–\(max)"
+        logger.log("Generating priceRangeText for service \(type.rawValue), prices: \(minPrice)-\(maxPrice)")
+        let min = Self.currencyFormatter.string(from: NSNumber(value: minPrice)) ?? ""
+        let max = Self.currencyFormatter.string(from: NSNumber(value: maxPrice)) ?? ""
+        let range = "\(min)–\(max)"
+        logger.log("Generated priceRangeText: \(range)")
+        return range
     }
 
     // MARK: - Hashable & Identifiable

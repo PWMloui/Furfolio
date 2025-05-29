@@ -1,4 +1,3 @@
-
 //
 //  RouteOptimizerView.swift
 //  Furfolio
@@ -8,9 +7,11 @@
 
 import SwiftUI
 import MapKit
+import os
 
 /// A view that displays optimized driving route for today's appointments.
 struct RouteOptimizerView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "RouteOptimizerView")
     @StateObject private var viewModel = RouteOptimizerViewModel()
 
     var body: some View {
@@ -18,47 +19,68 @@ struct RouteOptimizerView: View {
             Group {
                 if viewModel.isLoading {
                     ProgressView("Calculating Route…")
+                        .font(AppTheme.body)
+                        .onAppear {
+                            logger.log("ProgressView shown: Calculating Route")
+                        }
                 } else if let route = viewModel.route {
                     MapView(route: route, annotations: viewModel.annotations)
                         .edgesIgnoringSafeArea(.all)
                 } else if let error = viewModel.error {
                     VStack {
                         Text("Failed to calculate route")
-                            .font(.headline)
+                            .font(AppTheme.title)
+                            .foregroundColor(AppTheme.warning)
                         Text(error.localizedDescription)
-                            .font(.subheadline)
+                            .font(AppTheme.body)
+                            .foregroundColor(AppTheme.secondaryText)
                             .multilineTextAlignment(.center)
                         Button("Retry") {
+                            logger.log("Retry tapped")
                             viewModel.loadRoute()
                         }
+                        .buttonStyle(FurfolioButtonStyle())
                         .padding(.top)
                     }
                     .padding()
                 } else {
                     Text("No appointments to optimize.")
-                        .foregroundColor(.secondary)
+                        .font(AppTheme.body)
+                        .foregroundColor(AppTheme.secondaryText)
+                        .onAppear {
+                            logger.log("No appointments to optimize shown")
+                        }
                 }
             }
             .navigationTitle("Route Optimizer")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: viewModel.loadRoute) {
+                    Button(action: {
+                        logger.log("Refresh tapped")
+                        viewModel.loadRoute()
+                    }) {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .buttonStyle(FurfolioButtonStyle())
                 }
             }
             .onAppear {
                 viewModel.loadRoute()
             }
         }
+        .onAppear {
+            logger.log("RouteOptimizerView appeared; isLoading=\(viewModel.isLoading)")
+        }
     }
 }
 
 struct MapView: UIViewRepresentable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "MapView")
     let route: MKRoute
     let annotations: [MKPointAnnotation]
 
     func makeUIView(context: Context) -> MKMapView {
+        logger.log("MapView.makeUIView: adding \(annotations.count) annotations, drawing route polyline")
         let map = MKMapView()
         map.delegate = context.coordinator
         annotations.forEach { map.addAnnotation($0) }
@@ -71,7 +93,9 @@ struct MapView: UIViewRepresentable {
         return map
     }
 
-    func updateUIView(_ uiView: MKMapView, context: Context) {}
+    func updateUIView(_ uiView: MKMapView, context: Context) {
+        logger.log("MapView.updateUIView called")
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -80,6 +104,7 @@ struct MapView: UIViewRepresentable {
     class Coordinator: NSObject, MKMapViewDelegate {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let poly = overlay as? MKPolyline {
+                Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "MapView").log("Rendering overlay polyline with strokeColor .systemBlue and lineWidth 4")
                 let renderer = MKPolylineRenderer(polyline: poly)
                 renderer.strokeColor = .systemBlue
                 renderer.lineWidth = 4

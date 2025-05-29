@@ -6,25 +6,26 @@
 //
 
 import SwiftUI
+import os
 
 
 private struct TooltipDisplayDurationKey: EnvironmentKey {
   static let defaultValue: TimeInterval = 2.0
 }
 private struct TooltipFontKey: EnvironmentKey {
-  static let defaultValue: Font = .caption
+  static let defaultValue: Font = AppTheme.caption
 }
 private struct TooltipPaddingKey: EnvironmentKey {
-  static let defaultValue: CGFloat = 8
+  static let defaultValue: CGFloat = AppTheme.Spacing.small
 }
 private struct TooltipBackgroundColorKey: EnvironmentKey {
-  static let defaultValue: Color = .info
+  static let defaultValue: Color = AppTheme.info
 }
 private struct TooltipTextColorKey: EnvironmentKey {
   static let defaultValue: Color = .white
 }
 private struct TooltipCornerRadiusKey: EnvironmentKey {
-  static let defaultValue: CGFloat = 6
+  static let defaultValue: CGFloat = AppTheme.cornerRadius
 }
 
 extension EnvironmentValues {
@@ -77,6 +78,7 @@ struct TooltipView<Content: View>: View {
   let content: () -> Content
   @State private var isPresented: Bool = false
   @State private var hideTask: Task<Void, Never>? = nil
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TooltipView")
 
   @Environment(\.tooltipDisplayDuration) private var defaultDisplayDuration
   @Environment(\.tooltipFont) private var defaultFont
@@ -120,6 +122,7 @@ struct TooltipView<Content: View>: View {
     ZStack {
       content()
         .onTapGesture {
+          logger.log("TooltipView tapped, presenting tooltip: \(message)")
           // Cancel any pending hide
           hideTask?.cancel()
           
@@ -133,6 +136,7 @@ struct TooltipView<Content: View>: View {
             try await Task.sleep(nanoseconds: UInt64(resolvedDisplayDuration * 1_000_000_000))
             guard !Task.isCancelled else { return }
             await MainActor.run {
+              logger.log("TooltipView dismissed: \(message)")
               withAnimation(animation) {
                 isPresented = false
               }
@@ -153,6 +157,9 @@ struct TooltipView<Content: View>: View {
           .zIndex(1)
           .accessibilityLabel(Text(message))
           .accessibilityAddTraits(.isStaticText)
+          .onAppear {
+            logger.log("TooltipView overlay appeared: \(message)")
+          }
       }
     }
   }

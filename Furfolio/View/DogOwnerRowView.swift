@@ -6,6 +6,7 @@
 //  Updated on [Today's Date] with advanced animations, transitions, haptic feedback, swipe actions for quick editing, and additional status indicators.
 
 import SwiftUI
+import os
 
 // TODO: Move business logic (tag generation, haptic feedback, and deletion) into a dedicated ViewModel for cleaner views and testing.
 
@@ -39,6 +40,7 @@ class DogOwnerRowViewModel: ObservableObject {
 
 /// Row view displaying a dog owner’s avatar, details, and status badges, with tap, swipe, and haptic interactions.
 struct DogOwnerRowView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogOwnerRowView")
   @Environment(\.modelContext) private var modelContext
   @State private var showingEditSheet = false
   @State private var showDeleteAlert = false
@@ -90,19 +92,24 @@ struct DogOwnerRowView: View {
       .padding(.vertical, 8)
       .accessibilityElement(children: .combine)
       .animation(.spring(), value: dogOwner)
+      .onAppear {
+        logger.log("DogOwnerRowView appeared for owner id: \(dogOwner.id)")
+      }
     }
-    .buttonStyle(PlainButtonStyle())
+    .buttonStyle(FurfolioButtonStyle())
     .swipeActions(edge: .trailing) {
       Button {
         showingEditSheet = true
       } label: {
         Label("Edit", systemImage: "pencil")
       }
+      .buttonStyle(FurfolioButtonStyle())
       Button(role: .destructive) {
         showDeleteAlert = true
       } label: {
         Label("Delete", systemImage: "trash")
       }
+      .buttonStyle(FurfolioButtonStyle())
     }
     .sheet(isPresented: $showingEditSheet) {
       EditDogOwnerView(dogOwner: dogOwner, onSave: { _ in })
@@ -115,6 +122,7 @@ struct DogOwnerRowView: View {
     }
     .onAppear {
       viewModel.loadImage(from: dogOwner.dogImage)
+      logger.log("Loading image for owner id: \(dogOwner.id), imageData present: \(dogOwner.dogImage != nil)")
     }
   }
 
@@ -126,14 +134,16 @@ struct DogOwnerRowView: View {
         .scaledToFill()
         .frame(width: 50, height: 50)
         .clipShape(Circle())
-        .overlay(Circle().stroke(Color.gray, lineWidth: 1))
+        .overlay(Circle().stroke(AppTheme.accent.opacity(0.5), lineWidth: 1))
         .accessibilityLabel(String(format: NSLocalizedString("%@'s dog image", comment: "Accessibility label for dog image"), dogOwner.ownerName))
     } else {
       // If no image is available, show a placeholder with the owner's initials.
       Circle()
-        .fill(Color.gray.opacity(0.4))
+        .fill(AppTheme.disabled.opacity(0.4))
+        .overlay(
+            Circle().stroke(AppTheme.accent, lineWidth: 1)
+        )
         .frame(width: 50, height: 50)
-        .overlay(Circle().stroke(Color.gray, lineWidth: 1))
         .overlay(
           Text(dogOwner.ownerName.prefix(1).uppercased())
             .font(.headline)
@@ -147,26 +157,26 @@ struct DogOwnerRowView: View {
   @ViewBuilder private func ownerDetailsSection() -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(dogOwner.ownerName)
-        .font(.headline)
-        .foregroundColor(.primary)
+        .font(AppTheme.body)
+        .foregroundColor(AppTheme.primaryText)
         .lineLimit(1)
 
       Text(dogOwner.dogName)
-        .font(.subheadline)
-        .foregroundColor(.secondary)
+        .font(AppTheme.caption)
+        .foregroundColor(AppTheme.secondaryText)
         .lineLimit(1)
 
       if !dogOwner.breed.isEmpty {
         Text(String(format: NSLocalizedString("Breed: %@", comment: "Label for dog breed"), dogOwner.breed))
-          .font(.caption)
-          .foregroundColor(.secondary)
+          .font(AppTheme.caption)
+          .foregroundColor(AppTheme.secondaryText)
           .lineLimit(1)
       }
 
       if !dogOwner.notes.isEmpty {
         Text(String(format: NSLocalizedString("Notes: %@", comment: "Label for notes"), dogOwner.notes))
-          .font(.caption2)
-          .foregroundColor(.secondary)
+          .font(AppTheme.caption)
+          .foregroundColor(AppTheme.secondaryText)
           .italic()
           .lineLimit(2)
       }
@@ -175,13 +185,13 @@ struct DogOwnerRowView: View {
       if !dogOwner.loyaltyProgressTag.isEmpty {
         Text("Loyalty: \(dogOwner.loyaltyProgressTag)")
           .font(.caption2)
-          .foregroundColor(.green)
+          .foregroundColor(AppTheme.accent)
       }
 
       if !dogOwner.behaviorTrendBadge.isEmpty {
         Text("Behavior: \(dogOwner.behaviorTrendBadge)")
           .font(.caption2)
-          .foregroundColor(.orange)
+          .foregroundColor(AppTheme.warning)
       }
     }
   }
@@ -190,12 +200,12 @@ struct DogOwnerRowView: View {
   @ViewBuilder private func upcomingAppointmentsTag() -> some View {
     if dogOwner.hasUpcomingAppointments {
       Text(NSLocalizedString("Upcoming", comment: "Label for upcoming appointments"))
-        .font(.caption2)
+        .font(AppTheme.caption)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.blue.opacity(0.2))
+        .background(AppTheme.info.opacity(0.2))
         .cornerRadius(8)
-        .foregroundColor(.blue)
+        .foregroundColor(AppTheme.info)
         .accessibilityLabel(NSLocalizedString("Upcoming appointments", comment: "Accessibility label for upcoming appointments tag"))
     }
   }
@@ -203,12 +213,12 @@ struct DogOwnerRowView: View {
   /// Badge indicating incomplete profile information.
   @ViewBuilder private func incompleteInfoTag() -> some View {
     Text(NSLocalizedString("Incomplete", comment: "Badge for incomplete owner info"))
-      .font(.caption2)
+      .font(AppTheme.caption)
       .padding(.horizontal, 8)
       .padding(.vertical, 4)
-      .background(Color.red.opacity(0.2))
+      .background(AppTheme.warning.opacity(0.2))
       .cornerRadius(8)
-      .foregroundColor(.red)
+      .foregroundColor(AppTheme.warning)
       .accessibilityLabel(NSLocalizedString("Incomplete owner information", comment: "Accessibility label for incomplete info tag"))
   }
 }

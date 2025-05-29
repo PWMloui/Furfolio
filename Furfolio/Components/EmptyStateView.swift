@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 private enum EmptyStateImageSizeKey: EnvironmentKey {
   static let defaultValue: CGFloat = 80
@@ -48,29 +49,32 @@ struct EmptyStateView: View {
     @Environment(\.emptyStateVerticalSpacing) private var verticalSpacing
     @Environment(\.emptyStateBackgroundColor) private var backgroundColor
 
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "EmptyStateView")
+
     var body: some View {
         VStack(spacing: verticalSpacing) {
             Image(systemName: imageName)
                 .resizable()
                 .scaledToFit()
                 .frame(width: imageSize, height: imageSize)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.secondaryText)
                 .padding(.bottom, 8)
 
             Text(title)
-                .font(.title2)
+                .font(AppTheme.title)
                 .fontWeight(.bold)
 
             if let message = message {
                 Text(message)
-                    .font(.body)
-                    .foregroundColor(.secondary)
+                    .font(AppTheme.body)
+                    .foregroundColor(AppTheme.secondaryText)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
             }
 
             if let actionTitle = actionTitle, let action = action {
                 Button(actionTitle) {
+                    logger.log("EmptyStateView action tapped: \(actionTitle)")
                     action()
                 }
                 .buttonStyle(.borderedProminent)
@@ -78,9 +82,13 @@ struct EmptyStateView: View {
                 .onActionHaptic(enableHaptics)
             }
         }
+        .onAppear {
+            logger.log("EmptyStateView presented: \(title)")
+        }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(backgroundColor)
+        .background(AppTheme.background)
     }
 }
 

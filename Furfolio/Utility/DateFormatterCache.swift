@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import os
+private let dateFormatterCacheLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DateFormatterCache")
 
 /// A cache for expensive-to-create DateFormatter instances.
 struct DateFormatterCache {
@@ -28,8 +30,10 @@ struct DateFormatterCache {
                           timeStyle: DateFormatter.Style = .short,
                           locale: Locale = .current,
                           timeZone: TimeZone = .current) -> DateFormatter {
+        dateFormatterCacheLogger.log("Requesting DateFormatter for styles date:\(dateStyle.rawValue) time:\(timeStyle.rawValue) locale:\(locale.identifier) tz:\(timeZone.identifier)")
         let key = NSString(string: "\(dateStyle.rawValue)-\(timeStyle.rawValue)-\(locale.identifier)-\(timeZone.identifier)")
         if let existing = cache.object(forKey: key) {
+            dateFormatterCacheLogger.log("Cache hit for formatter key: \(key)")
             return existing
         }
         let df = DateFormatter()
@@ -38,6 +42,7 @@ struct DateFormatterCache {
         df.locale = locale
         df.timeZone = timeZone
         cache.setObject(df, forKey: key)
+        dateFormatterCacheLogger.log("Cache miss: created new DateFormatter for key: \(key)")
         return df
     }
 
@@ -48,8 +53,10 @@ struct DateFormatterCache {
     ///   - timeZone: The time zone to use for formatting. Defaults to `.current`.
     /// - Returns: A configured DateFormatter instance.
     static func formatter(format: String, locale: Locale = .current, timeZone: TimeZone = .current) -> DateFormatter {
+        dateFormatterCacheLogger.log("Requesting DateFormatter for format:\(format) locale:\(locale.identifier) tz:\(timeZone.identifier)")
         let key = NSString(string: "format-\(format)-\(locale.identifier)-\(timeZone.identifier)")
         if let existing = cache.object(forKey: key) {
+            dateFormatterCacheLogger.log("Cache hit for formatter key: \(key)")
             return existing
         }
         let df = DateFormatter()
@@ -57,6 +64,7 @@ struct DateFormatterCache {
         df.locale = locale
         df.timeZone = timeZone
         cache.setObject(df, forKey: key)
+        dateFormatterCacheLogger.log("Cache miss: created new DateFormatter for key: \(key)")
         return df
     }
 
@@ -78,6 +86,7 @@ struct DateFormatterCache {
 
     /// Clears the entire cache (useful for memory warnings or testing).
     static func clearCache() {
+        dateFormatterCacheLogger.log("Clearing all cached DateFormatter instances")
         cache.removeAllObjects()
     }
     private init() {}

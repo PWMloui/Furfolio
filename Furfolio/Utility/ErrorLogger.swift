@@ -8,6 +8,17 @@
 import Foundation
 import os
 
+private extension LogLevel {
+    var priority: Int {
+        switch self {
+        case .debug: return 0
+        case .info: return 1
+        case .warning: return 2
+        case .error: return 3
+        }
+    }
+}
+
 enum LogLevel: String {
   case error = "ERROR"
   case warning = "WARNING"
@@ -56,6 +67,14 @@ struct DefaultLoggingBackend: LoggingBackend {
 
 /// A centralized error logger that can be backed by Crashlytics, Sentry, or other SDKs.
 enum ErrorLogger {
+    /// Minimum log level to emit. Logs below this level are ignored.
+    private static var minimumLevel: LogLevel = .debug
+
+    /// Sets the minimum log level. Default is .debug.
+    public static func setMinimumLogLevel(_ level: LogLevel) {
+        minimumLevel = level
+    }
+
     private static var backend: LoggingBackend = DefaultLoggingBackend()
 
     nonisolated static func logError(
@@ -66,6 +85,7 @@ enum ErrorLogger {
       function: String = #function,
       line: Int = #line
     ) {
+        guard LogLevel.error.priority >= minimumLevel.priority else { return }
         var combinedMessage = "\(error)"
         if let msg = message {
             combinedMessage += " — \(msg)"
@@ -77,12 +97,49 @@ enum ErrorLogger {
         backend.log(level: .error, message: combinedMessage, metadata: combinedMetadata)
     }
 
-    nonisolated static func logInfo(_ message: String, metadata: [String: Any]? = nil) {
-        backend.log(level: .info, message: message, metadata: metadata)
+    nonisolated static func logDebug(
+        _ message: String,
+        metadata: [String: Any]? = nil,
+        file: String = #fileID,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        guard LogLevel.debug.priority >= minimumLevel.priority else { return }
+        var meta = metadata ?? [:]
+        meta["file"] = file
+        meta["function"] = function
+        meta["line"] = line
+        backend.log(level: .debug, message: message, metadata: meta)
     }
 
-    nonisolated static func logWarning(_ message: String, metadata: [String: Any]? = nil) {
-        backend.log(level: .warning, message: message, metadata: metadata)
+    nonisolated static func logInfo(
+        _ message: String,
+        metadata: [String: Any]? = nil,
+        file: String = #fileID,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        guard LogLevel.info.priority >= minimumLevel.priority else { return }
+        var meta = metadata ?? [:]
+        meta["file"] = file
+        meta["function"] = function
+        meta["line"] = line
+        backend.log(level: .info, message: message, metadata: meta)
+    }
+
+    nonisolated static func logWarning(
+        _ message: String,
+        metadata: [String: Any]? = nil,
+        file: String = #fileID,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        guard LogLevel.warning.priority >= minimumLevel.priority else { return }
+        var meta = metadata ?? [:]
+        meta["file"] = file
+        meta["function"] = function
+        meta["line"] = line
+        backend.log(level: .warning, message: message, metadata: meta)
     }
 
     nonisolated static func setBackend(_ newBackend: LoggingBackend) {

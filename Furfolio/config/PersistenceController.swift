@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftData
+import os
 
 @MainActor
 /// Central controller for configuring and exposing the SwiftData ModelContainer,
@@ -14,12 +15,15 @@ import SwiftData
 final class PersistenceController {
     /// Shared singleton instance
     static let shared = PersistenceController()
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PersistenceController")
 
     /// The configured ModelContainer for the app's SwiftData models.
     let container: ModelContainer
 
     init(inMemory: Bool = false) {
+        logger.log("Initializing PersistenceController (inMemory: \(inMemory))")
         registerTransformers()
+        logger.log("Registered custom ValueTransformers")
         container = ModelContainer(
             for: DogOwner.self, Appointment.self, Charge.self, DailyRevenue.self,
                  AppointmentTemplate.self, BehaviorTag.self, ClientMilestone.self,
@@ -29,7 +33,13 @@ final class PersistenceController {
                  ExportProfile.self,
             configurations: .init(inMemory: inMemory)
         )
-        ServiceSeeder.seed(in: container.mainContext)
+        logger.log("ModelContainer initialized with models: \(container.modelSchema.entities.map { $0.name })")
+        do {
+            ServiceSeeder.seed(in: container.mainContext)
+        } catch {
+            logger.error("Data seeding failed: \(error.localizedDescription)")
+        }
+        logInitialEntityCounts()
     }
 
     /// Registers all custom ValueTransformers for transformable @Attribute properties.
@@ -50,6 +60,15 @@ final class PersistenceController {
       // Use the main context for previews
       return controller.container.mainContext
     }()
+
+    /// Logs counts of key entities for diagnostic purposes.
+    private func logInitialEntityCounts() {
+        let ctx = container.mainContext
+        let ownerCount = (try? ctx.fetch(FetchDescriptor<DogOwner>()))?.count ?? 0
+        let apptCount = (try? ctx.fetch(FetchDescriptor<Appointment>()))?.count ?? 0
+        let chargeCount = (try? ctx.fetch(FetchDescriptor<Charge>()))?.count ?? 0
+        logger.log("Initial data counts — Owners: \(ownerCount), Appointments: \(apptCount), Charges: \(chargeCount)")
+    }
 }
 
 // MARK: - ValueTransformer Implementations

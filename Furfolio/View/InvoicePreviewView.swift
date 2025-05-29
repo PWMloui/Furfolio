@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PDFKit
+import os
 
 /// A SwiftUI wrapper around PDFKit's PDFView.
 struct PDFKitView: UIViewRepresentable {
@@ -27,6 +28,8 @@ struct PDFKitView: UIViewRepresentable {
 struct InvoicePreviewView: View {
     let invoice: VendorInvoice
 
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InvoicePreviewView")
+
     @State private var pdfDocument: PDFDocument? = nil
 
     var body: some View {
@@ -34,18 +37,28 @@ struct InvoicePreviewView: View {
             if let document = pdfDocument {
                 PDFKitView(document: document)
                     .edgesIgnoringSafeArea(.all)
+                    .background(AppTheme.background)
             } else {
                 ProgressView("Generating Invoice…")
-                    .onAppear(perform: loadPDF)
+                    .font(AppTheme.body)
+                    .onAppear {
+                        logger.log("Starting PDF generation for invoice id: \(invoice.id)")
+                        loadPDF()
+                    }
             }
+        }
+        .onAppear {
+            logger.log("InvoicePreviewView appeared for invoice id: \(invoice.id)")
         }
         .navigationTitle("Invoice Preview")
     }
 
     private func loadPDF() {
-        // Generate a PDF for the given invoice
+        logger.log("Building PDF data for invoice id: \(invoice.id)")
         let data = PDFReportBuilder.buildPDFData(for: invoice)
+        logger.log("Generated PDF data of size: \(data.count) bytes for invoice id: \(invoice.id)")
         pdfDocument = PDFDocument(data: data)
+        logger.log("PDFDocument initialized for invoice id: \(invoice.id)")
     }
 }
 

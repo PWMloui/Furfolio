@@ -6,7 +6,9 @@
 //  Updated on 07/09/2025 — sync non-custom ranges, show active interval.
 //
 
+
 import SwiftUI
+import os
 
 
 
@@ -21,6 +23,7 @@ private extension Date {
 @MainActor
 /// A picker allowing selection of predefined or custom date ranges, syncing custom dates with the chosen range.
 struct DateRangePicker: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DateRangePicker")
     /// Shared short‐date formatter to avoid repeated allocations.
     private static let dateFormatter: DateFormatter = {
         let fmt = DateFormatter()
@@ -39,6 +42,7 @@ struct DateRangePicker: View {
 
     /// Text displaying the currently active interval (start – end) for non-custom ranges.
     private var activeIntervalText: String {
+        logger.log("Computing activeIntervalText for selectedDateRange: \(selectedDateRange.rawValue)")
         guard let interval = selectedDateRange.interval else { return "" }
         let fmt = Self.dateFormatter
         return "\(fmt.string(from: interval.start.startOfDay)) – \(fmt.string(from: interval.end.endOfDay))"
@@ -54,6 +58,7 @@ struct DateRangePicker: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: selectedDateRange) { new in
+                logger.log("selectedDateRange changed to: \(new.rawValue)")
                 // Activate custom pickers only for .custom
                 isCustomDateRangeActive = (new == .custom)
 
@@ -61,6 +66,7 @@ struct DateRangePicker: View {
                 if let interval = new.interval {
                     customStartDate = interval.start.startOfDay
                     customEndDate   = interval.end.endOfDay
+                    logger.log("Seeded customStartDate: \(customStartDate), customEndDate: \(customEndDate)")
                 }
             }
 
@@ -73,6 +79,7 @@ struct DateRangePicker: View {
                         displayedComponents: .date
                     )
                     .accessibilityLabel("Start Date Picker")
+                    .onChange(of: customStartDate) { logger.log("customStartDate changed to: \($0)") }
                     DatePicker(
                         "End Date",
                         selection: $customEndDate,
@@ -80,11 +87,18 @@ struct DateRangePicker: View {
                         displayedComponents: .date
                     )
                     .accessibilityLabel("End Date Picker")
+                    .onChange(of: customEndDate) { logger.log("customEndDate changed to: \($0)") }
                 }
                 .labelsHidden()
                 .animation(.default, value: isCustomDateRangeActive)
             } else {
                 // Show the currently active interval
+                Group {
+                    // onAppear logs the active interval display
+                }
+                .onAppear {
+                    logger.log("Displaying active interval: \(activeIntervalText)")
+                }
                 HStack {
                     Text("Active:")
                     Spacer()

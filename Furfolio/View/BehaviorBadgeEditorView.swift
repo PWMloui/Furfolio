@@ -8,6 +8,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // TODO: Move behavior-editing logic into a dedicated ViewModel; use FormValidator for note and badge validation.
 
@@ -18,27 +19,34 @@ class BehaviorBadgeEditorViewModel: ObservableObject {
 
     private var log: PetBehaviorLog
     private static let maxNoteLength: Int = 250
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "BehaviorBadgeEditorViewModel")
 
     init(log: PetBehaviorLog) {
         self.log = log
         self.note = log.note
         self.tagEmoji = log.tagEmoji
+        logger.log("Initialized viewModel for PetBehaviorLog id: \(log.id)")
     }
 
     var isValid: Bool {
-        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !tagEmoji.isEmpty
+        logger.log("Validation check: note length \(note.count), tagEmoji '\(tagEmoji)' -> isValid: \(!note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !tagEmoji.isEmpty)")
+        return !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !tagEmoji.isEmpty
     }
 
     func save(context: ModelContext) throws {
+        logger.log("Saving behavior log id: \(log.id)")
         let clampedNote = String(note.prefix(Self.maxNoteLength))
         log.note = clampedNote
         log.tagEmoji = tagEmoji
         try context.save()
+        logger.log("Successfully saved behavior log id: \(log.id)")
     }
 }
 
 /// View for editing a single PetBehaviorLog entry, including notes and badge selection.
 struct BehaviorBadgeEditorView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "BehaviorBadgeEditorView")
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @StateObject private var viewModel: BehaviorBadgeEditorViewModel
@@ -63,12 +71,12 @@ struct BehaviorBadgeEditorView: View {
                         .frame(minHeight: 100)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                                .stroke(AppTheme.secondaryText.opacity(0.3), lineWidth: 1)
                         )
                     VStack(alignment: .trailing) {
                         Text("\(viewModel.note.count)/\(Self.maxNoteLength)")
-                            .font(.caption)
-                            .foregroundColor(viewModel.note.count > Self.maxNoteLength ? .red : .secondary)
+                            .font(AppTheme.caption)
+                            .foregroundColor(viewModel.note.count > Self.maxNoteLength ? AppTheme.warning : AppTheme.secondaryText)
                     }
                 }
 
@@ -78,6 +86,7 @@ struct BehaviorBadgeEditorView: View {
                         ForEach(BadgeEngine.BehaviorBadge.allCases, id: \.self) { badge in
                             let emoji = badge.rawValue.components(separatedBy: " ").first!
                             Button {
+                                logger.log("Selected badge emoji: \(emoji) for log id: \(viewModel.log.id)")
                                 viewModel.tagEmoji = emoji
                             } label: {
                                 VStack {
@@ -93,7 +102,7 @@ struct BehaviorBadgeEditorView: View {
                                         .fill(viewModel.tagEmoji == emoji ? Color.accentColor.opacity(0.2) : Color.clear)
                                 )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(FurfolioButtonStyle())
                             .accessibilityLabel(badge.rawValue)
                         }
                     }
@@ -106,23 +115,30 @@ struct BehaviorBadgeEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     /// Saves changes to the behavior log if valid.
                     Button("Done") {
+                        logger.log("Done tapped, attempting save for log id: \(viewModel.log.id)")
                         do {
                             try viewModel.save(context: context)
                         } catch {
-                            print("⚠️ Failed to save behavior log:", error)
+                            logger.error("Failed to save behavior log id \(viewModel.log.id): \(error.localizedDescription)")
                         }
                         dismiss()
                     }
                     .disabled(!viewModel.isValid)
+                    .buttonStyle(FurfolioButtonStyle())
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     /// Discards changes and dismisses the editor.
                     Button("Cancel") {
+                        logger.log("Cancel tapped, reverting changes for log id: \(viewModel.log.id)")
                         context.rollback()
                         dismiss()
                     }
+                    .buttonStyle(FurfolioButtonStyle())
                 }
             }
+        }
+        .onAppear {
+            logger.log("BehaviorBadgeEditorView appeared for log id: \(viewModel.log.id)")
         }
     }
 }

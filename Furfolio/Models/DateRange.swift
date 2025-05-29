@@ -6,12 +6,15 @@
 //  Updated on 07/08/2025 — added computed start/end dates and helper API.
 //
 
+
 import Foundation
+import os
 
 
 @MainActor
 /// Predefined date ranges for filtering metrics, with computed start/end dates.
 enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DateRange")
   /// Last seven days up to today.
   case lastWeek = "Last Week"
   /// Last calendar month up to today.
@@ -33,6 +36,7 @@ enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
     
     /// The end of the range, always the end of the current day.
     var endDate: Date {
+        Self.logger.log("Calculating endDate for range: \(rawValue)")
         let todayStart = Self.calendar.startOfDay(for: Self.now)
         // end of day at 23:59:59
         return Self.calendar.date(byAdding: .second, value: 86_399, to: todayStart)!
@@ -40,6 +44,7 @@ enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
     
     /// The start of the range, or `nil` if the range is `.custom`.
     var startDate: Date? {
+        Self.logger.log("Calculating startDate for range: \(rawValue)")
         let now = Self.now
         let cal = Self.calendar
         
@@ -57,6 +62,7 @@ enum DateRange: String, CaseIterable, @preconcurrency Identifiable {
     
     /// A DateInterval from `startDate` to `endDate`, or `nil` for `.custom`.
     var interval: DateInterval? {
+        Self.logger.log("Calculating interval for range: \(rawValue)")
         guard let start = startDate else { return nil }
         return DateInterval(start: start, end: endDate)
     }
@@ -78,7 +84,13 @@ extension DateRange: CustomStringConvertible {
     /// - Parameter date: The date to check.
     /// - Returns: `true` if within range or if `.custom`.
     func contains(_ date: Date) -> Bool {
-        guard let interval = interval else { return true }
-        return interval.contains(date)
+        Self.logger.log("Checking if date \\(date) is within range: \(rawValue)")
+        guard let interval = interval else {
+            Self.logger.log("contains(\\(date)) result: true (.custom always returns true)")
+            return true
+        }
+        let result = interval.contains(date)
+        Self.logger.log("contains(\\(date)) result: \(result)")
+        return result
     }
 }

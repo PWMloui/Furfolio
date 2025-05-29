@@ -8,8 +8,12 @@
 //
 
 import Foundation
+import os
+import FirebaseRemoteConfigService
 
 struct BadgeEngine {
+    
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "BadgeEngine")
     
     // MARK: — Behavior Badges
     
@@ -37,8 +41,11 @@ struct BadgeEngine {
         
         /// Returns true if any of this badge’s keywords appear in the text.
         func matches(_ text: String, keywordMap: [BehaviorBadge: [String]] = BehaviorBadge.defaultKeywordMap) -> Bool {
+          BadgeEngine.logger.log("BehaviorBadge.matches called for \(self.rawValue) against text: '\(text)'")
           guard let keywords = keywordMap[self] else { return false }
-          return keywords.contains { text.lowercased().contains($0) }
+          let result = keywords.contains { text.lowercased().contains($0) }
+          BadgeEngine.logger.log("BehaviorBadge.matches result for \(self.rawValue): \(result)")
+          return result
         }
     }
     
@@ -49,10 +56,21 @@ struct BadgeEngine {
       from notes: String,
       keywordMap: [BehaviorBadge: [String]] = BehaviorBadge.defaultKeywordMap
     ) -> BehaviorBadge {
+        logger.log("Determining behavior badge for notes: '\(notes)'")
         let text = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if BehaviorBadge.aggressive.matches(text, keywordMap: keywordMap) { return .aggressive }
-        if BehaviorBadge.anxious.matches(text, keywordMap: keywordMap)    { return .anxious }
-        if BehaviorBadge.calm.matches(text, keywordMap: keywordMap)       { return .calm }
+        if BehaviorBadge.aggressive.matches(text, keywordMap: keywordMap) {
+            logger.log("Selected behavior badge: \(BehaviorBadge.aggressive.rawValue)")
+            return .aggressive
+        }
+        if BehaviorBadge.anxious.matches(text, keywordMap: keywordMap) {
+            logger.log("Selected behavior badge: \(BehaviorBadge.anxious.rawValue)")
+            return .anxious
+        }
+        if BehaviorBadge.calm.matches(text, keywordMap: keywordMap) {
+            logger.log("Selected behavior badge: \(BehaviorBadge.calm.rawValue)")
+            return .calm
+        }
+        logger.log("Selected behavior badge: \(BehaviorBadge.neutral.rawValue)")
         return .neutral
     }
     
@@ -84,13 +102,24 @@ struct BadgeEngine {
     
     /// Number of visits required to earn a free bath reward.
     /// Visits needed to earn a reward.
-    static var loyaltyThreshold: Int = 10
+    static var loyaltyThreshold: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .loyaltyThreshold)
+    }
     
     /// Returns the appropriate loyalty badge based on visit count and threshold.
     /// Returns a loyalty badge enum for the given count.
     static func loyaltyBadge(for visits: Int, threshold: Int = loyaltyThreshold) -> LoyaltyBadge {
+        logger.log("Computing loyalty badge for visits: \(visits), threshold: \(threshold)")
         let rem = max(0, threshold - visits)
-        return rem <= 0 ? .earned : .progress(remaining: rem)
+        if rem <= 0 {
+            let badge: LoyaltyBadge = .earned
+            logger.log("Selected loyalty badge: \(badge)")
+            return badge
+        } else {
+            let badge: LoyaltyBadge = .progress(remaining: rem)
+            logger.log("Selected loyalty badge: \(badge)")
+            return badge
+        }
     }
     
     
@@ -99,8 +128,10 @@ struct BadgeEngine {
     /// Returns an array containing both behavior and loyalty badges for given inputs.
     /// Returns both the behavior and loyalty badges for a given notes + visit count.
     @MainActor static func allBadges(from notes: String, visits: Int) -> [any CustomStringConvertible & Identifiable] {
+        logger.log("Computing all badges for notes: '\(notes)', visits: \(visits)")
         let behavior = behaviorBadge(from: notes)
         let loyalty  = loyaltyBadge(for: visits)
+        logger.log("All badges: behavior=\(behavior.rawValue), loyalty=\(loyalty.id)")
         return [behavior, loyalty]
     }
     

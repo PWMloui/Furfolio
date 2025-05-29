@@ -9,20 +9,34 @@
 
 import Foundation
 import UserNotifications
-import os.log
+import os
 
 /// Schedules, cancels, and reschedules local notifications for appointments.
-struct ReminderScheduler {
-    // MARK: — Dependencies
-    
+final class ReminderScheduler {
+    /// Shared singleton instance
+    static let shared = ReminderScheduler()
     private let center: UNUserNotificationCenter
-    /// Shared calendar to compute trigger dates.
-    private static let calendar = Calendar.current
     private let logger = Logger(subsystem: "com.yourapp.furfolio", category: "ReminderScheduler")
     
-    init(center: UNUserNotificationCenter = .current()) {
+    private init(center: UNUserNotificationCenter = .current()) {
         self.center = center
+        requestAuthorization()
     }
+    
+    /// Request notification permissions on first use.
+    private func requestAuthorization() {
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                self.logger.error("Notification auth error: \(error.localizedDescription)")
+            } else {
+                self.logger.log("Notification authorization granted: \(granted)")
+            }
+        }
+    }
+    // MARK: — Dependencies
+    
+    /// Shared calendar to compute trigger dates.
+    private static let calendar = Calendar.current
     
     
     // MARK: — Convenience for Appointment
@@ -30,30 +44,30 @@ struct ReminderScheduler {
     /// Schedules a reminder notification for the given appointment with a specified offset.
     static func scheduleReminder(for appointment: Appointment, offset: Int) {
         Task {
-          do {
-            let body = appointment.notes?.isEmpty == false
-                ? appointment.notes!
-                : "You have an appointment at \(appointment.formattedDate)."
-            try await ReminderScheduler().scheduleAsync(
-              appointmentID: appointment.id.uuidString,
-              at: appointment.date,
-              offsetMinutes: offset,
-              title: "Upcoming Appointment",
-              body: body,
-              category: Appointment.notificationCategory
-            )
-          } catch {
-            Logger(subsystem: "com.yourapp.furfolio", category: "ReminderScheduler")
-              .error("Failed to schedule async for \(appointment.id): \(error.localizedDescription)")
-          }
+            do {
+                let body = appointment.notes?.isEmpty == false
+                    ? appointment.notes!
+                    : "You have an appointment at \(appointment.formattedDate)."
+                try await ReminderScheduler.shared.scheduleAsync(
+                    appointmentID: appointment.id.uuidString,
+                    at: appointment.date,
+                    offsetMinutes: offset,
+                    title: "Upcoming Appointment",
+                    body: body,
+                    category: Appointment.notificationCategory
+                )
+            } catch {
+                Logger(subsystem: "com.yourapp.furfolio", category: "ReminderScheduler")
+                    .error("Failed to schedule async for \(appointment.id): \(error.localizedDescription)")
+            }
         }
     }
     
     /// Cancels any pending reminder notification for the given appointment.
     static func cancelReminder(for appointment: Appointment) {
-      Task {
-        await ReminderScheduler().cancelAsync(appointmentID: appointment.id.uuidString)
-      }
+        Task {
+            await ReminderScheduler.shared.cancelAsync(appointmentID: appointment.id.uuidString)
+        }
     }
     
     
@@ -194,3 +208,9 @@ struct ReminderScheduler {
         }
     }
 }
+
+    /// Cancels all pending reminders.
+    func cancelAllReminders() {
+        center.removeAllPendingNotificationRequests()
+        logger.log("Canceled all reminders")
+    }

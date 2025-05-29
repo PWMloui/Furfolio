@@ -8,8 +8,11 @@
 
 import Foundation
 import SwiftData
+import os
 @Model
 final class AppointmentTemplate: Identifiable {
+    
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppointmentTemplate")
     
     // MARK: – Persistent Properties
     
@@ -91,13 +94,16 @@ final class AppointmentTemplate: Identifiable {
         self.templateBeforePhoto          = templateBeforePhoto
         self.templateAfterPhoto           = templateAfterPhoto
         // createdAt is set by its default, updatedAt remains nil
+        logger.log("Initialized AppointmentTemplate id: \(id), name: \(name)")
     }
     
     
     // MARK: – Validation
     
     var isValid: Bool {
-        !name.isEmpty && defaultDurationMinutes > 0
+        let valid = !name.isEmpty && defaultDurationMinutes > 0
+        logger.log("isValid check for template \(id): \(valid)")
+        return valid
     }
     
     
@@ -114,6 +120,7 @@ final class AppointmentTemplate: Identifiable {
         templateBeforePhoto: Data?,
         templateAfterPhoto: Data?
     ) {
+        logger.log("Updating AppointmentTemplate id: \(id)")
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         self.name                         = trimmedName
         self.serviceType                  = serviceType
@@ -124,6 +131,7 @@ final class AppointmentTemplate: Identifiable {
         self.templateBeforePhoto          = templateBeforePhoto
         self.templateAfterPhoto           = templateAfterPhoto
         self.updatedAt                    = Date.now       // was `.now`
+        logger.log("Updated AppointmentTemplate \(id) at \(updatedAt!)")
     }
     
     
@@ -136,6 +144,7 @@ final class AppointmentTemplate: Identifiable {
         owner: DogOwner,
         in context: ModelContext
     ) -> Appointment? {
+        logger.log("Instantiating Appointment from template \(id) on \(date) for owner \(owner.id)")
         guard isValid else { return nil }
         let appt = Appointment(
             date: date,
@@ -148,6 +157,7 @@ final class AppointmentTemplate: Identifiable {
             afterPhoto: templateAfterPhoto
         )
         context.insert(appt)
+        logger.log("Inserted Appointment id: \(appt.id) and set reminderOffset to \(defaultReminderOffset)")
         appt.reminderOffset = defaultReminderOffset
         return appt
     }
@@ -168,6 +178,8 @@ final class AppointmentTemplate: Identifiable {
         templateAfterPhoto: Data? = nil,
         in context: ModelContext
     ) -> AppointmentTemplate {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppointmentTemplate")
+        logger.log("Creating AppointmentTemplate with name: \(name)")
         let tmpl = AppointmentTemplate(
             name: name,
             serviceType: serviceType,
@@ -179,33 +191,46 @@ final class AppointmentTemplate: Identifiable {
             templateAfterPhoto: templateAfterPhoto
         )
         context.insert(tmpl)
+        logger.log("Created AppointmentTemplate id: \(tmpl.id)")
         return tmpl
     }
     
     /// Fetches all templates, newest first. Returns an empty array on error.
     static func fetchAll(in context: ModelContext) -> [AppointmentTemplate] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppointmentTemplate")
+        logger.log("Fetching all AppointmentTemplates")
         let descriptor = FetchDescriptor<AppointmentTemplate>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         do {
-            return try context.fetch(descriptor)
+            let templates = try context.fetch(descriptor)
+            logger.log("Fetched \(templates.count) templates")
+            return templates
         } catch {
-            print("⚠️ Error fetching AppointmentTemplates:", error)
+            logger.error("⚠️ Error fetching AppointmentTemplates: \(error.localizedDescription)")
             return []
         }
     }
     
     /// Fetches the first template matching the trimmed `name`, or nil on error.
     static func fetch(named name: String, in context: ModelContext) -> AppointmentTemplate? {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppointmentTemplate")
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        logger.log("Fetching AppointmentTemplate named: \(trimmed)")
         let descriptor = FetchDescriptor<AppointmentTemplate>(
             predicate: #Predicate { $0.name == trimmed },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         do {
-            return try context.fetch(descriptor).first
+            let results = try context.fetch(descriptor)
+            if let first = results.first {
+                logger.log("Fetched AppointmentTemplate named '\(trimmed)' with id: \(first.id)")
+            } else {
+                logger.log("No AppointmentTemplate found named '\(trimmed)'")
+            }
+            return results.first
         } catch {
-            print("⚠️ Error fetching AppointmentTemplate named '\(trimmed)':", error)
+            logger.error("⚠️ Error fetching AppointmentTemplate named '\(trimmed)': \(error.localizedDescription)")
             return nil
         }
     }

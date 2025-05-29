@@ -25,26 +25,29 @@ extension Notification.Name {
 /// Manages registration and handling of Home Screen Quick Actions.
 final class AppShortcutHandler {
 
+    /// Holds the observer token for foreground notifications.
+    private static var foregroundObserver: NSObjectProtocol?
+
   /// Registers the supported Home Screen Quick Actions with the system.
   static func registerShortcuts(hasOwners: Bool, hasAppointments: Bool) {
         let addOwner = UIApplicationShortcutItem(
             type: AppShortcutType.addOwner.rawValue,
             localizedTitle: NSLocalizedString("Add Owner", comment: "Home screen shortcut to add a new owner"),
-            localizedSubtitle: NSLocalizedString("", comment: ""),
+            localizedSubtitle: nil,
             icon: UIApplicationShortcutIcon(systemImageName: "person.badge.plus"),
             userInfo: nil
         )
         let addAppointment = UIApplicationShortcutItem(
             type: AppShortcutType.addAppointment.rawValue,
             localizedTitle: NSLocalizedString("Add Appointment", comment: "Home screen shortcut to add a new appointment"),
-            localizedSubtitle: NSLocalizedString("", comment: ""),
+            localizedSubtitle: nil,
             icon: UIApplicationShortcutIcon(systemImageName: "calendar.badge.plus"),
             userInfo: nil
         )
         let addCharge = UIApplicationShortcutItem(
             type: AppShortcutType.addCharge.rawValue,
             localizedTitle: NSLocalizedString("Add Charge", comment: "Home screen shortcut to add a new charge"),
-            localizedSubtitle: NSLocalizedString("", comment: ""),
+            localizedSubtitle: nil,
             icon: UIApplicationShortcutIcon(systemImageName: "dollarsign.circle"),
             userInfo: nil
         )
@@ -82,11 +85,20 @@ final class AppShortcutHandler {
   /// Removes all registered quick actions.
   static func clearShortcuts() {
     UIApplication.shared.shortcutItems = []
+    stopListening()
   }
+
+    /// Stops listening for foreground notifications.
+    static func stopListening() {
+        if let observer = foregroundObserver {
+            NotificationCenter.default.removeObserver(observer)
+            foregroundObserver = nil
+        }
+    }
 
   /// Starts listening for app foreground notifications to refresh shortcuts dynamically.
   static func startListening() {
-    NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+    foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
         // TODO: Replace these placeholders with your actual logic to determine if owners and appointments exist.
         let hasOwners = YourDataService.hasOwners
         let hasAppointments = YourDataService.hasAppointments

@@ -8,11 +8,13 @@
 
 import Foundation
 import SwiftUI
+import os
 
 // TODO: Consider extracting summary and chartData into a dedicated SummaryBuilder and ChartDataProvider for reusability and testability.
 
 /// Provides computed statistics and summaries for a given DogOwner, including loyalty, retention, and service usage metrics.
 struct ClientStats {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ClientStats")
     let owner: DogOwner
 
     // MARK: – Shared Resources & Thresholds
@@ -83,31 +85,44 @@ struct ClientStats {
     // MARK: – Loyalty & Retention
 
     var loyaltyStatus: String {
+        logger.log("Computing loyaltyStatus for owner \(owner.id.uuidString), totalAppointments: \(totalAppointments)")
+        let result: String
         switch totalAppointments {
-        case 0: return "New"
-        case 1: return "🐾 First Timer"
-        case 2..<loyaltyThreshold: return "🔁 Monthly Regular"
-        default: return "🏅 Loyal Client"
+        case 0: result = "New"
+        case 1: result = "🐾 First Timer"
+        case 2..<loyaltyThreshold: result = "🔁 Monthly Regular"
+        default: result = "🏅 Loyal Client"
         }
+        logger.log("loyaltyStatus result: \(result)")
+        return result
     }
 
     var isRetentionRisk: Bool {
+        logger.log("Computing isRetentionRisk, lastActivityDate: \(String(describing: owner.lastActivityDate))")
         guard let last = owner.lastActivityDate,
               let cutoff = Self.calendar.date(
                   byAdding: .day,
                   value: -Self.retentionDaysThreshold,
                   to: Date.now)
-        else { return true }
-        return last < cutoff
+        else {
+            logger.log("isRetentionRisk defaulting to true (missing dates)")
+            return true
+        }
+        let risk = last < cutoff
+        logger.log("isRetentionRisk result: \(risk)")
+        return risk
     }
 
     var daysSinceLastActivity: Int? {
+        logger.log("Computing daysSinceLastActivity for owner \(owner.id.uuidString)")
         guard let last = owner.lastActivityDate else { return nil }
-        return Self.calendar.dateComponents(
+        let result = Self.calendar.dateComponents(
             [.day],
             from: last,
             to: Date.now
         ).day
+        logger.log("daysSinceLastActivity result: \(String(describing: result))")
+        return result
     }
 
     var daysSinceLastActivityString: String? {
@@ -121,14 +136,17 @@ struct ClientStats {
     }
 
     var revenueLast30Days: Double {
+        logger.log("Computing revenueLast30Days for owner \(owner.id.uuidString)")
         guard let cutoff = Self.calendar.date(
                 byAdding: .day,
                 value: -30,
                 to: Date.now)
         else { return 0 }
-        return owner.charges
+        let revenue = owner.charges
             .filter { $0.date >= cutoff }
             .reduce(0) { $0 + $1.amount }
+        logger.log("revenueLast30Days result: \(revenue)")
+        return revenue
     }
 
     var formattedRevenueLast30Days: String {
@@ -306,6 +324,8 @@ struct ClientStats {
 
     /// A concise text summary of visits, revenue, and loyalty status for display in overviews.
     var summary: String {
-        "Visits: \(totalAppointments), Revenue: \(formattedTotalCharges), Status: \(loyaltyStatus)"
+        let text = "Visits: \(totalAppointments), Revenue: \(formattedTotalCharges), Status: \(loyaltyStatus)"
+        logger.log("Generated summary: \(text)")
+        return text
     }
 }

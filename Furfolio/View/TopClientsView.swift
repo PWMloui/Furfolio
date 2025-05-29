@@ -7,24 +7,29 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // TODO: Move client-stats calculation and top-clients filtering into a TopClientsViewModel for cleaner view code and better testability.
 
 @MainActor
 final class TopClientsViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TopClientsViewModel")
     @Published private(set) var topClients: [(owner: DogOwner, stats: ClientStats)] = []
     let maxCount = 5
 
     func update(owners: [DogOwner]) {
+        logger.log("Updating top clients with \(owners.count) owners")
         topClients = owners
             .map { (owner: $0, stats: ClientStats(owner: $0)) }
             .sorted { $0.stats.totalCharges > $1.stats.totalCharges }
+        logger.log("Computed topClients count: \(topClients.count)")
     }
 }
 
 @MainActor
 /// Displays the top revenue-generating clients with their visit count and total charges.
 struct TopClientsView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TopClientsView")
     @Environment(\.modelContext) private var modelContext
 
     /// Fetches all DogOwner entities sorted by name.
@@ -43,17 +48,22 @@ struct TopClientsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("Top \(viewModel.maxCount) Clients by Revenue")) {
+                Section(header: Text("Top \(viewModel.maxCount) Clients by Revenue")
+                        .font(AppTheme.title)
+                        .foregroundColor(AppTheme.primaryText)
+                ) {
                     ForEach(Array(viewModel.topClients.prefix(viewModel.maxCount).enumerated()), id: \.element.owner.id) { index, entry in
                         TopClientRow(rank: index + 1, owner: entry.owner, stats: entry.stats)
                     }
                     if owners.count > viewModel.maxCount {
                       /// Navigate to full client list when tapped.
                         Button("Show All Clients") {
+                            logger.log("Show All Clients tapped")
                             // Could navigate to a full list view
                         }
-                        .font(.footnote)
-                        .foregroundColor(.accentColor)
+                        .font(AppTheme.caption)
+                        .foregroundColor(AppTheme.accent)
+                        .buttonStyle(FurfolioButtonStyle())
                         .cardStyle()
                     }
                 }
@@ -61,12 +71,14 @@ struct TopClientsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Top Clients")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                viewModel.update(owners: owners)
-            }
-            .onChange(of: owners) { newOwners in
-                viewModel.update(owners: newOwners)
-            }
+        }
+        .onAppear {
+            logger.log("TopClientsView appeared; owners: \(owners.count), topClients: \(viewModel.topClients.count)")
+            viewModel.update(owners: owners)
+        }
+        .onChange(of: owners) { newOwners in
+            logger.log("Owners changed; new count: \(newOwners.count)")
+            viewModel.update(owners: newOwners)
         }
     }
 }
@@ -74,25 +86,31 @@ struct TopClientsView: View {
 @MainActor
 /// Row showing a ranked client with visit count and formatted charges.
 private struct TopClientRow: View {
+    private let rowLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TopClientRow")
     let rank: Int
     let owner: DogOwner
     let stats: ClientStats
 
     var body: some View {
+        rowLogger.log("Rendering TopClientRow rank: \(rank), owner: \(owner.ownerName)")
         HStack {
             Text("\(rank).")
-                .font(.headline)
+                .font(AppTheme.body)
+                .foregroundColor(AppTheme.primaryText)
                 .frame(width: 24, alignment: .leading)
             VStack(alignment: .leading) {
                 Text(owner.ownerName)
-                    .font(.headline)
+                    .font(AppTheme.body)
+                    .foregroundColor(AppTheme.primaryText)
                 HStack {
                     Text("Visits: \(stats.totalAppointments)")
+                        .font(AppTheme.caption)
+                        .foregroundColor(AppTheme.secondaryText)
                     Spacer()
                     Text(TopClientsView.currencyFormatter.string(from: NSNumber(value: stats.totalCharges)) ?? "")
+                        .font(AppTheme.caption)
+                        .foregroundColor(AppTheme.secondaryText)
                 }
-                .font(.subheadline)
-                .foregroundColor(.secondary)
             }
         }
         .padding(.vertical, 4)

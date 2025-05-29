@@ -8,9 +8,11 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor
 class ChargeSummaryViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ChargeSummaryViewModel")
     @Published var charges: [Charge] = []
     
     private let owner: DogOwner
@@ -23,28 +25,35 @@ class ChargeSummaryViewModel: ObservableObject {
     }
     
     func load() {
+        logger.log("Loading charges for owner id: \(owner.id)")
         charges = owner.charges.sorted { $0.date > $1.date }
+        logger.log("Loaded \(charges.count) charges")
     }
     
     var totalAmount: Double {
-        charges.reduce(0) { $0 + $1.amount }
+        logger.log("Computing totalAmount")
+        return charges.reduce(0) { $0 + $1.amount }
     }
     
     var averageAmount: Double {
+        logger.log("Computing averageAmount")
         guard !charges.isEmpty else { return 0 }
         return totalAmount / Double(charges.count)
     }
     
     var paymentBreakdown: [Charge.PaymentMethod: Int] {
-        Dictionary(grouping: charges, by: \.paymentMethod).mapValues(\.count)
+        logger.log("Computing paymentBreakdown")
+        return Dictionary(grouping: charges, by: \.paymentMethod).mapValues(\.count)
     }
     
     func delete(at offsets: IndexSet) {
+        logger.log("Deleting charges at offsets: \(offsets)")
         for idx in offsets {
             let toDelete = charges[idx]
             context.delete(toDelete)
         }
         load()
+        logger.log("Post-delete, \(charges.count) charges remain")
     }
 }
 
@@ -53,6 +62,7 @@ class ChargeSummaryViewModel: ObservableObject {
 @MainActor
 /// Displays a summary and history of charges for a specific DogOwner, with totals and breakdowns.
 struct ChargeSummaryView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ChargeSummaryView")
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
 
@@ -79,16 +89,19 @@ struct ChargeSummaryView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Total Charged: \(formatted(viewModel.totalAmount))")
-                            .font(.headline)
+                            .font(AppTheme.header)
+                            .foregroundColor(AppTheme.primaryText)
                         Text("Average: \(formatted(viewModel.averageAmount))")
-                            .font(.subheadline)
+                            .font(AppTheme.body)
+                            .foregroundColor(AppTheme.secondaryText)
                         HStack {
                             ForEach(Charge.PaymentMethod.allCases) { method in
                                 if let count = viewModel.paymentBreakdown[method], count > 0 {
                                     Text("\(method.symbol) \(count)")
-                                        .font(.caption)
+                                        .font(AppTheme.caption)
                                         .padding(4)
-                                        .background(Color.secondary.opacity(0.1))
+                                        .background(AppTheme.disabled)
+                                        .foregroundColor(AppTheme.primaryText)
                                         .cornerRadius(4)
                                 }
                             }
@@ -103,7 +116,8 @@ struct ChargeSummaryView: View {
                 if viewModel.charges.isEmpty {
                     Section {
                         Text("No charges recorded yet.")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.secondaryText)
+                            .font(AppTheme.body)
                     }
                 } else {
                     Section(header: Text("Charge History")) {
@@ -111,22 +125,24 @@ struct ChargeSummaryView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(charge.formattedDate)
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
+                                        .font(AppTheme.caption)
+                                        .foregroundColor(AppTheme.secondaryText)
                                     Text(charge.formattedAmount)
-                                        .font(.body)
-                                        .bold()
+                                        .font(AppTheme.body)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(AppTheme.primaryText)
                                     if let notes = charge.notes, !notes.isEmpty {
                                         Text(notes)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                                            .font(AppTheme.caption)
+                                            .foregroundColor(AppTheme.secondaryText)
                                     }
                                 }
                                 Spacer()
                                 Text(charge.paymentMethod.localized)
-                                    .font(.caption2)
+                                    .font(AppTheme.caption)
                                     .padding(4)
-                                    .background(Color.blue.opacity(0.1))
+                                    .background(AppTheme.info.opacity(0.1))
+                                    .foregroundColor(AppTheme.info)
                                     .cornerRadius(4)
                             }
                             .padding(.vertical, 4)
@@ -140,13 +156,15 @@ struct ChargeSummaryView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") {
+                        logger.log("ChargeSummaryView Close tapped")
                         dismiss()
                     }
+                    .buttonStyle(FurfolioButtonStyle())
                 }
             }
             .listStyle(.insetGrouped)
             .onAppear {
-                // Use the actual context at runtime
+                logger.log("ChargeSummaryView appeared for owner id: \(owner.id)")
                 viewModel.load()
             }
         }

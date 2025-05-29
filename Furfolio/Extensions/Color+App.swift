@@ -7,6 +7,8 @@
 
 
 import SwiftUI
+import os
+private let colorLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Color+App")
 /// Defines the app’s color palette: brand, semantic, and utility colors.
 extension Color {
   // MARK: - App Color Palette
@@ -120,6 +122,7 @@ extension Color {
   ///                  Non-hex characters are ignored. If the string length
   ///                  is unrecognized, returns black.
   init(hex: String) {
+      colorLogger.log("Initializing Color from hex string: \(hex)")
     let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
     var int = UInt64()
     Scanner(string: hex).scanHexInt64(&int)
@@ -134,6 +137,7 @@ extension Color {
     default:
       (a, r, g, b) = (255, 0, 0, 0)
     }
+      colorLogger.log("Parsed hex components - alpha: \(a), red: \(r), green: \(g), blue: \(b)")
     self.init(
       .sRGB,
       red: Double(r) / 255,

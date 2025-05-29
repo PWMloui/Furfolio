@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftData
+import os
 
 /// The type of action recorded in the audit log.
 enum AuditAction: String, Codable {
@@ -18,6 +19,7 @@ enum AuditAction: String, Codable {
 /// Records a single change (create/update/delete) to any entity in the system.
 @Model
 final class AuditLog: Identifiable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AuditLog")
     @Attribute var id: UUID
     @Attribute var entityName: String      // e.g. "DogOwner", "Charge"
     @Attribute var entityId: UUID          // the specific record's ID
@@ -42,6 +44,7 @@ final class AuditLog: Identifiable {
         self.user = user
         self.details = details
         self.timestamp = timestamp
+        logger.log("Initialized AuditLog entry: [\(action.rawValue)] \(entityName)(\(entityId)) by \(user ?? "unknown") at \(timestamp)")
     }
 }
 
@@ -56,6 +59,8 @@ extension AuditLog {
         details: String? = nil,
         in context: ModelContext
     ) -> AuditLog {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AuditLog")
+        logger.log("Creating AuditLog: action=\(action.rawValue), entity=\(entityName)(\(entityId)), user=\(user ?? "nil")")
         let entry = AuditLog(
             entityName: entityName,
             entityId: entityId,
@@ -64,6 +69,7 @@ extension AuditLog {
             details: details
         )
         context.insert(entry)
+        logger.log("Inserted AuditLog entry with id: \(entry.id)")
         return entry
     }
 
@@ -72,11 +78,15 @@ extension AuditLog {
         limit: Int = 100,
         in context: ModelContext
     ) -> [AuditLog] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AuditLog")
+        logger.log("Fetching recent AuditLog entries, limit: \(limit)")
         var desc = FetchDescriptor<AuditLog>(
             predicate: nil,
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         desc.fetchLimit = limit
-        return (try? context.fetch(desc)) ?? []
+        let logs = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(logs.count) AuditLog entries")
+        return logs
     }
 }

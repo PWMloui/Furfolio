@@ -8,14 +8,20 @@
 // Computations run off the main thread by default. UI views should `await` these async methods.
 
 import Foundation
+import os
+private let analyticsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ServiceAnalytics")
 import _Concurrency
 /// Provides analytics functions for appointments and charges, such as frequency, duration, and revenue metrics.
 struct ServiceAnalytics {
+    private static let logger = analyticsLogger
     
     private static func runAsync<T>(
         _ work: @Sendable @escaping () -> T
     ) async -> T {
-        await Task.detached { work() }.value
+        logger.log("runAsync: starting work")
+        let result = work()
+        logger.log("runAsync: work completed")
+        return result
     }
     
     /// Aggregated metrics for a specific service type.
@@ -42,10 +48,13 @@ struct ServiceAnalytics {
     static func syncAppointmentFrequency(
         in appointments: [Appointment]
     ) -> [Appointment.ServiceType: Int] {
-        appointments.reduce(into: [:]) { counts, appt in
+        logger.log("syncAppointmentFrequency called with \(appointments.count) appointments")
+        let counts = appointments.reduce(into: [:]) { counts, appt in
             // Single-pass aggregation for frequency.
             counts[appt.serviceType, default: 0] += 1
         }
+        logger.log("syncAppointmentFrequency result: \(counts)")
+        return counts
     }
 
     /// Returns the count of appointments grouped by service type.
@@ -55,7 +64,8 @@ struct ServiceAnalytics {
     static func appointmentFrequency(
         in appointments: [Appointment]
     ) async -> [Appointment.ServiceType: Int] {
-        await runAsync { syncAppointmentFrequency(in: appointments) }
+        logger.log("appointmentFrequency async called")
+        return await runAsync { syncAppointmentFrequency(in: appointments) }
     }
     
     
@@ -67,6 +77,7 @@ struct ServiceAnalytics {
     static func averageDuration(
         for appointments: [Appointment]
     ) -> [Appointment.ServiceType: Double] {
+        logger.log("averageDuration called with \(appointments.count) appointments")
         let stats = appointments.reduce(into: [Appointment.ServiceType: (sum: Double, count: Int)]()) { acc, appt in
             guard let dur = appt.durationMinutes else { return }
             let type = appt.serviceType
@@ -75,9 +86,11 @@ struct ServiceAnalytics {
             entry.count += 1
             acc[type] = entry
         }
-        return stats.mapValues { entry in
+        let averages = stats.mapValues { entry in
             entry.count > 0 ? entry.sum / Double(entry.count) : 0
         }
+        logger.log("averageDuration result: \(averages)")
+        return averages
     }
     
     
@@ -88,18 +101,21 @@ struct ServiceAnalytics {
         for appointments: [Appointment],
         charges: [Charge]
     ) -> [Appointment.ServiceType: Double] {
+        logger.log("revenueByService called with \(appointments.count) appointments and \(charges.count) charges")
         // Map appointment IDs to their service types
         let serviceMap = Dictionary(uniqueKeysWithValues:
             appointments.map { ($0.id, $0.serviceType) }
         )
         // Accumulate charge amounts for matching appointments
-        return charges.reduce(into: [:]) { sums, charge in
+        let sums = charges.reduce(into: [:]) { sums, charge in
             guard
                 let appt = charge.appointment,
                 let type = serviceMap[appt.id]
             else { return }
             sums[type, default: 0] += charge.amount
         }
+        logger.log("revenueByService result: \(sums)")
+        return sums
     }
     
     
@@ -115,6 +131,7 @@ struct ServiceAnalytics {
         for appointments: [Appointment],
         charges: [Charge]
     ) async -> [Appointment.ServiceType: ServiceMetrics] {
+        logger.log("metrics async called with \(appointments.count) appointments and \(charges.count) charges")
         // Compute frequency and duration
         async let freqAndDur: [Appointment.ServiceType: (frequency: Int, durationSum: Double, durationCount: Int)] = runAsync {
             appointments.reduce(into: [:]) { acc, appt in
@@ -141,6 +158,7 @@ struct ServiceAnalytics {
         }
         // Await both
         let (stats, revenues) = await (freqAndDur, revenueMap)
+        logger.log("metrics: freq/dur stats: \(stats), revenues: \(revenues)")
         // Build result metrics
         return Appointment.ServiceType.allCases.reduce(into: [:]) { result, type in
             let (frequency, durationSum, durationCount) = stats[type] ?? (0, 0, 0)
@@ -168,7 +186,8 @@ struct ServiceAnalytics {
         limit: Int,
         metric selector: (ServiceMetrics) -> T
     ) -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
-        metrics
+        logger.log("topServicesByMetric called, limit: \(limit)")
+        return metrics
             .sorted { selector($0.value) > selector($1.value) }
             .prefix(limit)
             .map { ($0.key, $0.value) }
@@ -179,7 +198,10 @@ struct ServiceAnalytics {
         from metrics: [Appointment.ServiceType: ServiceMetrics],
         limit: Int = 3
     ) -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
-        topServicesByMetric(from: metrics, limit: limit) { $0.totalRevenue }
+        logger.log("topRevenueServices(from:limit:) called with limit: \(limit)")
+        let result = topServicesByMetric(from: metrics, limit: limit) { $0.totalRevenue }
+        logger.log("topRevenueServices(from:limit:) result: \(result)")
+        return result
     }
 
     /// Returns the top-N service types by appointment frequency.
@@ -187,8 +209,11 @@ struct ServiceAnalytics {
         from metrics: [Appointment.ServiceType: ServiceMetrics],
         limit: Int = 3
     ) -> [(type: Appointment.ServiceType, frequency: Int)] {
-        topServicesByMetric(from: metrics, limit: limit) { Double($0.frequency) }
+        logger.log("topFrequentServices(from:limit:) called with limit: \(limit)")
+        let result = topServicesByMetric(from: metrics, limit: limit) { Double($0.frequency) }
             .map { ($0.type, $0.metrics.frequency) }
+        logger.log("topFrequentServices(from:limit:) result: \(result)")
+        return result
     }
 
     /// Convenience that computes metrics and returns top-N by revenue in one call.
@@ -197,8 +222,11 @@ struct ServiceAnalytics {
         charges: [Charge],
         limit: Int = 3
     ) async -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
+        logger.log("topRevenueServices(for:charges:limit:) async called with limit: \(limit)")
         let m = await metrics(for: appointments, charges: charges)
-        return topRevenueServices(from: m, limit: limit)
+        let result = topRevenueServices(from: m, limit: limit)
+        logger.log("topRevenueServices(for:charges:limit:) async result: \(result)")
+        return result
     }
 
     /// Returns the top-N service types by revenue per minute.
@@ -206,11 +234,14 @@ struct ServiceAnalytics {
         from metrics: [Appointment.ServiceType: ServiceMetrics],
         limit: Int = 3
     ) -> [(type: Appointment.ServiceType, value: Double)] {
-        metrics
+        logger.log("topRevenuePerMinuteServices(from:limit:) called with limit: \(limit)")
+        let result = metrics
             .map { (type: $0.key, value: $0.value.revenuePerMinute) }
             .sorted(by: { $0.value > $1.value })
             .prefix(limit)
             .map { (type: $0.type, value: $0.value) }
+        logger.log("topRevenuePerMinuteServices(from:limit:) result: \(result)")
+        return result
     }
 
     /// Convenience that computes metrics and returns top-N by revenue per minute in one call.
@@ -219,7 +250,10 @@ struct ServiceAnalytics {
         charges: [Charge],
         limit: Int = 3
     ) async -> [(type: Appointment.ServiceType, value: Double)] {
+        logger.log("topRevenuePerMinuteServices(for:charges:limit:) async called with limit: \(limit)")
         let m = await metrics(for: appointments, charges: charges)
-        return topRevenuePerMinuteServices(from: m, limit: limit)
+        let result = topRevenuePerMinuteServices(from: m, limit: limit)
+        logger.log("topRevenuePerMinuteServices(for:charges:limit:) async result: \(result)")
+        return result
     }
 }

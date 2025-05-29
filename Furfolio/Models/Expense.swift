@@ -6,9 +6,11 @@
 import Foundation
 import SwiftData
 import UIKit
+import os
 
 @Model
 final class Expense: Identifiable, Hashable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Expense")
   // MARK: - Persistent Properties
 
   @Attribute var id: UUID
@@ -39,6 +41,7 @@ final class Expense: Identifiable, Hashable {
     } else {
       self.receiptImageData = nil
     }
+        logger.log("Initialized Expense id: \(id), date: \(date), category: \(category), amount: \(amount)")
   }
 
   // MARK: - Computed
@@ -46,6 +49,7 @@ final class Expense: Identifiable, Hashable {
   /// UI-friendly image
   @Transient
   var receiptImage: UIImage? {
+        logger.log("Accessing receiptImage for Expense \(id)")
     guard let data = receiptImageData else { return nil }
     return UIImage(data: data)
   }
@@ -63,19 +67,27 @@ final class Expense: Identifiable, Hashable {
 
   /// All expenses sorted by date descending
   static func fetchAll(in context: ModelContext) -> [Expense] {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Expense")
+      logger.log("Fetching all expenses")
     let desc = FetchDescriptor<Expense>(
       sortBy: [ SortDescriptor<Expense>(\.date, order: .reverse) ]
     )
-    return (try? context.fetch(desc)) ?? []
+    let results = (try? context.fetch(desc)) ?? []
+      logger.log("Fetched \(results.count) expenses")
+    return results
   }
 
   /// Expenses in the given date range
   static func fetch(in context: ModelContext, from start: Date, to end: Date) -> [Expense] {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Expense")
+      logger.log("Fetching expenses from \(start) to \(end)")
     let predicate = #Predicate<Expense> { $0.date >= start && $0.date <= end }
     let desc = FetchDescriptor<Expense>(
       predicate: predicate,
       sortBy: [ SortDescriptor<Expense>(\.date, order: .reverse) ]
     )
-    return (try? context.fetch(desc)) ?? []
+    let results = (try? context.fetch(desc)) ?? []
+      logger.log("Fetched \(results.count) expenses in range")
+    return results
   }
 }

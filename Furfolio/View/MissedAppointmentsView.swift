@@ -7,12 +7,14 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // TODO: Move missed-appointments retrieval and grouping logic into a dedicated ViewModel for cleaner views and testing.
 
 @MainActor
 /// Displays a list of past appointments that were not completed, grouped by owner.
 struct MissedAppointmentsView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "MissedAppointmentsView")
     @Environment(\.modelContext) private var modelContext
     /// Shared date formatter for appointment display.
     private static let dateFormatter: DateFormatter = {
@@ -44,11 +46,16 @@ struct MissedAppointmentsView: View {
         List {
           if missedAppointments.isEmpty {
             Text("No missed appointments!")
-              .foregroundColor(.secondary)
+              .foregroundColor(AppTheme.secondaryText)
+              .font(AppTheme.body)
               .italic()
           } else {
             ForEach(Array(groupedByOwner.keys), id: \.id) { owner in
-              Section(header: Text(owner.ownerName)) {
+              Section(header:
+                        Text(owner.ownerName)
+                          .font(AppTheme.title)
+                          .foregroundColor(AppTheme.primaryText)
+              ) {
                 ForEach(groupedByOwner[owner] ?? []) { appt in
                   MissedAppointmentRow(appointment: appt)
                 }
@@ -65,12 +72,17 @@ struct MissedAppointmentsView: View {
           }
         }
       }
+      .onAppear {
+        logger.log("MissedAppointmentsView appeared; total missed=\(missedAppointments.count)")
+      }
     }
 }
 
 @MainActor
 /// A row representing a single missed appointment, showing details and a reschedule action.
+import os
 private struct MissedAppointmentRow: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "MissedAppointmentRowView")
     @Bindable var appointment: Appointment
     @Environment(\.modelContext) private var modelContext
     @State private var showRescheduleSheet = false
@@ -79,33 +91,40 @@ private struct MissedAppointmentRow: View {
         HStack {
             VStack(alignment: .leading) {
                 Text(appointment.formattedDate)
-                    .font(.headline)
+                    .font(AppTheme.body)
+                    .foregroundColor(AppTheme.primaryText)
                     .accessibilityLabel("Date: \(appointment.formattedDate)")
                 Text(appointment.serviceType.localized)
-                    .font(.subheadline)
+                    .font(AppTheme.caption)
+                    .foregroundColor(AppTheme.secondaryText)
                 if let notes = appointment.notes, !notes.isEmpty {
                     Text(notes)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(AppTheme.caption)
+                        .foregroundColor(AppTheme.secondaryText)
                 }
             }
             Spacer()
             Button("Reschedule") {
+                logger.log("Reschedule tapped for appointment id: \(appointment.id)")
                 showRescheduleSheet = true
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(FurfolioButtonStyle())
             .sheet(isPresented: $showRescheduleSheet) {
                 RescheduleView(appointment: $appointment)
                     .presentationDetents([.medium])
             }
         }
         .padding(.vertical, 4)
+        .onAppear {
+            logger.log("Displaying missed appointment row for id: \(appointment.id)")
+        }
     }
 }
 
 @MainActor
 /// View for selecting a new date/time to reschedule a missed appointment.
 struct RescheduleView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "RescheduleView")
     @Binding var appointment: Appointment
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -128,18 +147,27 @@ struct RescheduleView: View {
                     displayedComponents: [.date, .hourAndMinute]
                 )
             }
+            .onAppear {
+                logger.log("RescheduleView appeared for appointment id: \(appointment.id)")
+            }
             .navigationTitle("Reschedule")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        logger.log("Reschedule Cancel tapped")
+                        dismiss()
+                    }
+                    .buttonStyle(FurfolioButtonStyle())
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        logger.log("Reschedule Save tapped: newDate=\(newDate)")
                         appointment.date = newDate
                         appointment.status = .confirmed
                         dismiss()
                     }
                     .disabled(newDate <= Date.now)
+                    .buttonStyle(FurfolioButtonStyle())
                 }
             }
         }

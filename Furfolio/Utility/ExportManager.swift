@@ -7,12 +7,14 @@
 
 import Foundation
 import SwiftData
+import os
 
 // TODO: Refactor CSV formatting to a separate CSVBuilder for reuse and inject formatters for testability.
 
 /// Central service for exporting application data as CSV files.
 /// Supports DogOwner, Appointment, and Charge exports with proper CSV escaping.
 final class ExportManager {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ExportManager")
 
   struct CSVBuilder {
       let headers: [String]
@@ -58,6 +60,7 @@ final class ExportManager {
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
   func exportOwnersCSV(_ owners: [DogOwner]) async throws -> URL {
+    logger.log("Starting exportOwnersCSV for \(owners.count) owners")
     var builder = CSVBuilder(headers: ["Owner Name","Email","Phone","Address","Number of Dogs"])
     for owner in owners {
       let fields: [String] = [
@@ -75,6 +78,7 @@ final class ExportManager {
     let fileURL = try await Task.detached(priority: .utility) {
       try write(csv: csv, fileName: fileNameWithTimestamp("DogOwners.csv"))
     }.value
+    logger.log("Completed exportOwnersCSV, file located at \(fileURL.path)")
     return fileURL
   }
 
@@ -83,6 +87,7 @@ final class ExportManager {
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
   func exportAppointmentsCSV(_ appointments: [Appointment]) async throws -> URL {
+    logger.log("Starting exportAppointmentsCSV for \(appointments.count) appointments")
     var builder = CSVBuilder(headers: ["Date","Owner Name","Service Type","Notes"])
     for appt in appointments {
       let dateStr = isoFormatter.string(from: appt.date)
@@ -100,6 +105,7 @@ final class ExportManager {
     let fileURL = try await Task.detached(priority: .utility) {
       try write(csv: csv, fileName: fileNameWithTimestamp("Appointments.csv"))
     }.value
+    logger.log("Completed exportAppointmentsCSV, file located at \(fileURL.path)")
     return fileURL
   }
 
@@ -108,6 +114,7 @@ final class ExportManager {
   /// - Returns: URL of the generated CSV file.
   /// - Throws: An error if writing the file fails.
   func exportChargesCSV(_ charges: [Charge]) async throws -> URL {
+    logger.log("Starting exportChargesCSV for \(charges.count) charges")
     var builder = CSVBuilder(headers: ["Date","Type","Amount","Notes"])
     for charge in charges {
       let dateStr = isoFormatter.string(from: charge.date)
@@ -125,10 +132,12 @@ final class ExportManager {
     let fileURL = try await Task.detached(priority: .utility) {
       try write(csv: csv, fileName: fileNameWithTimestamp("Charges.csv"))
     }.value
+    logger.log("Completed exportChargesCSV, file located at \(fileURL.path)")
     return fileURL
   }
 
   private func fileNameWithTimestamp(_ base: String) -> String {
+      logger.log("Generating filename with base: \(base)")
       let timestamp = isoFormatter.string(from: Date())
       let name = base.replacingOccurrences(of: ".csv", with: "")
       return "\(name)_\(timestamp).csv"

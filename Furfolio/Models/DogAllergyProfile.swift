@@ -8,6 +8,7 @@
 
 import Foundation
 import SwiftData
+import os
 
 /// Severity levels for dog allergies.
 enum AllergySeverity: Int, Codable, CaseIterable, Identifiable {
@@ -40,6 +41,7 @@ enum AllergySeverity: Int, Codable, CaseIterable, Identifiable {
 @MainActor
 @Model
 final class DogAllergyProfile: Identifiable, Hashable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogAllergyProfile")
   
   // MARK: — Persisted Properties
 
@@ -102,6 +104,7 @@ final class DogAllergyProfile: Identifiable, Hashable {
     self.notes         = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
     self.dateDiagnosed = dateDiagnosed
     self.dogOwner      = dogOwner
+    logger.log("Initialized DogAllergyProfile id: \(id), allergen: \(allergen), severity: \(severity.rawValue)")
   }
 
   /// Designated initializer for DogAllergyProfile.
@@ -123,6 +126,7 @@ final class DogAllergyProfile: Identifiable, Hashable {
     self.dogOwner = dogOwner
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    logger.log("Initialized DogAllergyProfile id: \(id), allergen: \(allergen), severity: \(severity.rawValue)")
   }
     
     
@@ -197,10 +201,12 @@ final class DogAllergyProfile: Identifiable, Hashable {
         severity: AllergySeverity,
         notes: String?
     ) {
+        logger.log("Updating DogAllergyProfile \(id): allergen=\(allergen), severity=\(severity.rawValue), notes=\(notes ?? "nil")")
         self.allergen  = allergen.trimmingCharacters(in: .whitespacesAndNewlines)
         self.severity  = severity
         self.notes     = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.updatedAt = Date.now
+        logger.log("Updated DogAllergyProfile \(id) at \(updatedAt!)")
     }
     
     
@@ -216,6 +222,8 @@ final class DogAllergyProfile: Identifiable, Hashable {
         for dogOwner: DogOwner,
         in context: ModelContext
     ) -> DogAllergyProfile {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogAllergyProfile")
+        logger.log("Creating DogAllergyProfile: allergen=\(allergen), severity=\(severity.rawValue)")
         let profile = DogAllergyProfile(
             allergen: allergen,
             severity: severity,
@@ -224,6 +232,7 @@ final class DogAllergyProfile: Identifiable, Hashable {
             dogOwner: dogOwner
         )
         context.insert(profile)
+        logger.log("Created DogAllergyProfile id: \(profile.id)")
         return profile
     }
     
@@ -232,51 +241,71 @@ final class DogAllergyProfile: Identifiable, Hashable {
     
     /// Fetches all DogAllergyProfiles, newest first.
     static func fetchAll(in context: ModelContext) -> [DogAllergyProfile] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogAllergyProfile")
+        logger.log("Fetching all DogAllergyProfiles")
         let desc = FetchDescriptor<DogAllergyProfile>(
             sortBy: [ SortDescriptor(\DogAllergyProfile.dateDiagnosed, order: .reverse) ]
         )
         do {
-            return try context.fetch(desc)
+            let results = try context.fetch(desc)
+            logger.log("Fetched \(results.count) DogAllergyProfiles")
+            return results
         } catch {
-            print("⚠️ DogAllergyProfile.fetchAll failed:", error)
+            logger.error("DogAllergyProfile.fetchAll failed: \(error.localizedDescription)")
             return []
         }
     }
 
     /// Fetches all profiles for a given owner, newest first.
     static func fetch(for owner: DogOwner, in context: ModelContext) -> [DogAllergyProfile] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogAllergyProfile")
+        logger.log("Fetching DogAllergyProfiles for owner \(owner.id)")
         let desc = FetchDescriptor<DogAllergyProfile>(
             predicate: #Predicate { $0.dogOwner.id == owner.id },
             sortBy: [ SortDescriptor(\DogAllergyProfile.dateDiagnosed, order: .reverse) ]
         )
         do {
-            return try context.fetch(desc)
+            let results = try context.fetch(desc)
+            logger.log("Fetched \(results.count) DogAllergyProfiles for owner \(owner.id)")
+            return results
         } catch {
-            print("⚠️ DogAllergyProfile.fetch(for:) failed:", error)
+            logger.error("DogAllergyProfile.fetch(for:) failed: \(error.localizedDescription)")
             return []
         }
     }
     
     /// Fetches the first profile matching the trimmed allergen.
     static func fetch(allergen: String, in context: ModelContext) -> DogAllergyProfile? {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogAllergyProfile")
         let trimmed = allergen.trimmingCharacters(in: .whitespacesAndNewlines)
+        logger.log("Fetching DogAllergyProfile for allergen \(trimmed)")
         let desc = FetchDescriptor<DogAllergyProfile>(
             predicate: #Predicate { $0.allergen == trimmed },
             sortBy: [ SortDescriptor(\DogAllergyProfile.dateDiagnosed, order: .reverse) ]
         )
-        return (try? context.fetch(desc))?.first
+        let results = (try? context.fetch(desc))
+        if let count = results?.count {
+            logger.log("Fetched \(count) DogAllergyProfiles for allergen \(trimmed)")
+        } else {
+            logger.log("No DogAllergyProfiles found for allergen \(trimmed)")
+        }
+        return results?.first
     }
     
     /// Fetches profiles matching the given severity.
     static func fetch(severity: AllergySeverity, in context: ModelContext) -> [DogAllergyProfile] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DogAllergyProfile")
+        logger.log("Fetching DogAllergyProfiles with severity \(severity.rawValue)")
         let desc = FetchDescriptor<DogAllergyProfile>(
             predicate: #Predicate { $0.severity == severity },
             sortBy: [ SortDescriptor(\DogAllergyProfile.dateDiagnosed, order: .reverse) ]
         )
         do {
-            return try context.fetch(desc)
+            let results = try context.fetch(desc)
+            logger.log("Fetched \(results.count) DogAllergyProfiles with severity \(severity.rawValue)")
+            return results
         } catch {
-            print("⚠️ DogAllergyProfile.fetch(severity:) failed:", error)
+            logger.error("DogAllergyProfile.fetch(severity:) failed: \(error.localizedDescription)")
             return []
         }
     }

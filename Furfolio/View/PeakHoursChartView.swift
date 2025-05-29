@@ -7,10 +7,12 @@
 
 import SwiftUI
 import Charts
+import os
 
 /// ViewModel for PeakHoursChartView, handles data preparation.
 @MainActor
 final class PeakHoursChartViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PeakHoursChartViewModel")
   @Published var hourData: [DailyRevenue.HourEntry] = []
 
   private let calendar = Calendar.current
@@ -18,16 +20,19 @@ final class PeakHoursChartViewModel: ObservableObject {
  
   init(appointments: [Appointment]) {
     self.appointments = appointments
+    logger.log("Initialized PeakHoursChartViewModel with \(appointments.count) appointments")
     loadData()
   }
 
   /// Computes hourly appointment frequency for today.
   func loadData() {
+    logger.log("Loading hourly appointment frequency for today")
     let startOfToday = calendar.startOfDay(for: Date.now)
     hourData = DailyRevenue.hourlyAppointmentFrequency(
       for: startOfToday,
       in: appointments
     )
+    logger.log("Loaded hourData entries: \(hourData.count)")
   }
 }
 
@@ -36,6 +41,7 @@ final class PeakHoursChartViewModel: ObservableObject {
 @MainActor
 /// A chart view showing the frequency of appointments per hour for a given day.
 struct PeakHoursChartView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PeakHoursChartView")
   @StateObject private var viewModel: PeakHoursChartViewModel
 
   init(appointments: [Appointment]) {
@@ -45,12 +51,14 @@ struct PeakHoursChartView: View {
   var body: some View {
     VStack(alignment: .leading) {
       Text("Peak Booking Hours")
-        .font(.headline)
+        .font(AppTheme.title)
+        .foregroundColor(AppTheme.primaryText)
 
       /// Show placeholder when no data is available.
       if viewModel.hourData.isEmpty {
         Text("No appointment time data available.")
-          .foregroundColor(.gray)
+          .foregroundColor(AppTheme.secondaryText)
+          .font(AppTheme.body)
       } else {
         /// Renders a bar chart of appointment counts by hour.
         Chart {
@@ -68,5 +76,8 @@ struct PeakHoursChartView: View {
     }
     .padding()
     .cardStyle()
+    .onAppear {
+        logger.log("PeakHoursChartView appeared with \(viewModel.hourData.count) data points")
+    }
   }
 }

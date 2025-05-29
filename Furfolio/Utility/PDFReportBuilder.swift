@@ -7,6 +7,8 @@
 
 import UIKit
 import CoreGraphics
+import os
+private let pdfLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PDFReportBuilder")
 
 /// A utility to generate a basic PDF report summarizing owners, appointments, and charges.
 // MARK: - PDF Layout Constants
@@ -16,6 +18,7 @@ private let sectionSpacing: CGFloat = 12
 private let logoSize = CGSize(width: 64, height: 64)
 
 struct PDFReportBuilder {
+    private static let logger = pdfLogger
 
     /// Generates a PDF summarizing the provided data and writes it to a temporary file.
     /// - Parameters:
@@ -30,6 +33,8 @@ struct PDFReportBuilder {
         charges: [Charge]
     ) async throws -> URL {
         return try await Task.detached {
+            logger.log("Starting PDF report generation: \(owners.count) owners, \(appointments.count) appts, \(charges.count) charges")
+
             let pageWidth: CGFloat = 612
             let pageHeight: CGFloat = 792
             let pageRect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
@@ -117,6 +122,7 @@ struct PDFReportBuilder {
                 }
             }
 
+            logger.log("Rendering PDF pages for report")
             let data = renderer.pdfData { context in
                 var pageNumber = 1
                 context.beginPage()
@@ -141,9 +147,12 @@ struct PDFReportBuilder {
                 drawFooter(context: context, pageNumber: pageNumber, totalPages: nil)
             }
 
+            logger.log("Generated PDF data of size: \(data.count) bytes")
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("FurfolioReport.pdf")
+            logger.log("Writing PDF to path: \(tempURL.path)")
             try data.write(to: tempURL)
+            logger.log("PDF report successfully written to \(tempURL.path)")
             return tempURL
         }.value
     }

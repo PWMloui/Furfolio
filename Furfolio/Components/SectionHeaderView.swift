@@ -6,19 +6,20 @@
 //
 
 import SwiftUI
+import os
 
 private struct SectionHeaderPaddingKey: EnvironmentKey {
   static let defaultValue = EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16)
 }
 private struct SectionHeaderBackgroundKey: EnvironmentKey {
-  static let defaultValue = Color(.systemBackground)
+  static let defaultValue = AppTheme.background
 }
 
 private struct SectionHeaderFontKey: EnvironmentKey {
-  static let defaultValue: Font = .headline
+  static let defaultValue: Font = AppTheme.title
 }
 private struct SectionHeaderForegroundKey: EnvironmentKey {
-  static let defaultValue: Color = .primary
+  static let defaultValue: Color = AppTheme.primaryText
 }
 
 extension EnvironmentValues {
@@ -54,6 +55,8 @@ struct SectionHeaderView: View {
   @Environment(\.sectionHeaderFont) private var defaultFont
   @Environment(\.sectionHeaderForeground) private var defaultForeground
 
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "SectionHeaderView")
+
   init(
     title: String,
     padding: EdgeInsets? = nil,
@@ -78,6 +81,9 @@ struct SectionHeaderView: View {
     Text(title)
       .font(fnt)
       .foregroundColor(fg)
+      .onAppear {
+          logger.log("SectionHeaderView displayed: \(title)")
+      }
       .padding(pad)
       .background(bg)
   }

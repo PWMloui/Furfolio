@@ -8,12 +8,14 @@
 import SwiftUI
 import SwiftData
 import UserNotifications
+import os
 
 // TODO: Move authentication, filtering, and data-fetching logic into a dedicated ViewModel for cleaner views and easier testing.
 
 @MainActor
 /// Root view managing authentication state and presenting the main navigation for Furfolio.
 struct ContentView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ContentView")
     @Environment(\.modelContext) private var modelContext
 
     // Provide sort descriptors with explicit root types
@@ -59,6 +61,9 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut, value: isAuthenticated)
+        .onAppear {
+            logger.log("ContentView appeared; isAuthenticated=\(isAuthenticated)")
+        }
     }
 
     private var authenticatedView: some View {
@@ -71,10 +76,14 @@ struct ContentView: View {
         .navigationTitle("Furfolio")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText)
+        .onAppear {
+            logger.log("Authenticated view loaded with \(dogOwners.count) owners and \(dailyRevenues.count) revenues")
+        }
         .listStyle(.insetGrouped)
         .toolbar {
           ToolbarItem(placement: .navigationBarTrailing) {
             Button {
+              logger.log("Add Dog Owner tapped")
               withAnimation { isShowingAddOwnerSheet = true }
             } label: {
               Label("Add Dog Owner", systemImage: "plus")
@@ -119,12 +128,15 @@ struct ContentView: View {
     private func businessInsightsSection() -> some View {
         Section {
             Button {
+                logger.log("View Metrics Dashboard tapped")
                 withAnimation { isShowingMetricsView = true }
             } label: {
                 Label("View Metrics Dashboard", systemImage: "chart.bar.xaxis")
             }
         } header: {
             Text("Business Insights")
+                .font(AppTheme.title)
+                .foregroundColor(AppTheme.primaryText)
         }
     }
     
@@ -134,10 +146,12 @@ struct ContentView: View {
         Section {
             if upcoming.isEmpty {
                 Text("No upcoming appointments.")
-                    .foregroundColor(.gray)
+                    .foregroundColor(AppTheme.secondaryText)
                     .italic()
+                    .font(AppTheme.body)
             } else {
                 ForEach(upcoming) { appt in
+                    logger.log("Navigating to appointment row for appointment id: \(appt.id)")
                     if let owner = findOwner(for: appt) {
                         NavigationLink(value: owner) {
                             appointmentRow(for: appt, owner: owner)
@@ -147,6 +161,8 @@ struct ContentView: View {
             }
         } header: {
             Text("Upcoming Appointments")
+                .font(AppTheme.title)
+                .foregroundColor(AppTheme.primaryText)
         }
     }
     
@@ -159,6 +175,9 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .onChange(of: selectedFilter) { new in
+                logger.log("Dog owner filter changed to: \(new)")
+            }
 
             let filtered = filterDogOwners()
             if filtered.isEmpty {
@@ -169,6 +188,8 @@ struct ContentView: View {
                     actionTitle: "Add Owner",
                     action: { isShowingAddOwnerSheet = true }
                 )
+                .font(AppTheme.body)
+                .foregroundColor(AppTheme.secondaryText)
             } else {
                 ForEach(filtered) { owner in
                     NavigationLink(value: owner) {
@@ -179,15 +200,18 @@ struct ContentView: View {
             }
         } header: {
             Text("Dog Owners")
+                .font(AppTheme.title)
+                .foregroundColor(AppTheme.primaryText)
         }
     }
     
     private var emptyDetailView: some View {
         VStack {
             Text("Select a dog owner to view details.")
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.secondaryText)
                 .multilineTextAlignment(.center)
                 .padding()
+                .font(AppTheme.body)
             Image(systemName: "person.crop.circle.badge.questionmark")
                 .resizable()
                 .scaledToFit()
@@ -245,6 +269,7 @@ struct ContentView: View {
       selectedImageData: Data?,
       birthdate: Date?
     ) {
+      logger.log("Adding DogOwner: ownerName=\(ownerName), dogName=\(dogName)")
       withAnimation {
         let newOwner = DogOwner(
           ownerName: ownerName,
@@ -261,6 +286,7 @@ struct ContentView: View {
 
     /// Deletes dog owners at the specified offsets, handling selection state.
     private func deleteDogOwners(offsets: IndexSet) {
+      logger.log("Deleting DogOwners at offsets: \(offsets)")
       withAnimation {
         offsets.forEach { i in
           let owner = dogOwners[i]
@@ -306,4 +332,3 @@ struct ContentView: View {
       }
       .padding(.vertical, 4)
     }
-

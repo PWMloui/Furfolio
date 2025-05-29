@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import os
+private let locLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "LocalizationKeys")
 
 // TODO: Centralize localization lookups and support pluralization/localized formatting via a LocalizationService.
 /// Centralized keys for all user-facing strings in the Furfolio app.
@@ -126,10 +128,30 @@ enum LocalizationKeys {
 
 /// Convenience extensions for localized string lookups.
 extension String {
-  /// Returns the localized string for the given key.
-  /// - Parameter key: The localization key to look up.
-  /// - Returns: Localized string from .strings files.
-  static func loc(_ key: String) -> String {
-    NSLocalizedString(key, comment: "")
+  /// Returns the localized string for the given key, optionally formatted with arguments.
+  /// - Parameters:
+  ///   - key: The localization key to look up.
+  ///   - args: Arguments for string formatting.
+  /// - Returns: Localized string from .strings files, formatted if arguments are provided.
+  static func loc(_ key: String, _ args: CVarArg...) -> String {
+    locLogger.log("Localization lookup for key: \(key)")
+    let format = NSLocalizedString(key, comment: "")
+    let result = args.isEmpty ? format : String(format: format, locale: .current, arguments: args)
+    locLogger.log("Localized result for key: \(key) -> \(result)")
+    return result
+  }
+
+  /// Returns a localized string for a key with plural rule based on count.
+  /// - Parameters:
+  ///   - singularKey: The key for the singular form.
+  ///   - pluralKey: The key for the plural form.
+  ///   - count: The count to determine pluralization.
+  /// - Returns: Localized pluralized string.
+  static func loc(_ singularKey: String, _ pluralKey: String, count: Int) -> String {
+    let formatKey = count == 1 ? singularKey : pluralKey
+    let format = NSLocalizedString(formatKey, comment: "")
+    let result = String(format: format, locale: .current, count)
+    locLogger.log("Plural localization for keys: \(singularKey)/\(pluralKey), count: \(count) -> \(result)")
+    return result
   }
 }

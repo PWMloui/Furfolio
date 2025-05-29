@@ -6,13 +6,19 @@
 //
 
 import Foundation
-#if canImport(FirebaseRemoteConfig)
-import FirebaseRemoteConfig
-#endif
+import os
+import FirebaseRemoteConfigService
 
 /// A singleton service that fetches and exposes remote configuration flags.
 final class RemoteConfigService {
-#if canImport(FirebaseRemoteConfig)
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "RemoteConfigService")
+    private let defaultValues: [String: NSObject]
+
+    /// Convenience URL for the API base.
+    var apiBaseURL: URL {
+        URL(string: stringValue(for: .apiBaseURL))!
+    }
+
     static let shared = RemoteConfigService()
 
     private let remoteConfig: RemoteConfig
@@ -29,6 +35,7 @@ final class RemoteConfigService {
         remoteConfig.configSettings = settings
 
         // Register default values for all keys
+        defaultValues = defaultsDictionary
         remoteConfig.setDefaults(defaultsDictionary)
     }
 
@@ -47,6 +54,7 @@ final class RemoteConfigService {
         case enableDarkModeLock      = "enable_dark_mode_lock"
         case loyaltyThreshold        = "loyalty_threshold"
         case showAdvancedAnalytics   = "show_advanced_analytics"
+        case apiBaseURL              = "api_base_url"
         // TODO: add more keys as needed
 
         /// Default value for each key
@@ -55,20 +63,25 @@ final class RemoteConfigService {
             case .enableDarkModeLock:    return false
             case .loyaltyThreshold:      return 10
             case .showAdvancedAnalytics: return false
+            case .apiBaseURL:            return "https://api.furfolioapp.com"
             }
         }
     }
 
     /// Fetch and activate remote config values.
     func fetchAndActivate(completion: ((Bool, Error?) -> Void)? = nil) {
-        remoteConfig.fetchAndActivate { [weak self] status, error in
+        remoteConfig.fetchAndActivate { status, error in
             if let error = error {
-                print("🔴 RemoteConfig fetch error: \(error)")
+                self.logger.error("RemoteConfig fetch error: \(error.localizedDescription)")
+                completion?(false, error)
             } else {
-                print("✅ RemoteConfig fetched and activated: \(status)")
-                NotificationCenter.default.post(name: Self.didUpdateNotification, object: nil)
+                let applied = (status == .successFetchedFromRemote || status == .successUsingPreFetchedData)
+                self.logger.log("RemoteConfig fetch status: \(status.rawValue), applied: \(applied)")
+                if applied {
+                    NotificationCenter.default.post(name: Self.didUpdateNotification, object: nil)
+                }
+                completion?(applied, nil)
             }
-            completion?(status == .successFetchedFromRemote || status == .successUsingPreFetchedData, error)
         }
     }
 
@@ -88,5 +101,16 @@ final class RemoteConfigService {
         remoteConfig.configValue(forKey: key.rawValue).stringValue
             ?? (key.defaultValue as? String ?? "")
     }
-#endif
+
+    /// Retrieves a generic config value for the given key, falling back to default.
+    func configValue<T>(for key: RemoteConfigKey) -> T {
+        let value = remoteConfig.configValue(forKey: key.rawValue).jsonValue as? T
+        return value ?? (key.defaultValue as! T)
+    }
+
+    /// Clears all fetched remote config values and resets to defaults.
+    func reset() {
+        remoteConfig.setDefaults(defaultValues)
+        logger.log("RemoteConfig defaults reset")
+    }
 }

@@ -12,6 +12,7 @@ import FirebaseRemoteConfig
 final class FirebaseRemoteConfigService {
     static let shared = FirebaseRemoteConfigService()
     private let remoteConfig: RemoteConfig
+    private let defaultValues: [String: NSObject]
 
     private init() {
         remoteConfig = RemoteConfig.remoteConfig()
@@ -24,10 +25,10 @@ final class FirebaseRemoteConfigService {
         remoteConfig.configSettings = settings
 
         // Set default values for all keys
-        remoteConfig.setDefaults([
-            ConfigKey.apiBaseURL.rawValue as NSString: "https://api.furfolioapp.com",
-            ConfigKey.enableNewDashboard.rawValue as NSNumber: false
-        ])
+        defaultValues = Dictionary(uniqueKeysWithValues:
+            ConfigKey.allCases.map { ($0.rawValue, $0.defaultValue as? NSObject ?? "" as NSString) }
+        )
+        remoteConfig.setDefaults(defaultValues)
     }
 
     /// Remote config keys used by the app.
@@ -45,6 +46,11 @@ final class FirebaseRemoteConfigService {
         }
     }
 
+    /// Convenience URL for the API base.
+    var apiBaseURL: URL {
+        URL(string: string(forKey: .apiBaseURL))!
+    }
+
     /// Fetches and activates the latest remote config values.
     /// - Parameter completion: Callback with success flag and optional error.
     func fetchAndActivate(completion: ((Bool, Error?) -> Void)? = nil) {
@@ -53,7 +59,9 @@ final class FirebaseRemoteConfigService {
                 print("🔥 RemoteConfig fetch error: \(error.localizedDescription)")
                 completion?(false, error)
             } else {
-                completion?(status == .successFetchedFromRemote || status == .successUsingPreFetchedData, nil)
+                let success = (status == .successFetchedFromRemote || status == .successUsingPreFetchedData)
+                print("✅ RemoteConfig fetch status: \(status.rawValue), applied: \(success)")
+                completion?(success, nil)
             }
         }
     }
@@ -79,5 +87,16 @@ final class FirebaseRemoteConfigService {
     func double(forKey key: ConfigKey) -> Double {
         remoteConfig.configValue(forKey: key.rawValue).numberValue?.doubleValue
         ?? (key.defaultValue as? Double ?? 0.0)
+    }
+
+    /// Retrieves a generic config value for the given key, falling back to default.
+    func configValue<T>(forKey key: ConfigKey) -> T {
+        let value = remoteConfig.configValue(forKey: key.rawValue).jsonValue as? T
+        return value ?? (key.defaultValue as! T)
+    }
+
+    /// Clears all fetched values and resets to defaults.
+    func reset() {
+        remoteConfig.setDefaults(defaultValues)
     }
 }

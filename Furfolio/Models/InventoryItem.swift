@@ -8,12 +8,15 @@
 
 import Foundation
 import SwiftData
+import os
 
 @MainActor
 
 
 @Model
 final class InventoryItem: Identifiable, Hashable {
+  
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryItem")
   
   /// Shared number and date formatters to avoid repeated allocations.
   private static let currencyFormatter: NumberFormatter = {
@@ -94,6 +97,7 @@ final class InventoryItem: Identifiable, Hashable {
     self.sellPrice        = max(0, sellPrice)
     self.notes            = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
     // createdAt default applies
+    logger.log("Initialized InventoryItem id: \(id), name: \(name), quantityOnHand: \(quantityOnHand)")
   }
   
   /// Designated initializer for InventoryItem.
@@ -119,6 +123,7 @@ final class InventoryItem: Identifiable, Hashable {
     self.notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    logger.log("Initialized InventoryItem id: \(id), name: \(name), quantityOnHand: \(quantityOnHand)")
   }
   
   
@@ -127,18 +132,21 @@ final class InventoryItem: Identifiable, Hashable {
   /// Total value of the current stock of this item.
   @Transient
   var totalValue: Double {
-    Double(quantityOnHand) * sellPrice
+    logger.log("Computing totalValue for item \(id): quantityOnHand=\(quantityOnHand), sellPrice=\(sellPrice)")
+    return Double(quantityOnHand) * sellPrice
   }
   
   /// Profit margin per unit.
   @Transient
   var profitMargin: Double {
-    sellPrice - costPrice
+    logger.log("Computing profitMargin for item \(id): costPrice=\(costPrice), sellPrice=\(sellPrice)")
+    return sellPrice - costPrice
   }
   
   /// Profit margin as a percentage of cost price.
   @Transient
   var profitMarginPercent: Double {
+    logger.log("Computing profitMarginPercent for item \(id): costPrice=\(costPrice), margin=\(profitMargin)")
     guard costPrice > 0 else { return 0 }
     return (profitMargin / costPrice) * 100
   }
@@ -146,36 +154,42 @@ final class InventoryItem: Identifiable, Hashable {
   /// Indicates if stock is below or equal to reorder threshold.
   @Transient
   var isLowStock: Bool {
-    quantityOnHand <= reorderThreshold
+    logger.log("Computing isLowStock for item \(id): threshold=\(reorderThreshold), quantityOnHand=\(quantityOnHand)")
+    return quantityOnHand <= reorderThreshold
   }
   
   /// Recommended quantity to reorder based on threshold.
   @Transient
   var recommendedReorderQuantity: Int {
-    max(0, reorderThreshold * 2 - quantityOnHand)
+    logger.log("Computing recommendedReorderQuantity for item \(id): threshold=\(reorderThreshold), quantityOnHand=\(quantityOnHand)")
+    return max(0, reorderThreshold * 2 - quantityOnHand)
   }
   
   /// Formatted string of the cost price.
   @Transient
   var formattedCostPrice: String {
-    Self.currencyFormatter.string(from: NSNumber(value: costPrice)) ?? "\(costPrice)"
+    logger.log("Formatting costPrice for item \(id): costPrice=\(costPrice)")
+    return Self.currencyFormatter.string(from: NSNumber(value: costPrice)) ?? "\(costPrice)"
   }
   
   /// Formatted string of the selling price.
   @Transient
   var formattedSellPrice: String {
-    Self.currencyFormatter.string(from: NSNumber(value: sellPrice)) ?? "\(sellPrice)"
+    logger.log("Formatting sellPrice for item \(id): sellPrice=\(sellPrice)")
+    return Self.currencyFormatter.string(from: NSNumber(value: sellPrice)) ?? "\(sellPrice)"
   }
   
   /// Formatted string of the total stock value.
   @Transient
   var formattedTotalValue: String {
-    Self.currencyFormatter.string(from: NSNumber(value: totalValue)) ?? "\(totalValue)"
+    logger.log("Formatting totalValue for item \(id): totalValue=\(totalValue)")
+    return Self.currencyFormatter.string(from: NSNumber(value: totalValue)) ?? "\(totalValue)"
   }
   
   /// Number of days since the item was last updated.
   @Transient
   var daysSinceUpdate: Int? {
+    logger.log("Computing daysSinceUpdate for item \(id): updatedAt=\(String(describing: updatedAt))")
     guard let updated = updatedAt else { return nil }
     return Self.calendar.dateComponents([.day], from: updated, to: Date.now).day
   }
@@ -183,6 +197,7 @@ final class InventoryItem: Identifiable, Hashable {
   /// Human-readable string representing days since last update.
   @Transient
   var daysSinceUpdateString: String? {
+    logger.log("Computing daysSinceUpdateString for item \(id): daysSinceUpdate=\(String(describing: daysSinceUpdate))")
     guard let d = daysSinceUpdate else { return nil }
     return d == 0 ? "Today" : "\(d) day\(d > 1 ? "s" : "") ago"
   }
@@ -190,12 +205,14 @@ final class InventoryItem: Identifiable, Hashable {
   /// Age of the item in days since creation.
   @Transient
   var ageInDays: Int {
-    Self.calendar.dateComponents([.day], from: createdAt, to: Date.now).day ?? 0
+    logger.log("Computing ageInDays for item \(id): createdAt=\(createdAt)")
+    return Self.calendar.dateComponents([.day], from: createdAt, to: Date.now).day ?? 0
   }
   
   /// Summary description of the inventory item.
   @Transient
   var summary: String {
+    logger.log("Generating summary for item \(id): name=\(name), category=\(String(describing: category)), isLowStock=\(isLowStock)")
     let cat = category ?? "Uncategorized"
     let lowTag = isLowStock ? " (LOW STOCK)" : ""
     return "\(name) [\(cat)] — \(quantityOnHand) on hand\(lowTag); Value: \(formattedTotalValue)"
@@ -214,29 +231,37 @@ final class InventoryItem: Identifiable, Hashable {
   
   /// Adjusts stock by a delta, ensuring non-negative quantity and stamping `updatedAt`.
   func adjustStock(by delta: Int) {
+    logger.log("Adjusting stock for item \(id) by \(delta)")
     quantityOnHand = max(0, quantityOnHand + delta)
     updatedAt = Date.now    // was `.now`
+    logger.log("Stock adjusted for item \(id): new quantityOnHand=\(quantityOnHand), updatedAt=\(String(describing: updatedAt))")
   }
   
   /// Updates the reorder threshold and stamps `updatedAt`.
   func updateReorderThreshold(_ threshold: Int) {
+    logger.log("Updating reorderThreshold for item \(id): old=\(reorderThreshold), new=\(threshold)")
     reorderThreshold = max(0, threshold)
     updatedAt = Date.now    // was `.now`
+    logger.log("ReorderThreshold updated for item \(id): new reorderThreshold=\(reorderThreshold), updatedAt=\(String(describing: updatedAt))")
   }
   
   /// Updates cost and sell prices, enforcing non-negative values and stamping `updatedAt`.
   func updatePrices(cost: Double, sell: Double) {
+    logger.log("Updating prices for item \(id): old costPrice=\(costPrice), old sellPrice=\(sellPrice), new costPrice=\(cost), new sellPrice=\(sell)")
     costPrice  = max(0, cost)
     sellPrice  = max(0, sell)
     updatedAt  = Date.now   // was `.now`
+    logger.log("Prices updated for item \(id): costPrice=\(costPrice), sellPrice=\(sellPrice), updatedAt=\(String(describing: updatedAt))")
   }
   
   /// Updates name, category, and notes, trimming inputs and stamping `updatedAt`.
   func updateInfo(name: String, category: String?, notes: String?) {
+    logger.log("Updating info for item \(id): old name=\(self.name), new name=\(name); old category=\(String(describing: self.category)), new category=\(String(describing: category)); old notes=\(String(describing: self.notes)), new notes=\(String(describing: notes))")
     self.name     = name.trimmingCharacters(in: .whitespacesAndNewlines)
     self.category = category?.trimmingCharacters(in: .whitespacesAndNewlines)
     self.notes    = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
     updatedAt     = Date.now   // was `.now`
+    logger.log("Info updated for item \(id): name=\(self.name), category=\(String(describing: self.category)), notes=\(String(describing: self.notes)), updatedAt=\(String(describing: updatedAt))")
   }
   
   
@@ -254,6 +279,8 @@ final class InventoryItem: Identifiable, Hashable {
     notes: String? = nil,
     in context: ModelContext
   ) -> InventoryItem {
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryItem")
+    logger.log("Creating InventoryItem with name: \(name)")
     let item = InventoryItem(
       name: name,
       category: category,
@@ -264,19 +291,26 @@ final class InventoryItem: Identifiable, Hashable {
       notes: notes
     )
     context.insert(item)
+    logger.log("Created InventoryItem id: \(item.id)")
     return item
   }
   
   /// Fetches all InventoryItem sorted by name.
   static func fetchAll(in context: ModelContext) -> [InventoryItem] {
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryItem")
+    logger.log("Fetching all InventoryItem entries")
     let desc = FetchDescriptor<InventoryItem>(
       sortBy: [SortDescriptor(\InventoryItem.name, order: .forward)]
     )
-    return (try? context.fetch(desc)) ?? []
+    let results = (try? context.fetch(desc)) ?? []
+    logger.log("Fetched \(results.count) InventoryItem entries")
+    return results
   }
   
   /// Fetches InventoryItem filtered by category.
   static func fetch(category: String?, in context: ModelContext) -> [InventoryItem] {
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryItem")
+    logger.log("Fetching InventoryItem entries filtered by category: \(String(describing: category))")
     let predicate: Predicate<InventoryItem>? = {
       guard let cat = category?.trimmingCharacters(in: .whitespacesAndNewlines),
             !cat.isEmpty
@@ -287,24 +321,34 @@ final class InventoryItem: Identifiable, Hashable {
       predicate: predicate,
       sortBy: [SortDescriptor(\InventoryItem.name, order: .forward)]
     )
-    return (try? context.fetch(desc)) ?? []
+    let results = (try? context.fetch(desc)) ?? []
+    logger.log("Fetched \(results.count) InventoryItem entries for category: \(String(describing: category))")
+    return results
   }
   
   /// Fetches InventoryItem with low stock.
   static func fetchLowStock(in context: ModelContext) -> [InventoryItem] {
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryItem")
+    logger.log("Fetching InventoryItem entries with low stock")
     let desc = FetchDescriptor<InventoryItem>(
       predicate: #Predicate { $0.isLowStock },
       sortBy: [SortDescriptor(\InventoryItem.name, order: .forward)]
     )
-    return (try? context.fetch(desc)) ?? []
+    let results = (try? context.fetch(desc)) ?? []
+    logger.log("Fetched \(results.count) low stock InventoryItem entries")
+    return results
   }
   
   /// Fetches top value InventoryItem limited to the specified count.
   static func fetchTopValue(limit: Int = 5, in context: ModelContext) -> [InventoryItem] {
-    fetchAll(in: context)
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryItem")
+    logger.log("Fetching top value InventoryItem entries with limit: \(limit)")
+    let topItems = fetchAll(in: context)
       .sorted { $0.totalValue > $1.totalValue }
       .prefix(limit)
       .map { $0 }
+    logger.log("Top value InventoryItem IDs: \(topItems.map { $0.id }.description)")
+    return topItems
   }
   
   

@@ -7,12 +7,14 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // TODO: Move recurrence-toggling and listing logic into a dedicated ViewModel for cleaner views and easier testing.
 
 @MainActor
 /// View showing all recurring appointments; allows toggling recurrence and launching an editor.
 struct RecurringAppointmentsView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "RecurringAppointmentsView")
     /// Shared formatter for displaying appointment dates.
     private static let dateFormatter: DateFormatter = {
         let fmt = DateFormatter()
@@ -40,26 +42,30 @@ struct RecurringAppointmentsView: View {
             List {
                 if recurringAppointments.isEmpty {
                     Text("No recurring appointments set up.")
-                        .foregroundColor(.secondary)
+                        .font(AppTheme.body)
+                        .foregroundColor(AppTheme.secondaryText)
                 } else {
                     ForEach(recurringAppointments) { appt in
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(appt.formattedDate)
-                                    .font(.headline)
+                                    .font(AppTheme.body)
+                                    .foregroundColor(AppTheme.primaryText)
                                 Text(appt.serviceType.localized)
-                                    .font(.subheadline)
+                                    .font(AppTheme.caption)
+                                    .foregroundColor(AppTheme.secondaryText)
                                 if let freq = appt.recurrenceFrequency {
                                     Text("Repeats: \(freq.rawValue)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .font(AppTheme.caption)
+                                        .foregroundColor(AppTheme.secondaryText)
                                 }
                             }
                             Spacer()
                             Toggle("", isOn: Binding(
                                 get: { appt.isRecurring },
-                                set: { new in
-                                    appt.isRecurring = new
+                                set: { newValue in
+                                    appt.isRecurring = newValue
+                                    logger.log("Toggled isRecurring for appointment id: \(appt.id) to \(newValue)")
                                 }
                             ))
                             .labelsHidden()
@@ -67,6 +73,9 @@ struct RecurringAppointmentsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             editingAppointment = appt
+                        }
+                        .onAppear {
+                            logger.log("Displaying recurring appointment id: \(appt.id), date: \(Self.dateFormatter.string(from: appt.date))")
                         }
                     }
                     .onDelete(perform: delete)
@@ -82,6 +91,9 @@ struct RecurringAppointmentsView: View {
                 RecurrenceEditor(appointment: appt)
                     .environment(\.modelContext, modelContext)
             }
+        }
+        .onAppear {
+            logger.log("RecurringAppointmentsView appeared; recurringCount=\(recurringAppointments.count)")
         }
     }
 

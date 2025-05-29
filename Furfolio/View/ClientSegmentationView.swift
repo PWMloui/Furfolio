@@ -7,9 +7,11 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 /// A view that segments clients into categories and displays them in a list.
 struct ClientSegmentationView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ClientSegmentationView")
     enum Segment: String, CaseIterable, Identifiable {
         case all = "All Clients"
         case newClients = "New Clients"
@@ -53,10 +55,11 @@ struct ClientSegmentationView: View {
                     HStack {
                         VStack(alignment: .leading) {
                             Text(owner.name)
-                                .font(.headline)
+                                .font(AppTheme.body)
+                                .foregroundColor(AppTheme.primaryText)
                             Text("\(owner.clientStats.visitCount) visits • $\(owner.clientStats.lifetimeSpend, specifier: "%.2f")")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .font(AppTheme.caption)
+                                .foregroundColor(AppTheme.secondaryText)
                         }
                         Spacer()
                     }
@@ -64,6 +67,12 @@ struct ClientSegmentationView: View {
                 }
             }
             .listStyle(.insetGrouped)
+        }
+        .onAppear {
+            logger.log("ClientSegmentationView appeared, segment: \(selectedSegment.rawValue), owners count: \(owners.count)")
+        }
+        .onChange(of: selectedSegment) { new in
+            logger.log("Segment changed to: \(new.rawValue), filteredOwners count: \(filteredOwners.count)")
         }
         .navigationTitle("Client Segmentation")
     }

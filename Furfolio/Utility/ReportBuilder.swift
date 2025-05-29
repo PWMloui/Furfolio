@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 /// Model for saving export templates
 @Model
@@ -54,6 +55,8 @@ class ReportBuilderViewModel: ObservableObject {
 }
 
 struct ReportBuilderView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ReportBuilderView")
+
     @Environment(\.modelContext) private var context
     @StateObject private var vm = ReportBuilderViewModel()
     @Query(
@@ -82,9 +85,16 @@ struct ReportBuilderView: View {
                     vm.save(in: context)
                     vm.name = ""
                     showingSaveAlert = true
+                    logger.log("Saved export template '\(vm.name)'")
                 }
                 .disabled(vm.name.trimmingCharacters(in: .whitespaces).isEmpty)
-                .alert("Template Saved", isPresented: $showingSaveAlert)
+                .alert("Template Saved", isPresented: $showingSaveAlert) {
+                    Button("OK") {
+                        logger.log("Template Saved alert dismissed")
+                    }
+                } message: {
+                    Text("Your export template has been saved.")
+                }
                 Section("Saved Templates") {
                     List {
                         ForEach(profiles) { profile in

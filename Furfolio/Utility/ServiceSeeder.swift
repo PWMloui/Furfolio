@@ -1,9 +1,3 @@
-//
-//  Services.swift
-//  Furfolio
-//
-//  Created by mac on 5/27/25.
-//
 
 //
 //  ServiceSeeder.swift
@@ -13,12 +7,15 @@
 //
 
 import SwiftData
+import os
 
 /// Seeds default services and appointment templates on first app launch.
 struct ServiceSeeder {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ServiceSeeder")
   
   /// Call this once during app startup to seed data if the store is empty.
   static func seedIfNeeded(in context: ModelContext) {
+    logger.log("Starting data seeding if needed")
     seedAddOnServicesIfNeeded(in: context)
     seedAppointmentTemplatesIfNeeded(in: context)
     seedExpensesIfNeeded(in: context)
@@ -36,9 +33,11 @@ struct ServiceSeeder {
   // MARK: - Add-On Services
   
   private static func seedAddOnServicesIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: AddOnService.self))")
     let fetchRequest: FetchDescriptor<AddOnService> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: AddOnService.self)) found, seeding defaults")
     
     let services: [AddOnService] = [
       .init(type: .bath,                minPrice: 40,  maxPrice: 85,   requires: []),
@@ -63,9 +62,11 @@ struct ServiceSeeder {
   // MARK: - Appointment Templates
   
   private static func seedAppointmentTemplatesIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: AppointmentTemplate.self))")
     let fetchRequest: FetchDescriptor<AppointmentTemplate> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: AppointmentTemplate.self)) found, seeding defaults")
     
     let templates: [AppointmentTemplate] = [
         .init(type: .fullGroom, minPrice: 75,  maxPrice: 160, minDuration: .minutes(60), maxDuration: .minutes(90)),
@@ -78,9 +79,11 @@ struct ServiceSeeder {
   }
   
   private static func seedExpensesIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: Expense.self))")
     let fetchRequest: FetchDescriptor<Expense> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: Expense.self)) found, seeding defaults")
     
     let expense = Expense(date: .now, category: "Supplies", amount: 0, notes: "", receiptImageData: nil)
     context.insert(expense)
@@ -88,9 +91,11 @@ struct ServiceSeeder {
   }
   
   private static func seedVendorInvoicesIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: VendorInvoice.self))")
     let fetchRequest: FetchDescriptor<VendorInvoice> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: VendorInvoice.self)) found, seeding defaults")
     
     let invoice = VendorInvoice(date: .now, vendorName: "Default Vendor", amount: 0, notes: "")
     context.insert(invoice)
@@ -98,9 +103,11 @@ struct ServiceSeeder {
   }
   
   private static func seedEquipmentAssetsIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: EquipmentAsset.self))")
     let fetchRequest: FetchDescriptor<EquipmentAsset> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: EquipmentAsset.self)) found, seeding defaults")
     
     let asset = EquipmentAsset(name: "Default Equipment", purchaseDate: .now, value: 0, notes: "")
     context.insert(asset)
@@ -108,9 +115,11 @@ struct ServiceSeeder {
   }
   
   private static func seedSessionLogsIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: SessionLog.self))")
     let fetchRequest: FetchDescriptor<SessionLog> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: SessionLog.self)) found, seeding defaults")
     
     let log = SessionLog(date: .now, notes: "")
     context.insert(log)
@@ -118,9 +127,11 @@ struct ServiceSeeder {
   }
   
   private static func seedExportProfilesIfNeeded(in context: ModelContext) {
+    logger.log("Checking existing \(String(describing: ExportProfile.self))")
     let fetchRequest: FetchDescriptor<ExportProfile> = FetchDescriptor()
     let existing = (try? context.fetch(fetchRequest)) ?? []
     guard existing.isEmpty else { return }
+    logger.log("No existing \(String(describing: ExportProfile.self)) found, seeding defaults")
     
     let profile = ExportProfile(name: "Default Profile", settings: [:])
     context.insert(profile)

@@ -8,12 +8,15 @@
 import SwiftUI
 import PhotosUI
 import Combine
+import os
 
 // TODO: Move validation and save logic into AddDogOwnerViewModel; use FormValidator and ImageValidator for input checks.
 
 @MainActor
 /// View for adding a new Dog Owner with fields for owner & dog info, images, and inactive flag.
 struct AddDogOwnerView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AddDogOwnerView")
+
   @Environment(\.dismiss) private var dismiss
   @Environment(\.modelContext) private var modelContext
 
@@ -47,9 +50,14 @@ struct AddDogOwnerView: View {
           let remaining = max(0, 10 - staticVisitCount)
           HStack {
             Text("Loyalty Progress")
+              .font(AppTheme.body)
             Spacer()
             Text(remaining == 0 ? "🎁 Free Bath Earned!" : "🏆 \(remaining) more to free bath")
-              .foregroundColor(.green)
+              .foregroundColor(AppTheme.accent)
+              .font(AppTheme.body)
+          }
+          .onAppear {
+              logger.log("Loyalty progress displayed: remaining=\(remaining)")
           }
         }
         .navigationTitle(NSLocalizedString("Add Dog Owner", comment: "Navigation title for Add Dog Owner view"))
@@ -61,6 +69,10 @@ struct AddDogOwnerView: View {
           Button(NSLocalizedString("OK", comment: "Dismiss alert button"), role: .cancel) {}
         } message: {
           Text(NSLocalizedString("Please fill out the required fields: Owner Name, Dog Name, and Breed.", comment: "Message for missing required fields"))
+            .font(AppTheme.body)
+        }
+        .onChange(of: viewModel.showErrorAlert) { new in
+            if new { logger.log("AddDogOwnerView validation error alert shown") }
         }
 
         // Overlay progress view when saving
@@ -69,8 +81,11 @@ struct AddDogOwnerView: View {
             .ignoresSafeArea()
           ProgressView(NSLocalizedString("Saving...", comment: "Progress indicator while saving"))
             .padding()
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemBackground)))
+            .background(RoundedRectangle(cornerRadius: AppTheme.cornerRadius).fill(Color(.systemBackground)))
             .shadow(radius: 10)
+            .onAppear {
+                logger.log("AddDogOwnerView showing saving overlay")
+            }
         }
       }
       .onAppear {
@@ -78,6 +93,9 @@ struct AddDogOwnerView: View {
       }
     }
     .accessibilityElement(children: .contain)
+    .onAppear {
+        logger.log("AddDogOwnerView appeared")
+    }
   }
 
   // MARK: - Form Sections
@@ -102,9 +120,11 @@ struct AddDogOwnerView: View {
       if !viewModel.notes.isEmpty {
         HStack {
           Text("Behavior Tag")
+            .font(AppTheme.body)
           Spacer()
           Text(computedBehaviorBadge)
             .foregroundColor(.orange)
+            .font(AppTheme.body)
         }
       }
     }
@@ -121,11 +141,12 @@ struct AddDogOwnerView: View {
         .accessibilityLabel(NSLocalizedString("Select dog's birthdate", comment: "Accessibility label for birthdate picker"))
       if let age = viewModel.age {
         Text("Dog Age: \(age) years")
+          .font(AppTheme.body)
           .transition(.opacity)
       } else {
         Text("Select a birthdate to calculate the dog's age")
-          .font(.caption)
-          .foregroundColor(.gray)
+          .font(AppTheme.caption)
+          .foregroundColor(AppTheme.secondaryText)
       }
     }
   }
@@ -138,13 +159,16 @@ struct AddDogOwnerView: View {
         .onChange(of: viewModel.notes) { _ in limitNotesLength() }
       if viewModel.showTooltip && viewModel.notes.isEmpty {
         Text(NSLocalizedString("Enter any extra details (max 250 characters)", comment: "Tooltip for additional notes"))
-          .font(.caption)
-          .foregroundColor(.secondary)
+          .font(AppTheme.caption)
+          .foregroundColor(AppTheme.secondaryText)
           .transition(.opacity)
+          .onAppear {
+              logger.log("Displaying notes tooltip")
+          }
       }
       if viewModel.notes.count > 250 {
         Text(NSLocalizedString("Notes must be 250 characters or less.", comment: "Warning for note length"))
-          .font(.caption)
+          .font(AppTheme.caption)
           .foregroundColor(.red)
       }
     }
@@ -181,12 +205,14 @@ struct AddDogOwnerView: View {
           }
           Spacer()
           Text(NSLocalizedString("Select an Image", comment: "Label for selecting an image"))
+            .font(AppTheme.body)
         }
       }
       .alert(NSLocalizedString("Invalid Image", comment: "Alert title for invalid image"), isPresented: $viewModel.imageValidationError) {
         Button(NSLocalizedString("OK", comment: "Dismiss alert button"), role: .cancel) {}
       } message: {
         Text(NSLocalizedString("Please select an image under 5MB with appropriate dimensions.", comment: "Message for invalid image size or dimensions"))
+          .font(AppTheme.body)
       }
     }
   }
@@ -197,15 +223,19 @@ struct AddDogOwnerView: View {
   private func toolbarContent() -> some ToolbarContent {
     ToolbarItem(placement: .navigationBarLeading) {
       Button(NSLocalizedString("Cancel", comment: "Cancel button label")) {
-        withAnimation { dismiss() }
+          logger.log("AddDogOwnerView Cancel tapped")
+          withAnimation { dismiss() }
       }
+      .buttonStyle(FurfolioButtonStyle())
       .accessibilityLabel(NSLocalizedString("Cancel", comment: "Accessibility label for cancel button"))
     }
     ToolbarItem(placement: .navigationBarTrailing) {
       Button(NSLocalizedString("Save", comment: "Save button label")) {
-        viewModel.handleSave(onSave: onSave, dismiss: { dismiss() })
+          logger.log("AddDogOwnerView Save tapped: ownerName=\(viewModel.ownerName), dogName=\(viewModel.dogName)")
+          viewModel.handleSave(onSave: onSave, dismiss: { dismiss() })
       }
       .disabled(viewModel.isSaving || !validateFields())
+      .buttonStyle(FurfolioButtonStyle())
       .accessibilityLabel(NSLocalizedString("Save Dog Owner", comment: "Accessibility label for save button"))
     }
   }
@@ -217,6 +247,7 @@ struct AddDogOwnerView: View {
     HStack {
       Image(systemName: icon)
       Text(NSLocalizedString(title, comment: "Section header"))
+        .font(AppTheme.body)
     }
   }
 
@@ -225,6 +256,7 @@ struct AddDogOwnerView: View {
     TextField(NSLocalizedString(placeholder, comment: "Placeholder for \(placeholder)"), text: text)
       .keyboardType(keyboardType)
       .textFieldStyle(RoundedBorderTextFieldStyle())
+      .font(AppTheme.body)
   }
 
   /// Validates inputs and invokes onSave closure, showing a saving overlay.

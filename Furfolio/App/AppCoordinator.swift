@@ -26,7 +26,7 @@ class AppCoordinator: ObservableObject {
         NavigationStack(path: $path) {
             Group {
                 if AppState.shared.isAuthenticated {
-                    DashboardView(owners: [])
+                    DashboardView()
                         .environmentObject(self)
                 } else {
                     LoginView()
@@ -38,7 +38,7 @@ class AppCoordinator: ObservableObject {
                 case .login:
                     LoginView().environmentObject(self)
                 case .dashboard:
-                    DashboardView(owners: []).environmentObject(self)
+                    DashboardView().environmentObject(self)
                 case .metricsDashboard:
                     MetricsDashboardView().environmentObject(self)
                 case .groomingHistory(let ownerID):
@@ -47,6 +47,17 @@ class AppCoordinator: ObservableObject {
                     AppointmentDetailView(appointmentID: id)
                         .environmentObject(self)
                 }
+            }
+        }
+        .onOpenURL { url in
+            handleDeepLink(url)
+        }
+        .onChange(of: AppState.shared.isAuthenticated) { isAuthenticated in
+            if isAuthenticated {
+                resetNavigation()
+                navigate(to: .dashboard)
+            } else {
+                path = [.login]
             }
         }
     }
@@ -64,5 +75,10 @@ class AppCoordinator: ObservableObject {
     /// Programmatic navigation helper.
     func navigate(to route: Route) {
         path.append(route)
+    }
+    
+    /// Resets the navigation path.
+    func resetNavigation() {
+        path = []
     }
 }

@@ -18,18 +18,20 @@ struct AppTheme {
     static let error = Color.red
     static let warning = Color.orange
     static let success = Color.green
+    static let disabled = Color("DisabledColor", bundle: nil)
+    static let info = Color.blue
 
     // MARK: - Fonts
-    static func headerFont() -> Font {
+    static var header: Font {
         Font.system(size: 24, weight: .bold, design: .default)
     }
-    static func titleFont() -> Font {
+    static var title: Font {
         Font.system(size: 20, weight: .semibold, design: .default)
     }
-    static func bodyFont() -> Font {
+    static var body: Font {
         Font.system(size: 16, weight: .regular, design: .default)
     }
-    static func captionFont() -> Font {
+    static var caption: Font {
         Font.system(size: 12, weight: .regular, design: .default)
     }
 
@@ -48,7 +50,7 @@ struct AppTheme {
 
 /// A View extension to apply a default background and primary text color.
 extension View {
-    func applyFurfolioTheme() -> some View {
+    func furfolioStyle() -> some View {
         self
             .foregroundColor(AppTheme.primaryText)
             .background(AppTheme.background)
@@ -59,8 +61,13 @@ extension View {
     }
 }
 
-extension View {
-    func furfolioBackground() -> some View {
-        self.background(AppTheme.background)
+struct FurfolioButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(AppTheme.Spacing.small)
+            .background(AppTheme.accent)
+            .foregroundColor(.white)
+            .cornerRadius(AppTheme.cornerRadius)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }

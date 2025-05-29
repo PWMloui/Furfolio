@@ -7,9 +7,13 @@
 //
 
 import Foundation
+import os
+import FirebaseRemoteConfigService
 
 /// Provides loyalty reward computations for a DogOwner, producing a badge and summary.
 struct LoyaltyRewardEngine {
+    
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "LoyaltyRewardEngine")
     
     /// Encapsulates the resulting badge and summary text for loyalty status.
     struct Status {
@@ -19,9 +23,10 @@ struct LoyaltyRewardEngine {
         let summary: String
     }
     
-    /// Cached loyalty threshold to avoid repeated UserDefaults lookups.
-    private static let cachedThreshold: Int = SettingsManager.shared.loyaltyThreshold
-    static var defaultThreshold: Int { cachedThreshold }
+    /// Loyalty threshold fetched from remote config
+    static var defaultThreshold: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .loyaltyThreshold)
+    }
 
     /// Preloaded localized format strings for badge and summary.
     private static let moreBadgeFmt = NSLocalizedString(
@@ -42,6 +47,7 @@ struct LoyaltyRewardEngine {
     )
     
     static func status(visits: Int, threshold: Int = defaultThreshold) -> Status {
+        logger.log("Computing loyalty status for visits: \(visits), threshold: \(threshold)")
         let badge: String
         let summary: String
 
@@ -54,12 +60,16 @@ struct LoyaltyRewardEngine {
             badge = String(format: moreBadgeFmt, rem)
             summary = String(format: moreSummaryFmt, rem, suffix)
         }
+        logger.log("Generated status - badge: \(badge), summary: \(summary)")
         return .init(badge: badge, summary: summary)
     }
     
     @MainActor static func status(for owner: DogOwner, threshold: Int = defaultThreshold) -> Status {
+        logger.log("Fetching loyalty status for owner \(owner.id.uuidString)")
         let stats = ClientStats(owner: owner)
-        return status(visits: stats.totalAppointments, threshold: threshold)
+        let result = status(visits: stats.totalAppointments, threshold: threshold)
+        logger.log("Owner \(owner.id.uuidString) loyalty status computed")
+        return result
     }
 }
 

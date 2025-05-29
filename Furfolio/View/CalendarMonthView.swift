@@ -7,8 +7,10 @@
 
 
 import SwiftUI
+import os
 
 struct CalendarMonthView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "CalendarMonthView")
     @Binding var displayedMonth: Date
     let onSelectDate: ((Date) -> Void)?
     private let calendar = Calendar.current
@@ -69,7 +71,8 @@ struct CalendarMonthView: View {
                 }
                 Spacer()
                 Text(monthYearString)
-                    .font(.headline)
+                    .font(AppTheme.header)
+                    .foregroundColor(AppTheme.primaryText)
                 Spacer()
                 Button(action: {
                     if let nextMonth = calendar.date(byAdding: .month, value: 1, to: displayedMonth) {
@@ -86,10 +89,10 @@ struct CalendarMonthView: View {
             LazyVGrid(columns: columns, spacing: 4) {
                 ForEach(weekdayInitials.indices, id: \.self) { idx in
                     Text(weekdayInitials[(idx + calendar.firstWeekday - 1) % 7])
-                        .font(.subheadline)
+                        .font(AppTheme.caption)
                         .fontWeight(.bold)
                         .frame(maxWidth: .infinity)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.secondaryText)
                 }
             }
 
@@ -106,21 +109,24 @@ struct CalendarMonthView: View {
                         ZStack {
                             if isToday && isCurrentMonth {
                                 Circle()
-                                    .fill(Color.accentColor.opacity(0.2))
+                                    .fill(AppTheme.accent.opacity(0.2))
                                     .frame(width: 32, height: 32)
                             }
                             Text("\(calendar.component(.day, from: date))")
-                                .font(.body)
-                                .foregroundColor(isCurrentMonth ? .primary : .secondary)
+                                .font(AppTheme.body)
+                                .foregroundColor(isCurrentMonth ? AppTheme.primaryText : AppTheme.secondaryText)
                                 .frame(width: 32, height: 32)
                         }
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .buttonStyle(FurfolioButtonStyle())
                     .disabled(!isCurrentMonth)
                 }
             }
         }
         .padding()
+        .onAppear {
+            logger.log("CalendarMonthView appeared for month: \(displayedMonth)")
+        }
     }
 }
 

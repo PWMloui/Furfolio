@@ -9,11 +9,13 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import os
 
 // TODO: Move gallery loading, deletion, and photo-picking logic into a dedicated ViewModel; use ImageValidator and ImageProcessor for input checks and resizing.
 
 @MainActor
 class PetGalleryViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryViewModel")
     @Environment(\.modelContext) private var modelContext
     let owner: DogOwner
     @Published var images: [PetGalleryImage] = []
@@ -25,20 +27,24 @@ class PetGalleryViewModel: ObservableObject {
     }
 
     func loadImages() {
+        logger.log("Loading images for owner id: \(owner.id)")
         images = try! modelContext.fetch(
             FetchDescriptor<PetGalleryImage>(
                 predicate: #Predicate { $0.dogOwner.id == owner.id },
                 sortBy: [SortDescriptor(\PetGalleryImage.dateAdded, order: .reverse)]
             )
         )
+        logger.log("Loaded \(images.count) images")
     }
 
     func delete(_ img: PetGalleryImage) {
+        logger.log("Deleting image id: \(img.id)")
         modelContext.delete(img)
         saveAndReload()
     }
 
     func add(_ data: Data) {
+        logger.log("Adding new image for owner id: \(owner.id)")
         guard let processed = ImageProcessor.resize(data: data, maxDimension: 1024),
               ImageValidator.isValid(data: processed) else { return }
         _ = PetGalleryImage.record(
@@ -49,10 +55,12 @@ class PetGalleryViewModel: ObservableObject {
             appointment: nil,
             in: modelContext
         )
+        logger.log("Image recorded, saving context")
         saveAndReload()
     }
 
     func saveAndReload() {
+        logger.log("Saving context and reloading images")
         try? modelContext.save()
         loadImages()
     }
@@ -66,6 +74,7 @@ class PetGalleryViewModel: ObservableObject {
 @MainActor
 /// A grid-based gallery view displaying an owner’s pet photos with support for adding and deleting images.
 struct PetGalleryView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryView")
     let owner: DogOwner
 
     @StateObject private var viewModel: PetGalleryViewModel
@@ -108,6 +117,7 @@ struct PetGalleryView: View {
                     ForEach(viewModel.images) { img in
                         if let thumb = img.thumbnail {
                             Button {
+                                logger.log("Thumbnail tapped for image id: \(img.id)")
                                 selectedImage = img
                             } label: {
                                 Image(uiImage: thumb)
@@ -120,11 +130,13 @@ struct PetGalleryView: View {
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
+                                    logger.log("Swipe Delete tapped for image id: \(img.id)")
                                     viewModel.delete(img)
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
                                 Button {
+                                    logger.log("Swipe Edit Caption tapped for image id: \(img.id)")
                                     editingImage = img
                                     newCaption = img.caption ?? ""
                                 } label: {
@@ -133,9 +145,9 @@ struct PetGalleryView: View {
                             }
                         } else {
                             Rectangle()
-                                .fill(Color.secondary.opacity(0.2))
+                                .fill(AppTheme.disabled.opacity(0.2))
                                 .frame(height: 100)
-                                .overlay(Text("No Image").font(.caption2))
+                                .overlay(Text("No Image").font(AppTheme.caption).foregroundColor(AppTheme.secondaryText))
                                 .cornerRadius(6)
                         }
                     }
@@ -155,12 +167,18 @@ struct PetGalleryView: View {
             HStack {
                 Spacer()
                 /// Button to present the Photos picker for adding new gallery images.
-                Button(action: { showingPicker = true }) {
+                Button(action: {
+                    logger.log("Add Photo button tapped")
+                    showingPicker = true
+                }) {
                     Label("Add Photo", systemImage: "photo.on.rectangle.angled")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(FurfolioButtonStyle())
                 .padding()
             }
+        }
+        .onAppear {
+            logger.log("PetGalleryView appeared for owner id: \(owner.id)")
         }
         // Full-screen image preview
         .sheet(item: $selectedImage) { img in

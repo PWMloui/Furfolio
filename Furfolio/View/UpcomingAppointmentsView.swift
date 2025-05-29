@@ -8,32 +8,38 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // TODO: Move upcoming appointments fetching and grouping logic into a dedicated ViewModel for cleaner views and easier testing.
 
 @MainActor
 class UpcomingAppointmentsViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "UpcomingAppointmentsViewModel")
     @Published var groupedByDay: [(day: Date, appts: [Appointment])] = []
 
     private static let calendar = Calendar.current
 
     init(appointments: [Appointment]) {
         updateGroupings(with: appointments)
+        logger.log("Initialized with \(appointments.count) appointments")
     }
 
     func updateGroupings(with upcoming: [Appointment]) {
+        logger.log("updateGroupings called with \(upcoming.count) upcoming appointments")
         let dict = Dictionary(grouping: upcoming) { appt in
             Self.calendar.startOfDay(for: appt.date)
         }
         self.groupedByDay = dict
             .map { (day: $0.key, appts: $0.value) }
             .sorted { $0.day < $1.day }
+        logger.log("Grouped into \(groupedByDay.count) days")
     }
 }
 
 @MainActor
 /// View displaying upcoming (future) appointments grouped by calendar day.
 struct UpcomingAppointmentsView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "UpcomingAppointmentsView")
     @Environment(\.modelContext) private var modelContext
 
     /// Fetch appointments with date ≥ now, excluding cancelled, sorted ascending
@@ -66,7 +72,8 @@ struct UpcomingAppointmentsView: View {
             List {
                 if upcoming.isEmpty {
                     Text("No upcoming appointments.")
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.secondaryText)
+                        .font(AppTheme.body)
                         .italic()
                 } else {
                     ForEach(viewModel.groupedByDay, id: \.day) { group in
@@ -91,10 +98,15 @@ struct UpcomingAppointmentsView: View {
             }
         }
         .onAppear {
+            logger.log("UpcomingAppointmentsView appeared with \(upcoming.count) appointments fetched")
+        }
+        .onAppear {
             viewModel.updateGroupings(with: upcoming)
+            logger.log("View onAppear updated groupings")
         }
         .onChange(of: upcoming) { newValue in
             viewModel.updateGroupings(with: newValue)
+            logger.log("Upcoming change detected: \(newValue.count) appointments")
         }
     }
 
@@ -107,31 +119,38 @@ struct UpcomingAppointmentsView: View {
 @MainActor
 /// Row showing basic details of a single appointment, with status toggle.
 private struct AppointmentRow: View {
+    private let rowLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppointmentRow")
     @Bindable var appointment: Appointment
 
     var body: some View {
+        rowLogger.log("Rendering AppointmentRow for id: \(appointment.id), status: \(appointment.status.rawValue)")
         HStack {
             VStack(alignment: .leading) {
                 Text(appointment.formattedDate)
-                    .font(.headline)
+                    .font(AppTheme.body)
+                    .foregroundColor(AppTheme.primaryText)
                 Text(appointment.serviceType.localized)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .font(AppTheme.caption)
+                    .foregroundColor(AppTheme.secondaryText)
                 if let notes = appointment.notes, !notes.isEmpty {
                     Text(notes)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.secondaryText)
+                        .italic()
                 }
             }
             Spacer()
             if appointment.status == .confirmed {
-                Button(action: { appointment.status = .completed }) {
+                Button {
+                    rowLogger.log("Marking appointment \(appointment.id) as completed")
+                    appointment.status = .completed
+                } label: {
                     Image(systemName: "checkmark.circle")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(FurfolioButtonStyle())
             } else {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
+                    .foregroundColor(AppTheme.success)
             }
         }
         .padding(.vertical, 4)

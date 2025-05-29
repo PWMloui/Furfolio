@@ -7,10 +7,12 @@
 //
 
 import Foundation
+import os
 
 @MainActor
 /// Represents a pet with identity, validation, and birthday utilities.
 struct Pet: Codable, Identifiable, Hashable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Pet")
   // MARK: – Dependencies
   private let calendar: Calendar
   private let dateFormatter: DateFormatter
@@ -36,6 +38,7 @@ struct Pet: Codable, Identifiable, Hashable {
     self.specialInstructions = specialInstructions
     self.calendar = calendar
     self.dateFormatter = dateFormatter
+        logger.log("Initialized Pet id: \(id), name: \(name), breed: \(breed), birthdate: \(String(describing: birthdate))")
   }
 
   // MARK: – Properties
@@ -65,58 +68,82 @@ struct Pet: Codable, Identifiable, Hashable {
   /// Indicates whether the pet has valid non-empty name and breed.
   /// True if this pet has a non-empty name and breed.
   var isValid: Bool {
-    !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+      logger.log("Validating Pet: name='\(name)', breed='\(breed)'")
+    let result = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
       !breed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      logger.log("Validation result: \(result)") 
+    return result
   }
 
   // MARK: – Computed Properties
 
   /// Age in whole years, if birthdate is known.
   var age: Int? {
+      logger.log("Computing age for Pet id: \(id), birthdate: \(String(describing: birthdate))")
     guard let bd = birthdate else { return nil }
-    return calendar.dateComponents([.year], from: bd, to: Date.now).year
+    let result = calendar.dateComponents([.year], from: bd, to: Date.now).year
+      logger.log("Computed age: \(String(describing: result))")
+    return result
   }
 
   /// Formatted birthdate string, or “Unknown” if not set.
   var formattedBirthdate: String {
+      logger.log("Formatting birthdate for Pet id: \(id)")
     guard let bd = birthdate else {
-      return NSLocalizedString("Unknown", comment: "No birthdate available")
+      let result = NSLocalizedString("Unknown", comment: "No birthdate available")
+        logger.log("Formatted birthdate: \(result)")
+      return result
     }
-    return dateFormatter.string(from: bd)
+    let result = dateFormatter.string(from: bd)
+      logger.log("Formatted birthdate: \(result)")
+    return result
   }
 
   /// The next birthday date (this year or next), if birthdate is known.
   var nextBirthday: Date? {
+      logger.log("Calculating nextBirthday for Pet id: \(id)")
     guard let bd = birthdate else { return nil }
     var comps = calendar.dateComponents([.month, .day], from: bd)
     comps.year = calendar.component(.year, from: Date.now)
     guard let candidate = calendar.date(from: comps) else { return nil }
-    return candidate < Date.now
+    let result = candidate < Date.now
       ? calendar.date(byAdding: .year, value: 1, to: candidate)
       : candidate
+      logger.log("Next birthday: \(String(describing: result))")
+    return result
   }
 
   /// Number of days until the next birthday, or nil if birthdate is unknown.
   var daysUntilNextBirthday: Int? {
+      logger.log("Calculating daysUntilNextBirthday for Pet id: \(id)")
     guard let next = nextBirthday else { return nil }
-    return calendar.dateComponents([.day], from: calendar.startOfDay(for: Date.now), to: next).day
+    let result = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date.now), to: next).day
+      logger.log("Days until next birthday: \(String(describing: result))")
+    return result
   }
 
   /// A user‐friendly string for days until next birthday.
   var daysUntilNextBirthdayString: String? {
+      logger.log("Generating daysUntilNextBirthdayString for Pet id: \(id)")
     guard let days = daysUntilNextBirthday else { return nil }
-    return days == 0 ? NSLocalizedString("Today", comment: "Birthday is today")
+    let result = days == 0 ? NSLocalizedString("Today", comment: "Birthday is today")
       : String(format: NSLocalizedString("In %d day%@", comment: "Days until next birthday"), days, days == 1 ? "" : "s")
+      logger.log("Days until next birthday string: \(result)")
+    return result
   }
 
   /// True if today is the pet’s birthday.
   var isBirthdayToday: Bool {
+      logger.log("Checking if birthday is today for Pet id: \(id)")
     guard let next = nextBirthday else { return false }
-    return calendar.isDateInToday(next)
+    let result = calendar.isDateInToday(next)
+      logger.log("Is birthday today: \(result)")
+    return result
   }
 
   /// A brief, formatted summary of the pet's details.
   var summary: String {
+      logger.log("Generating summary for Pet id: \(id)")
     var parts: [String] = []
     parts.append("\(name) (\(breed))")
     if let bd = birthdate {
@@ -128,7 +155,9 @@ struct Pet: Codable, Identifiable, Hashable {
     if let instr = specialInstructions, !instr.isEmpty {
       parts.append(instr)
     }
-    return parts.joined(separator: " • ")
+    let result = parts.joined(separator: " • ")
+      logger.log("Generated summary: \(result)")
+    return result
   }
 
   // MARK: – Mutating Methods
@@ -140,6 +169,7 @@ struct Pet: Codable, Identifiable, Hashable {
     birthdate: Date? = nil,
     specialInstructions: String? = nil
   ) {
+      logger.log("Updating Pet id: \(id) with provided fields")
     if let n = name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty {
       self.name = n
     }
@@ -152,6 +182,7 @@ struct Pet: Codable, Identifiable, Hashable {
     if let instr = specialInstructions {
       self.specialInstructions = instr.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+      logger.log("Updated Pet: name=\(name), breed=\(breed), birthdate=\(String(describing: birthdate))")
   }
 
   // MARK: – Preview Data

@@ -7,9 +7,11 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor
 class TaskManagerViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TaskManagerViewModel")
   private let context: ModelContext
 
   @Published var pendingTasks: [Task] = []
@@ -18,10 +20,12 @@ class TaskManagerViewModel: ObservableObject {
 
   init(context: ModelContext) {
     self.context = context
+      logger.log("Initialized TaskManagerViewModel")
     fetchAll()
   }
 
   func fetchAll() {
+      logger.log("Fetching all tasks")
     pendingTasks = context.fetch(
       Query(Task.self)
         .filter(!\Task.isCompleted && (\Task.dueDate ?? .distantFuture) >= Date.now)
@@ -38,19 +42,24 @@ class TaskManagerViewModel: ObservableObject {
         .filter(\.isCompleted)
         .sortBy(\.updatedAt, order: .reverse)
     )
+      logger.log("Pending: \(pendingTasks.count), Overdue: \(overdueTasks.count), Completed: \(completedTasks.count)")
   }
 
   func delete(at offsets: IndexSet, in list: TaskList) {
+      logger.log("Deleting tasks at offsets: \(offsets) in list: \(list)")
     let tasks = tasks(for: list)
     for index in offsets {
       context.delete(tasks[index])
     }
     fetchAll()
+      logger.log("Tasks after delete - Pending: \(pendingTasks.count), Overdue: \(overdueTasks.count), Completed: \(completedTasks.count)")
   }
 
   func markCompleted(_ task: Task) {
+      logger.log("Marking task completed: \(task.id)")
     task.markCompleted()
     fetchAll()
+      logger.log("Task marked completed and lists refreshed")
   }
 
   private func tasks(for list: TaskList) -> [Task] {
@@ -69,6 +78,7 @@ class TaskManagerViewModel: ObservableObject {
 @MainActor
 /// Manages and displays lists of pending, overdue, and completed tasks, with support for adding new tasks.
 struct TaskManagerView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TaskManagerView")
   @Environment(\.modelContext) private var modelContext
   @StateObject private var viewModel: TaskManagerViewModel
 
@@ -103,6 +113,7 @@ struct TaskManagerView: View {
               viewModel.delete(at: idx, in: .pending)
             }
           }
+          .headerProminence(.increased)
         }
 
         // Overdue
@@ -116,6 +127,7 @@ struct TaskManagerView: View {
               viewModel.delete(at: idx, in: .overdue)
             }
           }
+          .headerProminence(.increased)
         }
 
         // Completed
@@ -129,6 +141,7 @@ struct TaskManagerView: View {
               viewModel.delete(at: idx, in: .completed)
             }
           }
+          .headerProminence(.increased)
         }
       }
       .listStyle(.insetGrouped)
@@ -136,9 +149,13 @@ struct TaskManagerView: View {
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
-          Button(action: { showingAddSheet = true }) {
-            Image(systemName: "plus")
+          Button(action: {
+              logger.log("Add Task button tapped")
+              showingAddSheet = true
+          }) {
+              Image(systemName: "plus")
           }
+          .buttonStyle(FurfolioButtonStyle())
         }
       }
       /// Sheet for adding a new task.
@@ -151,6 +168,9 @@ struct TaskManagerView: View {
         .environment(\.modelContext, modelContext)
       }
     }
+    .onAppear {
+        logger.log("TaskManagerView appeared - Pending: \(viewModel.pendingTasks.count), Overdue: \(viewModel.overdueTasks.count), Completed: \(viewModel.completedTasks.count)")
+    }
   }
 }
 
@@ -158,6 +178,7 @@ struct TaskManagerView: View {
 @MainActor
 /// A row displaying task title, formatted due date, relative time, and completion toggle.
 private struct TaskRow: View {
+    private let rowLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TaskRow")
   @Bindable var task: Task
   @Environment(\.modelContext) private var modelContext
   var viewModel: TaskManagerViewModel
@@ -176,32 +197,35 @@ private struct TaskRow: View {
   }()
 
   var body: some View {
+      rowLogger.log("Rendering TaskRow for: \(task.id), title: '\(task.title)'")
     HStack {
       VStack(alignment: .leading, spacing: 4) {
         /// Task title and status.
         Text(task.title)
-          .font(.headline)
+          .font(AppTheme.body)
+          .foregroundColor(AppTheme.primaryText)
         if let due = task.dueDate {
           Text(Self.dateFormatter.string(from: due))
-            .font(.caption)
-            .foregroundColor(task.isOverdue ? .red : .secondary)
+            .font(AppTheme.caption)
+            .foregroundColor(task.isOverdue ? AppTheme.warning : AppTheme.secondaryText)
         }
         if let due = task.dueDate {
           Text(Self.relativeFormatter.localizedString(for: due, relativeTo: Date.now))
-            .font(.caption2)
-            .foregroundColor(.secondary)
+            .font(AppTheme.caption)
+            .foregroundColor(AppTheme.secondaryText)
         }
       }
       Spacer()
       Button(action: {
-        withAnimation {
-          viewModel.markCompleted(task)
-        }
+          rowLogger.log("Complete tapped for task: \(task.id)")
+          withAnimation {
+              viewModel.markCompleted(task)
+          }
       }) {
         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
           .foregroundColor(task.isCompleted ? .green : .gray)
       }
-      .buttonStyle(.borderless)
+      .buttonStyle(FurfolioButtonStyle())
     }
     .padding(.vertical, 6)
     .cardStyle()
@@ -212,6 +236,7 @@ private struct TaskRow: View {
 @MainActor
 /// Modal form for creating a new Task with title, details, due date, and priority.
 struct AddTaskView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AddTaskView")
   @Environment(\.dismiss) private var dismiss
 
   @State private var title = ""
@@ -240,23 +265,32 @@ struct AddTaskView: View {
       .navigationTitle("New Task")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
+          Button("Cancel") {
+              logger.log("AddTaskView Cancel tapped")
+              dismiss()
+          }
+          .buttonStyle(FurfolioButtonStyle())
         }
         ToolbarItem(placement: .confirmationAction) {
           /// Saves the new Task if the title is non-empty.
           Button("Save") {
-            let task = Task.create(
-              title: title,
-              details: details.isEmpty ? nil : details,
-              dueDate: dueDate,
-              priority: priority,
-              in: try! Environment(\.modelContext).wrappedValue
-            )
-            onSave(task)
-            dismiss()
+              logger.log("AddTaskView Save tapped: title='\(title)'")
+              let task = Task.create(
+                title: title,
+                details: details.isEmpty ? nil : details,
+                dueDate: dueDate,
+                priority: priority,
+                in: try! Environment(\.modelContext).wrappedValue
+              )
+              onSave(task)
+              dismiss()
           }
           .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+          .buttonStyle(FurfolioButtonStyle())
         }
+      }
+      .onAppear {
+          logger.log("AddTaskView appeared")
       }
     }
   }

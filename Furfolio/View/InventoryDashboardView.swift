@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 import Services
 // TODO: Move dashboard logic into a dedicated ViewModel and cache formatters for performance
 
@@ -17,6 +18,8 @@ struct InventoryDashboardView: View {
     
     @StateObject private var viewModel = InventoryDashboardViewModel()
     
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryDashboardView")
+    
     /// Shared NumberFormatter for currency values to avoid repeated allocations.
     private static let currencyFormatter = NumberFormatter.currency
     
@@ -24,57 +27,85 @@ struct InventoryDashboardView: View {
         NavigationStack {
             List {
                 // MARK: Summary
-                Section(header: Text("Summary")) {
+                Section(header: Text("Summary")
+                    .font(AppTheme.title)
+                    .foregroundColor(AppTheme.primaryText)
+                ) {
                     HStack {
                         Text("Total Items")
                         Spacer()
                         Text("\(viewModel.totalItemsCount)")
-                            .foregroundColor(.secondary)
+                            .font(AppTheme.body)
+                            .foregroundColor(AppTheme.secondaryText)
                     }
                     HStack {
                         Text("Inventory Value")
                         Spacer()
                         Text(Self.currencyFormatter.string(from: NSNumber(value: viewModel.totalValue)) ?? "")
-                            .foregroundColor(.secondary)
+                            .font(AppTheme.body)
+                            .foregroundColor(AppTheme.secondaryText)
                     }
                 }
                 
                 // MARK: Low Stock
                 if !viewModel.lowStockItems.isEmpty {
-                    Section(header: Text("Low Stock")) {
+                    Section(header: Text("Low Stock")
+                        .font(AppTheme.title)
+                        .foregroundColor(AppTheme.primaryText)
+                    ) {
                         ForEach(viewModel.lowStockItems) { item in
                             HStack {
                                 Text(item.name)
                                 Spacer()
                                 Text("\(item.quantityOnHand)")
-                                    .foregroundColor(.orange)
+                                    .font(AppTheme.body)
+                                    .foregroundColor(AppTheme.warning)
                             }
                         }
+                    }
+                    .onAppear {
+                        logger.log("Displaying Low Stock section with \(viewModel.lowStockItems.count) items")
                     }
                 }
                 
                 // MARK: Top Value
-                Section(header: Text("Top Value Items")) {
+                Section(header: Text("Top Value Items")
+                    .font(AppTheme.title)
+                    .foregroundColor(AppTheme.primaryText)
+                ) {
                     ForEach(viewModel.topValueItems) { item in
                         HStack {
                             Text(item.name)
                             Spacer()
                             Text(Self.currencyFormatter.string(from: NSNumber(value: item.totalValue)) ?? "")
-                                .foregroundColor(.green)
+                                .font(AppTheme.body)
+                                .foregroundColor(AppTheme.accent)
                         }
                     }
                 }
+                .onAppear {
+                    logger.log("Displaying Top Value section with \(viewModel.topValueItems.count) items")
+                }
                 
                 // MARK: All Items
-                Section(header: Text("All Inventory")) {
+                Section(header: Text("All Inventory")
+                    .font(AppTheme.title)
+                    .foregroundColor(AppTheme.primaryText)
+                ) {
                     ForEach(viewModel.allItems) { item in
                         InventoryRow(item: item)
                     }
+                }
+                .onAppear {
+                    logger.log("Displaying All Inventory with \(viewModel.allItems.count) items")
                 }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Inventory Dashboard")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                logger.log("InventoryDashboardView appeared; totalItems=\(viewModel.totalItemsCount), lowStockCount=\(viewModel.lowStockItems.count)")
+            }
         }
         .onAppear {
             viewModel.loadItems(context: modelContext)
@@ -87,16 +118,26 @@ struct InventoryDashboardView: View {
 private struct InventoryRow: View {
     @ObservedObject var item: InventoryItem
     
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "InventoryRow")
+    
     var body: some View {
         HStack {
             Text(item.name)
             Spacer()
             Text("\(item.quantityOnHand)")
+                .font(AppTheme.body)
+                .foregroundColor(AppTheme.primaryText)
                 .frame(minWidth: 40)
             Text(Self.currencyFormatter.string(from: NSNumber(value: item.sellPrice)) ?? "")
+                .font(AppTheme.body)
+                .foregroundColor(AppTheme.primaryText)
                 .frame(minWidth: 60, alignment: .trailing)
         }
-        .font(.subheadline)
+        .font(AppTheme.body)
+        .foregroundColor(AppTheme.primaryText)
+        .onAppear {
+            logger.log("InventoryRow appeared for item id: \(item.id), quantityOnHand: \(item.quantityOnHand)")
+        }
     }
 }
 

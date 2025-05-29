@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import os
 
 // TODO: Make animation and styling configurable via environment or initializer; consider extracting to ProgressRingViewModel.
 
@@ -23,6 +24,11 @@ extension EnvironmentValues {
 /// A circular progress indicator that visually represents a value between 0.0 and 1.0.
 /// Optionally displays custom content in the center.
 struct ProgressRingView<CenterContent: View>: View {
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ProgressRingView")
+  @Environment(\.progressRingLineWidth) private var envLineWidth
+  @Environment(\.progressRingAnimation) private var envAnimation
+  @Environment(\.progressRingGradient) private var envGradient
+
   enum AnimationStyle {
     case ease, spring(response: Double, dampingFraction: Double)
     case custom(Animation)
@@ -54,35 +60,26 @@ struct ProgressRingView<CenterContent: View>: View {
   var lineWidth: CGFloat { lineWidthParam ?? envLineWidth }
 
   var body: some View {
-    let envLineWidth = Environment(\.progressRingLineWidth).wrappedValue
-    let envAnimation = Environment(\.progressRingAnimation).wrappedValue
-    let envGradient = Environment(\.progressRingGradient).wrappedValue
-
     GeometryReader { geo in
       ZStack {
         // Track circle
         Circle()
           .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: lineCap, lineJoin: lineJoin, dash: dash))
-          .foregroundColor(Color(.systemGray5))
+          .foregroundColor(AppTheme.disabled)
 
         // Progress circle
         Circle()
           .trim(from: 0, to: CGFloat(min(max(progress, 0), 1)))
           .stroke(
-            AngularGradient(gradient: strokeGradient ?? envGradient ?? Gradient(colors: [Color.accentColor]), center: .center),
+            AngularGradient(gradient: strokeGradient ?? envGradient ?? Gradient(colors: [AppTheme.accent]), center: .center),
             style: StrokeStyle(lineWidth: lineWidth, lineCap: lineCap, lineJoin: lineJoin, dash: dash)
           )
           .rotationEffect(Angle(degrees: isIndeterminate ? (animateIndeterminate ? 360 : 0) : -90))
-          .animation(isIndeterminate ? nil : (animationStyle.animation), value: progress)
-          .onAppear {
-            if isIndeterminate {
-              withAnimation(animationStyle.animation.repeatForever(autoreverses: isIndeterminate)) {
-                animateIndeterminate = true
-              }
-            }
-          }
+          .animation(isIndeterminate ? nil : animationStyle.animation, value: progress)
           .onChange(of: progress) { newValue in
+            logger.log("Progress updated to \(newValue)")
             if newValue >= 1.0, previousProgress < 1.0 {
+              logger.log("Progress completed")
               onComplete?()
             }
             previousProgress = newValue
@@ -103,6 +100,15 @@ struct ProgressRingView<CenterContent: View>: View {
         // Center content (if provided)
         if let content = centerContent {
           content()
+        }
+      }
+      .accessibilityValue("\(Int(progress * 100)) percent")
+      .onAppear {
+        logger.log("ProgressRingView appeared with progress: \(progress)")
+        if isIndeterminate {
+          withAnimation(envAnimation.repeatForever(autoreverses: false)) {
+            animateIndeterminate = true
+          }
         }
       }
     }

@@ -9,10 +9,12 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor
 /// View displaying a unified timeline of appointments, charges, behavior logs, and service history for a client.
 struct ClientTimelineView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ClientTimelineView")
     let owner: DogOwner
     @StateObject private var viewModel: ClientTimelineViewModel
 
@@ -25,28 +27,38 @@ struct ClientTimelineView: View {
     var body: some View {
       List {
           ForEach(viewModel.groupedEntries, id: \.key) { day, events in
-              Section(header: Text(day)) {
+              Section(header: Text(day)
+                  .font(AppTheme.title)
+                  .foregroundColor(AppTheme.primaryText)
+              ) {
                   ForEach(events) { entry in
                       HStack(alignment: .top, spacing: 12) {
                           Image(systemName: entry.icon)
                               .frame(width: 24)
                           VStack(alignment: .leading, spacing: 2) {
                               Text(entry.title)
-                                  .font(.headline)
+                                  .font(AppTheme.body)
+                                  .foregroundColor(AppTheme.primaryText)
                               if let sub = entry.subtitle {
                                   Text(sub)
-                                      .font(.caption)
-                                      .foregroundColor(.secondary)
+                                      .font(AppTheme.caption)
+                                      .foregroundColor(AppTheme.secondaryText)
                               }
                               Text(entry.date.formatted(.dateTime.hour().minute()))
-                                  .font(.caption2)
-                                  .foregroundColor(.gray)
+                                  .font(AppTheme.caption)
+                                  .foregroundColor(AppTheme.secondaryText)
                           }
+                      }
+                      .onAppear {
+                          logger.log("Displaying timeline entry: \(entry.title) at \(entry.date)")
                       }
                       .padding(.vertical, 4)
                   }
               }
           }
+      }
+      .onAppear {
+          logger.log("ClientTimelineView appeared for owner id: \(owner.id), sections: \(viewModel.groupedEntries.count)")
       }
       .listStyle(.insetGrouped)
       .navigationTitle("Timeline: \(owner.dogName)")

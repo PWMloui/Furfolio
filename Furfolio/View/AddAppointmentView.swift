@@ -9,12 +9,15 @@
 import SwiftUI
 import UserNotifications
 import PhotosUI
+import os
 
 // TODO: Move business logic (saving, validation, notifications) into a dedicated ViewModel and use NotificationManager for scheduling.
 
 @MainActor
 /// View for adding a new appointment: selects date/time, service type, photos, and optional reminders.
 struct AddAppointmentView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AddAppointmentView")
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     let dogOwner: DogOwner
@@ -46,9 +49,12 @@ struct AddAppointmentView: View {
                     if let warning = vm.conflictWarning {
                         Section(header: Text("")) {
                             Text(warning)
-                                .foregroundColor(.red)
+                                .foregroundColor(AppTheme.warning)
                                 .italic()
                                 .accessibilityLabel("Conflict warning")
+                                .onAppear {
+                                    logger.log("Conflict warning displayed: \(warning)")
+                                }
                         }
                     }
                 }
@@ -66,11 +72,18 @@ struct AddAppointmentView: View {
                     ProgressView("Saving…")
                         .padding()
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .onAppear {
+                            logger.log("Showing saving overlay")
+                        }
                 }
             }
         }
         .onAppear {
+            logger.log("AddAppointmentView appeared for owner id: \(dogOwner.id)")
+        }
+        .onAppear {
             Task {
+                logger.log("Scheduling tooltip animation")
                 // Show tooltip on form fields for initial guidance
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 withAnimation { showTooltip = true }
@@ -86,7 +99,7 @@ struct AddAppointmentView: View {
     /// Builds the section for selecting date, service, duration, notes, and toggles.
     @ViewBuilder
     private func appointmentDetailsSection() -> some View {
-        Section(header: Text("Appointment Details")) {
+        Section(header: Text("Appointment Details").font(AppTheme.title).foregroundColor(AppTheme.primaryText)) {
             DatePicker(
                 "Date & Time",
                 selection: $vm.appointmentDate,
@@ -115,8 +128,8 @@ struct AddAppointmentView: View {
 
                 if showTooltip && vm.appointmentNotes.isEmpty {
                     Text("Enter extra details (max 250 characters)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(AppTheme.caption)
+                        .foregroundColor(AppTheme.secondaryText)
                         .transition(.opacity)
                 }
                 if vm.appointmentNotes.count > 250 {
@@ -207,11 +220,21 @@ struct AddAppointmentView: View {
     @ToolbarContentBuilder
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
-            Button("Cancel") { dismiss() }
+            Button("Cancel") {
+                logger.log("AddAppointmentView Cancel tapped")
+                dismiss()
+            }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button("Save") { vm.save { dismiss() } }
-                .disabled(vm.isSaving)
+            Button("Save") {
+                logger.log("AddAppointmentView Save tapped with date: \(vm.appointmentDate), service: \(vm.serviceType.rawValue)")
+                vm.save {
+                    logger.log("AddAppointmentView save completion, dismissing")
+                    dismiss()
+                }
+            }
+            .disabled(vm.isSaving)
+            .buttonStyle(FurfolioButtonStyle())
         }
     }
 }

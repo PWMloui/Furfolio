@@ -8,9 +8,11 @@
 
 import Foundation
 import SwiftUI
+import os
 
 /// Enumerates all grooming service types with defaults, localization, and rich descriptions.
 enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConvertible, Comparable {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ServiceType")
     // MARK: – Cache
     
     /// Cache of currency formatters keyed by locale identifier.
@@ -101,24 +103,35 @@ enum ServiceType: String, Codable, CaseIterable, Identifiable, CustomStringConve
     
     /// Returns a localized price string, e.g. "$40.00".
     func priceDescription(locale: Locale = .current) -> String {
-        Self.priceFormatter(locale: locale)
+        ServiceType.logger.log("Generating priceDescription for \(self.rawValue) at locale: \(locale.identifier)")
+        let result = Self.priceFormatter(locale: locale)
             .string(from: NSNumber(value: defaultPrice))
             ?? String(format: "%.2f", defaultPrice)
+        ServiceType.logger.log("priceDescription result: \(result)")
+        return result
     }
     
     /// Human-readable duration, e.g. "1h 30m".
     var durationDescription: String {
+        ServiceType.logger.log("Computing durationDescription for \(self.rawValue), minutes: \(defaultDurationMinutes)")
         guard defaultDurationMinutes > 0 else {
-            return NSLocalizedString("Custom duration", comment: "No fixed duration")
+            let result = NSLocalizedString("Custom duration", comment: "No fixed duration")
+            ServiceType.logger.log("durationDescription result: \(result)")
+            return result
         }
         let seconds = TimeInterval(defaultDurationMinutes * 60)
-        return Self.durationFormatter.string(from: seconds)
+        let result = Self.durationFormatter.string(from: seconds)
             ?? "\(defaultDurationMinutes) min"
+        ServiceType.logger.log("durationDescription result: \(result)")
+        return result
     }
     
     /// Combined quote, e.g. "Basic Package — $40.00 (60m)".
     func quoteDescription(locale: Locale = .current) -> String {
-        "\(localizedName) — \(priceDescription(locale: locale)) (\(durationDescription))"
+        ServiceType.logger.log("Generating quoteDescription for \(self.rawValue)")
+        let quote = "\(localizedName) — \(priceDescription(locale: locale)) (\(durationDescription))"
+        ServiceType.logger.log("quoteDescription result: \(quote)")
+        return quote
     }
     
     /// All service types except `.custom`.

@@ -9,6 +9,7 @@
 import SwiftUI
 import SwiftData
 import Combine
+import os
 
 @MainActor
 class ClientAnalyticsViewModel: ObservableObject {
@@ -26,6 +27,8 @@ class ClientAnalyticsViewModel: ObservableObject {
   }()
 
   init(owner: DogOwner) {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ClientAnalyticsViewModel")
+      logger.log("Initialized ClientAnalyticsViewModel for owner id: \(owner.id)")
     totalVisits = owner.charges.count
 
     let totalAmount = owner.charges.reduce(0) { $0 + $1.amount }
@@ -46,6 +49,8 @@ struct ClientAnalyticsView: View {
   @Environment(\.modelContext) private var context
   let owner: DogOwner
 
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ClientAnalyticsView")
+
   @StateObject private var viewModel: ClientAnalyticsViewModel
 
   init(owner: DogOwner) {
@@ -61,37 +66,45 @@ struct ClientAnalyticsView: View {
 
         // MARK: — Overview
         Section {
-          LabeledContent("Name") { Text(owner.ownerName) }
-          LabeledContent("Pup") { Text(owner.dogName) }
-          LabeledContent("Loyalty") { Text(ClientStats(owner: owner).loyaltyStatus) }
-          LabeledContent("Reward Progress") { Text(ClientStats(owner: owner).loyaltyProgressTag) }
+          LabeledContent("Name") { Text(owner.ownerName).font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Pup") { Text(owner.dogName).font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Loyalty") { Text(ClientStats(owner: owner).loyaltyStatus).font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Reward Progress") { Text(ClientStats(owner: owner).loyaltyProgressTag).font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
         } header: {
           Text("Overview")
+            .font(AppTheme.title)
+            .foregroundColor(AppTheme.primaryText)
         }
 
         // MARK: — Visits & Revenue
         Section {
-          LabeledContent("Total Visits") { Text("\(viewModel.totalVisits)") }
-          LabeledContent("Upcoming Visits") { Text("\(ClientStats(owner: owner).upcomingAppointmentsCount)") }
-          LabeledContent("Past Visits") { Text("\(ClientStats(owner: owner).pastAppointmentsCount)") }
-          LabeledContent("Total Charged") { Text(viewModel.totalRevenue) }
-          LabeledContent("Average Charge") { Text(viewModel.formattedAverageCharge) }
+          LabeledContent("Total Visits") { Text("\(viewModel.totalVisits)").font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Upcoming Visits") { Text("\(ClientStats(owner: owner).upcomingAppointmentsCount)").font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Past Visits") { Text("\(ClientStats(owner: owner).pastAppointmentsCount)").font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Total Charged") { Text(viewModel.totalRevenue).font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
+          LabeledContent("Average Charge") { Text(viewModel.formattedAverageCharge).font(AppTheme.body).foregroundColor(AppTheme.primaryText) }
         } header: {
           Text("Visits & Revenue")
+            .font(AppTheme.title)
+            .foregroundColor(AppTheme.primaryText)
         }
 
         // MARK: — Behavior
         Section {
           LabeledContent("Avg. Severity") {
             Text(String(format: "%.1f", ClientStats(owner: owner).averageBehaviorSeverity))
+              .font(AppTheme.body)
+              .foregroundColor(AppTheme.primaryText)
           }
           LabeledContent("Risk Level") {
             Text(viewModel.behaviorRiskCategory)
               .foregroundColor(viewModel.behaviorRiskColor)
+              .font(AppTheme.body)
           }
           if !ClientStats(owner: owner).recentBehaviorBadges.isEmpty {
             Text("Recent Badges")
-              .font(.subheadline).bold()
+              .font(AppTheme.title)
+              .foregroundColor(AppTheme.primaryText)
             ForEach(ClientStats(owner: owner).recentBehaviorBadges.prefix(3), id: \.self) { badge in
               Text("• \(badge)")
                 .font(.caption)
@@ -99,6 +112,8 @@ struct ClientAnalyticsView: View {
           }
         } header: {
           Text("Behavior")
+            .font(AppTheme.title)
+            .foregroundColor(AppTheme.primaryText)
         }
 
         // MARK: — Appointments
@@ -106,17 +121,21 @@ struct ClientAnalyticsView: View {
           if let next = ClientStats(owner: owner).nextAppointment {
             VStack(alignment: .leading) {
               Text("Next appointment:")
+                .font(AppTheme.body)
+                .foregroundColor(AppTheme.primaryText)
               Text(next.formattedDate)
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.secondaryText)
             }
           } else {
             Text("No upcoming appointments")
-              .foregroundColor(.secondary)
+              .font(AppTheme.body)
+              .foregroundColor(AppTheme.secondaryText)
           }
           if !ClientStats(owner: owner).recentAppointments.isEmpty {
             Text("Recent appointments:")
-              .font(.subheadline).bold()
+              .font(AppTheme.title)
+              .foregroundColor(AppTheme.primaryText)
             ForEach(ClientStats(owner: owner).recentAppointments.prefix(3)) { appt in
               Text("• \(appt.formattedDate) — \(appt.serviceType.localized)")
                 .font(.caption)
@@ -124,21 +143,35 @@ struct ClientAnalyticsView: View {
           }
         } header: {
           Text("Appointments")
+            .font(AppTheme.title)
+            .foregroundColor(AppTheme.primaryText)
         }
 
         // MARK: — Actions
         Section {
           Button("Add Appointment") {
+            logger.log("Add Appointment tapped for owner id: \(owner.id)")
             // TODO: present AddAppointmentView(owner:)
           }
+          .buttonStyle(FurfolioButtonStyle())
+
           Button("Add Charge") {
+            logger.log("Add Charge tapped for owner id: \(owner.id)")
             // TODO: present AddChargeView(owner:)
           }
+          .buttonStyle(FurfolioButtonStyle())
+        } header: {
+          Text("Actions")
+            .font(AppTheme.title)
+            .foregroundColor(AppTheme.primaryText)
         }
       }
       .listStyle(.insetGrouped)
       .navigationTitle("Client Analytics")
       .navigationBarTitleDisplayMode(.inline)
+    }
+    .onAppear {
+      logger.log("ClientAnalyticsView appeared for owner id: \(owner.id)")
     }
   }
 
@@ -155,16 +188,20 @@ struct ClientAnalyticsView: View {
       .padding(.vertical, 8)
     }
     .listRowInsets(EdgeInsets())  // extend full width
+    .onAppear {
+      logger.log("Summary cards displayed: Visits \(viewModel.totalVisits), Revenue \(viewModel.totalRevenue)")
+    }
   }
 
   /// Renders a single summary card with title, value, and accent color.
   private func summaryCard(title: String, value: String, color: Color) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(title)
-        .font(.caption)
-        .foregroundColor(.secondary)
+        .font(AppTheme.caption)
+        .foregroundColor(AppTheme.secondaryText)
       Text(value)
-        .font(.title3).bold()
+        .font(AppTheme.title)
+        .fontWeight(.bold)
         .foregroundColor(color)
     }
     .padding()

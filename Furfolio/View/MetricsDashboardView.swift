@@ -9,9 +9,11 @@
 import SwiftUI
 // TODO: Move dashboard logic into a dedicated ViewModel and cache formatters to improve performance
 import Charts
+import os
 
 @MainActor
 class MetricsDashboardViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "MetricsDashboardViewModel")
   @Published var selectedDateRange: DateRange = .lastMonth
   @Published var customStartDate: Date = Date()
   @Published var customEndDate: Date = Date()
@@ -26,9 +28,11 @@ class MetricsDashboardViewModel: ObservableObject {
     self.dailyRevenues = dailyRevenues
     self.appointments = appointments
     self.charges = charges
+    logger.log("Initialized MetricsDashboardViewModel with \(dailyRevenues.count) revenues, \(appointments.count) appointments, \(charges.count) charges")
   }
 
   var filteredRevenues: [DailyRevenue] {
+      logger.log("Computing filteredRevenues for range: \(selectedDateRange.rawValue)")
     guard let start = calculateStartDate() else { return dailyRevenues }
     let end = calculateEndDate()
     return dailyRevenues.filter { $0.date >= start && $0.date <= end }
@@ -82,15 +86,18 @@ class MetricsDashboardViewModel: ObservableObject {
   }
 
   @MainActor func refreshData() async {
+      logger.log("Refreshing dashboard data")
     isRefreshing = true
     try? await Task.sleep(nanoseconds: 1_000_000_000)
     isRefreshing = false
+      logger.log("Finished refreshing dashboard data")
   }
 }
 
 @MainActor
 /// View presenting a metrics dashboard with charts, summaries, and interactive filters for the Furfolio app.
 struct MetricsDashboardView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "MetricsDashboardView")
   @StateObject private var viewModel: MetricsDashboardViewModel
 
   let dailyRevenues: [DailyRevenue]
@@ -126,7 +133,8 @@ struct MetricsDashboardView: View {
 
           // Header
           Text("Metrics Dashboard")
-            .font(.largeTitle).bold()
+            .font(AppTheme.header)
+            .foregroundColor(AppTheme.primaryText)
             .accessibilityAddTraits(.isHeader)
             .transition(.opacity)
 
@@ -188,6 +196,9 @@ struct MetricsDashboardView: View {
       }
       .navigationTitle("Dashboard")
       .navigationBarTitleDisplayMode(.inline)
+      .onAppear {
+          logger.log("MetricsDashboardView appeared with dateRange: \(viewModel.selectedDateRange.rawValue)")
+      }
     }
   }
 }

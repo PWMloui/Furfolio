@@ -8,10 +8,12 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import os
 
 @MainActor
 /// Displays full details of a single appointment, including service info, photos, notes, and sharing options.
 struct AppointmentSummaryView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppointmentSummaryView")
     @Environment(\.dismiss) private var dismiss
     let appointment: Appointment
 
@@ -54,10 +56,10 @@ struct AppointmentSummaryView: View {
             LazyVStack(alignment: .leading, spacing: 16) {
                 // Date & Service
                 Text(appointment.formattedDate)
-                    .font(.title2)
+                    .font(AppTheme.title)
                 HStack {
                     Text("Service:")
-                        .fontWeight(.semibold)
+                        .font(AppTheme.body).fontWeight(.semibold)
                     Text(appointment.serviceType.localized)
                 }
 
@@ -65,7 +67,7 @@ struct AppointmentSummaryView: View {
                 if let _ = appointment.durationMinutes {
                     HStack {
                         Text("Duration:")
-                            .fontWeight(.semibold)
+                            .font(AppTheme.body).fontWeight(.semibold)
                         Text(appointment.durationFormatted)
                     }
                 }
@@ -84,10 +86,10 @@ struct AppointmentSummaryView: View {
                 if let est = appointment.estimatedDurationMinutes {
                     HStack {
                         Text("Estimated Duration:")
-                            .fontWeight(.semibold)
+                            .font(AppTheme.body).fontWeight(.semibold)
                         Spacer()
                         Text("\(est) mins")
-                            .foregroundColor(.blue)
+                            .foregroundColor(AppTheme.accent)
                     }
                 }
 
@@ -95,11 +97,11 @@ struct AppointmentSummaryView: View {
                 if !appointment.behaviorLog.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Behavior Log")
-                            .font(.headline)
+                            .font(AppTheme.title)
                         ForEach(appointment.behaviorLog.prefix(5), id: \.self) { entry in
                             Text("• \(entry)")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                                .font(AppTheme.body)
+                                .foregroundColor(AppTheme.secondaryText)
                         }
                     }
                 }
@@ -107,15 +109,15 @@ struct AppointmentSummaryView: View {
                 // Notes
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Notes")
-                        .font(.headline)
+                        .font(AppTheme.title)
                     if let notes = appointment.notes, !notes.isEmpty {
                         Text(notes)
-                            .font(.body)
-                            .foregroundColor(.primary)
+                            .font(AppTheme.body)
+                            .foregroundColor(AppTheme.primaryText)
                     } else {
                         Text("No notes provided.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
+                            .font(AppTheme.body)
+                            .foregroundColor(AppTheme.secondaryText)
                     }
                 }
 
@@ -131,11 +133,15 @@ struct AppointmentSummaryView: View {
             }
             .padding()
         }
+        .onAppear {
+            logger.log("AppointmentSummaryView appeared for appointment id: \(appointment.id)")
+        }
         .navigationTitle("Appointment Summary")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
+                    logger.log("Share button tapped for appointment id: \(appointment.id)")
                     isSharePresented = true
                 } label: {
                     Image(systemName: "square.and.arrow.up")
@@ -157,12 +163,14 @@ private struct SectionBox: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.headline)
+            Text(title)
+                .font(AppTheme.title)
+                .foregroundColor(AppTheme.primaryText)
             Text(text)
-                .font(.subheadline)
+                .font(AppTheme.body)
                 .padding(6)
                 .background(color.opacity(0.1))
-                .cornerRadius(8)
+                .cornerRadius(AppTheme.cornerRadius)
                 .foregroundColor(color)
         }
     }
@@ -173,14 +181,16 @@ private struct PhotoBox: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
+            Text(title)
+                .font(AppTheme.title)
+                .foregroundColor(AppTheme.primaryText)
             Image(uiImage: image)
                 .resizable()
                 .accessibilityLabel(Text(title))
                 .scaledToFit()
                 .frame(maxWidth: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .shadow(radius: 4)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadius))
+                .shadow(color: Color.black.opacity(0.2), radius: AppTheme.cornerRadius)
         }
     }
 }

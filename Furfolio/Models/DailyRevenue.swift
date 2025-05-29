@@ -9,6 +9,7 @@
 import Foundation
 import SwiftData
 import SwiftUI
+import os
 
 // TODO: Move transformer registration to PersistenceController and consider caching aggregated summaries separately.
 // TODO: Consider persisting aggregated summaries separately to optimize large data reads
@@ -16,6 +17,8 @@ import SwiftUI
 @MainActor
 @Model
 final class DailyRevenue: Identifiable, Hashable {
+  
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "DailyRevenue")
   
   /// Shared calendar for date calculations and comparisons.
   private static let calendar = Calendar.current
@@ -58,6 +61,7 @@ final class DailyRevenue: Identifiable, Hashable {
     self.date = date <= Date.now ? date : Date.now
     self.totalAmount = max(0, totalAmount)
     self.dogOwner = owner
+    logger.log("Initialized DailyRevenue id: \(id), date: \(date), totalAmount: \(totalAmount)")
   }
   
   /// Designated initializer for DailyRevenue model.
@@ -71,6 +75,7 @@ final class DailyRevenue: Identifiable, Hashable {
     self.date = date <= Date.now ? date : Date.now
     self.totalAmount = max(0, totalAmount)
     self.dogOwner = dogOwner
+    logger.log("Initialized DailyRevenue id: \(id), date: \(date), totalAmount: \(totalAmount)")
   }
   
   /// Creates and inserts a new DailyRevenue, validating inputs via `RevenueError`.
@@ -81,10 +86,12 @@ final class DailyRevenue: Identifiable, Hashable {
     owner: DogOwner,
     in context: ModelContext
   ) throws -> DailyRevenue {
+      logger.log("Creating DailyRevenue with date: \(date), totalAmount: \(totalAmount), owner: \(owner.id)")
     guard totalAmount >= 0 else { throw RevenueError.negativeAmount }
     guard date <= Date.now        else { throw RevenueError.futureDate }
     let revenue = DailyRevenue(date: date, totalAmount: totalAmount, owner: owner)
     context.insert(revenue)
+      logger.log("Created DailyRevenue id: \(revenue.id)")
     return revenue
   }
   
@@ -110,6 +117,7 @@ final class DailyRevenue: Identifiable, Hashable {
   /// Returns the totalAmount formatted as a currency string using the current locale.
   @Transient
   var formattedTotal: String {
+      logger.log("Computing formattedTotal for id: \(id), totalAmount: \(totalAmount)")
     Self.currencyFormatter.locale = .current
     return Self.currencyFormatter.string(from: NSNumber(value: totalAmount))
       ?? "\(Self.currencyFormatter.currencySymbol ?? "$")\(totalAmount)"
@@ -136,13 +144,29 @@ final class DailyRevenue: Identifiable, Hashable {
   /// Returns a reward tag string based on totalAmount thresholds.
   @Transient
   var dailyRewardTag: String? {
+      logger.log("Computing dailyRewardTag for id: \(id), totalAmount: \(totalAmount)")
     let thresholds = SettingsManager.shared.rewardThresholds
     switch totalAmount {
-    case 0..<thresholds[0]: return nil
-    case thresholds[0]..<thresholds[1]: return "🏅 Goal Met"
-    case thresholds[1]..<thresholds[2]: return "🎯 Great Day"
-    case thresholds[2]...: return "🚀 Record Breaker"
-    default: return nil
+    case 0..<thresholds[0]:
+        let resultTag: String? = nil
+        logger.log("dailyRewardTag result: \(String(describing: resultTag))")
+        return resultTag
+    case thresholds[0]..<thresholds[1]:
+        let resultTag = "🏅 Goal Met"
+        logger.log("dailyRewardTag result: \(resultTag)")
+        return resultTag
+    case thresholds[1]..<thresholds[2]:
+        let resultTag = "🎯 Great Day"
+        logger.log("dailyRewardTag result: \(resultTag)")
+        return resultTag
+    case thresholds[2]...:
+        let resultTag = "🚀 Record Breaker"
+        logger.log("dailyRewardTag result: \(resultTag)")
+        return resultTag
+    default:
+        let resultTag: String? = nil
+        logger.log("dailyRewardTag result: \(String(describing: resultTag))")
+        return resultTag
     }
   }
   
@@ -201,13 +225,17 @@ final class DailyRevenue: Identifiable, Hashable {
   // MARK: – Mutating Methods
   
   func addRevenue(_ amount: Double) {
+      logger.log("Adding revenue \(amount) to DailyRevenue id: \(id)")
     guard amount >= 0 else { return }
     totalAmount += amount
+      logger.log("New totalAmount: \(totalAmount)")
   }
   
   func resetIfNotToday() {
+      logger.log("resetIfNotToday called for id: \(id), isToday: \(isToday)")
     if !isToday {
       totalAmount = 0.0
+        logger.log("Reset totalAmount to 0 for id: \(id)")
     }
   }
   

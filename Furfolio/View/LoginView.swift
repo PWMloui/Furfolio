@@ -7,9 +7,11 @@
 
 import SwiftUI
 import LocalAuthentication
+import os
 
 @MainActor
 final class LoginViewModel: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "LoginViewModel")
   @Published var username: String = ""
   @Published var password: String = ""
   @Published var isAuthenticated: Bool = false
@@ -22,6 +24,7 @@ final class LoginViewModel: ObservableObject {
   ]
 
   func login() async {
+      logger.log("login() called for username: \(username)")
     isLoading = true
     authenticationError = nil
     // Simulate network delay
@@ -31,13 +34,16 @@ final class LoginViewModel: ObservableObject {
   }
 
   private func authenticateUser() {
+      logger.log("Authenticating user: \(username)")
     if let storedPassword = Self.storedCredentials[username], storedPassword == password {
+        logger.log("Authentication successful for user: \(username)")
       withAnimation {
         isAuthenticated = true
         authenticationError = nil
       }
       feedbackGenerator.notificationOccurred(.success)
     } else {
+        logger.log("Authentication failed for user: \(username)")
       withAnimation {
         isAuthenticated = false
         authenticationError = NSLocalizedString("Invalid username or password. Please try again.", comment: "Error message for invalid login credentials")
@@ -47,19 +53,23 @@ final class LoginViewModel: ObservableObject {
   }
 
   func biometricLogin() {
+      logger.log("biometricLogin() called")
     let context = LAContext()
     var error: NSError?
     if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+        logger.log("Biometric available, evaluating policy")
       let reason = NSLocalizedString("Authenticate with Face ID to access your account.", comment: "Biometric authentication reason")
       context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, evaluateError in
         DispatchQueue.main.async {
           if success {
+              self.logger.log("Biometric authentication succeeded")
             withAnimation {
               self.isAuthenticated = true
               self.authenticationError = nil
             }
             self.feedbackGenerator.notificationOccurred(.success)
           } else {
+              self.logger.log("Biometric authentication failed: \(evaluateError?.localizedDescription ?? "unknown error")")
             withAnimation {
               self.isAuthenticated = false
               self.authenticationError = evaluateError?.localizedDescription ?? NSLocalizedString("Biometric authentication failed. Please try again.", comment: "Error message for failed biometric authentication")
@@ -69,6 +79,7 @@ final class LoginViewModel: ObservableObject {
         }
       }
     } else {
+        logger.log("Biometric authentication not available: \(error?.localizedDescription ?? "unknown")")
       withAnimation {
         authenticationError = NSLocalizedString("Biometric authentication is not available on this device.", comment: "Error message for unavailable biometrics")
       }
@@ -82,6 +93,7 @@ final class LoginViewModel: ObservableObject {
 @MainActor
 /// View for user authentication: handles username/password login, biometric authentication, and displays business tips.
 struct LoginView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "LoginView")
   @StateObject private var viewModel = LoginViewModel()
 
   var body: some View {
@@ -116,6 +128,7 @@ struct LoginView: View {
       
       // Login Button
       Button(action: {
+          logger.log("Login button tapped")
         Task { await viewModel.login() }
       }) {
         if viewModel.isLoading {
@@ -131,14 +144,14 @@ struct LoginView: View {
             .padding()
         }
       }
-      .background(Color.blue)
-      .cornerRadius(8)
+      .buttonStyle(FurfolioButtonStyle())
       .accessibilityLabel(NSLocalizedString("Login Button", comment: "Accessibility label for login button"))
       .disabled(viewModel.isLoading)
       .transition(.scale)
       
       // Biometric Login Button
       Button(action: {
+          logger.log("Biometric login button tapped")
         viewModel.biometricLogin()
       }) {
         HStack {
@@ -150,13 +163,13 @@ struct LoginView: View {
         .frame(maxWidth: .infinity)
         .padding()
       }
-      .background(Color.green)
-      .cornerRadius(8)
+      .buttonStyle(FurfolioButtonStyle())
       .accessibilityLabel(NSLocalizedString("Biometric Login Button", comment: "Accessibility label for biometric login button"))
       .disabled(viewModel.isLoading)
       .transition(.scale)
       
       Button(action: {
+          logger.log("Skip Login tapped")
         withAnimation {
           viewModel.isAuthenticated = true
           viewModel.authenticationError = nil
@@ -171,11 +184,12 @@ struct LoginView: View {
           .padding(.top, 8)
       }
       .accessibilityLabel("Skip Login Button")
+      .buttonStyle(FurfolioButtonStyle())
       
       // Authentication Error Message
       if let error = viewModel.authenticationError {
         Text(error)
-          .foregroundColor(.red)
+          .foregroundColor(AppTheme.warning)
           .font(.footnote)
           .padding(.top, 10)
           .accessibilityLabel(NSLocalizedString("Error Message", comment: "Accessibility label for error message"))
@@ -185,7 +199,7 @@ struct LoginView: View {
       // Successful Authentication Message
       if viewModel.isAuthenticated {
         Text(NSLocalizedString("Successfully Authenticated!", comment: "Message for successful login"))
-          .foregroundColor(.green)
+          .foregroundColor(AppTheme.accent)
           .font(.headline)
           .accessibilityLabel(NSLocalizedString("Success Message", comment: "Accessibility label for success message"))
           .transition(.opacity)
@@ -198,6 +212,9 @@ struct LoginView: View {
     .padding()
     .accessibilityElement(children: .combine)
     .animation(.easeInOut, value: viewModel.isAuthenticated)
+    .onAppear {
+        logger.log("LoginView appeared")
+    }
   }
   
   /// Shows business-owner tips when not authenticated.

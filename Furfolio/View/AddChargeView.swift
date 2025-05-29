@@ -8,12 +8,14 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 
 // TODO: Move business logic (validation and saving) into a dedicated ViewModel for better testability and separation of concerns.
 
 @MainActor
 struct AddChargeView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AddChargeView")
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
@@ -60,15 +62,21 @@ struct AddChargeView: View {
                     Color.black.opacity(0.3).ignoresSafeArea()
                     ProgressView("Saving...")
                         .padding()
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemBackground)))
-                        .shadow(radius: 10)
+                        .background(RoundedRectangle(cornerRadius: AppTheme.cornerRadius).fill(AppTheme.background))
+                        .shadow(color: Color.black.opacity(0.2), radius: AppTheme.cornerRadius)
+                        .onAppear {
+                            logger.log("Showing saving overlay")
+                        }
                 }
             }
             .onAppear {
+                logger.log("AddChargeView appeared for owner id: \(dogOwner.id)")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    logger.log("Scheduling tooltip animation")
                     withAnimation { showTooltip = true }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
                         withAnimation { showTooltip = false }
+                        logger.log("Hiding tooltip animation")
                     }
                 }
             }
@@ -150,13 +158,13 @@ struct AddChargeView: View {
 
             if showTooltip && chargeNotes.isEmpty {
                 Text("Enter any extra details (max 250 characters)")
-                    .font(.caption)
+                    .font(AppTheme.caption)
                     .foregroundColor(.secondary)
                     .transition(.opacity)
             }
             if chargeNotes.count > 250 {
                 Text("Notes must be 250 characters or less.")
-                    .font(.caption)
+                    .font(AppTheme.caption)
                     .foregroundColor(.red)
             }
         }
@@ -172,14 +180,14 @@ struct AddChargeView: View {
                 Text("Name")
                 Spacer()
                 Text(dogOwner.ownerName)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.secondaryText)
             }
 
             HStack {
                 Text("Loyalty Status")
                 Spacer()
                 Text(stats.loyaltyStatus)
-                    .foregroundColor(.yellow)
+                    .foregroundColor(AppTheme.info)
                     .fontWeight(.semibold)
             }
 
@@ -187,7 +195,7 @@ struct AddChargeView: View {
                 Text("Loyalty Reward")
                 Spacer()
                 Text(stats.loyaltyProgressTag)
-                    .foregroundColor(.green)
+                    .foregroundColor(AppTheme.accent)
                     .fontWeight(.semibold)
             }
 
@@ -196,7 +204,7 @@ struct AddChargeView: View {
                     Text("Behavior")
                     Spacer()
                     Text(badge)
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.warning)
                         .fontWeight(.semibold)
                 }
             }
@@ -206,7 +214,7 @@ struct AddChargeView: View {
                     Text("Status")
                     Spacer()
                     Text("⚠️ Retention Risk")
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.warning)
                         .fontWeight(.semibold)
                 }
             }
@@ -216,7 +224,7 @@ struct AddChargeView: View {
                     Text("Special")
                     Spacer()
                     Text("🎂 Birthday Month")
-                        .foregroundColor(.purple)
+                        .foregroundColor(AppTheme.info)
                         .fontWeight(.semibold)
                 }
             }
@@ -229,12 +237,18 @@ struct AddChargeView: View {
     private func toolbarContent() -> some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
             Button("Cancel") {
+                logger.log("AddChargeView Cancel tapped")
                 withAnimation { dismiss() }
             }
+            .buttonStyle(FurfolioButtonStyle())
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button("Save") { handleSave() }
-                .disabled(!isFormValid() || isSaving)
+            Button("Save") {
+                logger.log("AddChargeView Save tapped: amount=\(String(describing: chargeAmount)), service=\(serviceType.rawValue)")
+                handleSave()
+            }
+            .disabled(!isFormValid() || isSaving)
+            .buttonStyle(FurfolioButtonStyle())
         }
     }
 
@@ -242,6 +256,7 @@ struct AddChargeView: View {
 
     /// Validates inputs and saves the charge record.
     private func handleSave() {
+        logger.log("handleSave invoked")
         guard validateCharge() else {
             showErrorAlert = true
             return
@@ -254,11 +269,13 @@ struct AddChargeView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             isSaving = false
             dismiss()
+            logger.log("handleSave completed, view dismissed")
         }
     }
 
     /// Creates and persists the new Charge entity in the model context.
     private func saveChargeHistory() {
+        logger.log("saveChargeHistory started: service=\(serviceType.rawValue), amount=\(String(describing: chargeAmount))")
         // Create without notes
         let newCharge = Charge.create(
           date: Date.now,
@@ -278,11 +295,7 @@ struct AddChargeView: View {
             newCharge.update(notes: trimmed)
         }
 
-        print(
-            "Charge saved: \(newCharge.formattedAmount) "
-          + "via \(newCharge.paymentMethod.localized) "
-          + "on \(newCharge.formattedDate)"
-        )
+        logger.log("Charge saved: \(newCharge.formattedAmount) via \(newCharge.paymentMethod.localized) on \(newCharge.formattedDate)")
     }
 
     // MARK: – Validation
@@ -290,6 +303,7 @@ struct AddChargeView: View {
     /// Validates that the charge amount is greater than zero.
     private func validateCharge() -> Bool {
         guard let amount = chargeAmount, amount > 0 else {
+            logger.error("Validation failed: chargeAmount must be > 0, got \(String(describing: chargeAmount))")
             errorMessage = "Charge amount must be greater than 0."
             return false
         }

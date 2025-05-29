@@ -7,10 +7,12 @@
 //
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor
 /// Displays the service types most frequently booked, in descending order of count.
 struct PopularServicesView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PopularServicesView")
     @StateObject private var viewModel = PopularServicesViewModel()
     @Query(
         predicate: nil,
@@ -23,17 +25,26 @@ struct PopularServicesView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("Popular Services")) {
+                Section(header: Text("Popular Services")
+                    .font(AppTheme.title)
+                    .foregroundColor(AppTheme.primaryText)
+                ) {
                     ForEach(viewModel.serviceFrequency, id: \.type) { entry in
                         HStack {
                             Text(entry.type.localized)
+                                .font(AppTheme.body)
+                                .foregroundColor(AppTheme.primaryText)
                             Spacer()
                             Text("\(entry.count) bookings")
-                                .foregroundColor(.secondary)
+                                .font(AppTheme.caption)
+                                .foregroundColor(AppTheme.secondaryText)
                         }
                         .padding(.vertical, 4)
                         .cardStyle()
                     }
+                }
+                .onAppear {
+                    logger.log("Rendering Popular Services list")
                 }
             }
             .listStyle(.insetGrouped)
@@ -43,6 +54,9 @@ struct PopularServicesView: View {
         .onAppear { viewModel.update(from: appointments) }
         .onChange(of: appointments) { newAppointments in
             viewModel.update(from: newAppointments)
+        }
+        .onAppear {
+            logger.log("PopularServicesView appeared with \(viewModel.serviceFrequency.count) services and \(appointments.count) appointments")
         }
     }
 }

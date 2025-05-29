@@ -8,6 +8,9 @@
 import SwiftUI
 import Combine
 import UIKit
+import SwiftData
+import YourDataService
+import os
 
 enum ActiveSheet: Identifiable {
   case addOwner, addAppointment, addCharge
@@ -17,6 +20,7 @@ enum ActiveSheet: Identifiable {
 
 /// Global application state and quick-action handlers.
 final class AppState: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppState")
   /// Shared singleton instance.
   static let shared = AppState()
 
@@ -35,6 +39,7 @@ final class AppState: ObservableObject {
 
   /// Sets up NotificationCenter publishers for home-screen quick actions.
   private func registerQuickActionSubscriptions() {
+        logger.log("Registering quick action subscriptions")
     NotificationCenter.default.publisher(for: .shortcutAddOwner)
       .sink { [weak self] _ in self?.activeSheet = .addOwner }
       .store(in: &cancellables)
@@ -54,6 +59,7 @@ final class AppState: ObservableObject {
 
   /// Begins observing app lifecycle to refresh Home Screen shortcuts dynamically.
   func startListening() {
+        logger.log("Starting to listen for app lifecycle notifications")
     NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
       .sink { [weak self] _ in
         self?.refreshShortcuts()
@@ -63,6 +69,11 @@ final class AppState: ObservableObject {
 
   /// Regenerates and registers Home Screen shortcut items based on current app data.
   private func refreshShortcuts() {
+        logger.log("Refreshing home screen shortcuts")
+    // Dynamic checks based on persisted data
+    let hasOwners = YourDataService.shared.hasOwners
+    let hasAppointments = YourDataService.shared.hasAppointments
+
     var items: [UIApplicationShortcutItem] = []
 
     // Always allow “Add Owner”
@@ -75,8 +86,7 @@ final class AppState: ObservableObject {
     ))
 
     // Placeholder: only show “Add Appointment” if there’s at least one owner
-    // TODO: replace `true` with your actual owns-count check
-    if true {
+    if hasOwners {
       items.append(.init(
         type: AppShortcutType.addAppointment.rawValue,
         localizedTitle: NSLocalizedString("Add Appointment", comment: ""),
@@ -87,7 +97,7 @@ final class AppState: ObservableObject {
     }
 
     // Placeholder: only show “Add Charge” if there’s at least one appointment
-    if true {
+    if hasAppointments {
       items.append(.init(
         type: AppShortcutType.addCharge.rawValue,
         localizedTitle: NSLocalizedString("Add Charge", comment: ""),
@@ -107,20 +117,25 @@ final class AppState: ObservableObject {
     ))
 
     UIApplication.shared.shortcutItems = items
+
+        logger.log("Registered \(items.count) shortcut items")
   }
 
   /// Signs the user in by setting isAuthenticated to true.
   func signIn() {
+        logger.log("Signing in user")
     isAuthenticated = true
   }
 
   /// Signs the user out by setting isAuthenticated to false.
   func signOut() {
+        logger.log("Signing out user")
     isAuthenticated = false
   }
 
   /// Updates the loyalty threshold.
   func updateLoyaltyThreshold(to newValue: Int) {
+        logger.log("Updating loyaltyThreshold to \(newValue)")
     loyaltyThreshold = newValue
   }
 
@@ -133,5 +148,6 @@ final class AppState: ObservableObject {
     }
     registerQuickActionSubscriptions()
     startListening()
+        logger.log("AppState initialized; loyaltyThreshold=\(loyaltyThreshold)")
   }
 }

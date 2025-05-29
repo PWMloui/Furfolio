@@ -8,10 +8,12 @@
 import SwiftUI
 import SwiftData
 import QuickAddMenuViewModel
+import os
 
 @MainActor
 /// View presenting a grid of quick-add actions (owner, appointment, charge, behavior log).
 struct QuickAddMenuView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "QuickAddMenuView")
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -20,6 +22,8 @@ struct QuickAddMenuView: View {
     /// Pass in your existing owners so you can choose one for appointment/charge.
     let dogOwners: [DogOwner]
 
+    private static let gridColumns = [GridItem(.adaptive(minimum: 100), spacing: 20)]
+
     init(dogOwners: [DogOwner], modelContext: ModelContext) {
         _viewModel = StateObject(wrappedValue: QuickAddMenuViewModel(dogOwners: dogOwners, modelContext: modelContext))
         self.dogOwners = dogOwners
@@ -27,17 +31,16 @@ struct QuickAddMenuView: View {
 
     var body: some View {
       NavigationStack {
-        /// Defines adaptive grid layout for quick-action buttons.
-        private static let gridColumns = [GridItem(.adaptive(minimum: 100), spacing: 20)]
         VStack(spacing: 24) {
           Text("Quick Actions")
-            .font(.title2)
-            .bold()
+            .font(AppTheme.header)
+            .foregroundColor(AppTheme.primaryText)
             .padding(.top)
 
           LazyVGrid(columns: Self.gridColumns, spacing: 20) {
             /// Quick-add a new dog owner.
             Button {
+              logger.log("QuickAdd: New Owner tapped")
               viewModel.showOwner()
             } label: {
               VStack {
@@ -47,12 +50,13 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(FurfolioButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
 
             /// Quick-add a new appointment.
             Button {
+              logger.log("QuickAdd: Appointment tapped")
               viewModel.showAppointment()
             } label: {
               VStack {
@@ -62,12 +66,13 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(FurfolioButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
 
             /// Quick-add a new charge.
             Button {
+              logger.log("QuickAdd: Charge tapped")
               viewModel.showCharge()
             } label: {
               VStack {
@@ -77,12 +82,13 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(FurfolioButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
 
             /// Log a new behavior.
             Button {
+              logger.log("QuickAdd: Log Behavior tapped")
               viewModel.showBehavior()
             } label: {
               VStack {
@@ -92,7 +98,7 @@ struct QuickAddMenuView: View {
                   .font(.caption)
               }
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(FurfolioButtonStyle())
             .cardStyle()
             .accessibilityElement(children: .combine)
           }
@@ -100,6 +106,9 @@ struct QuickAddMenuView: View {
         }
         .padding()
         .navigationTitle("Quick Add")
+        .onAppear {
+          logger.log("QuickAddMenuView appeared with \(dogOwners.count) owners")
+        }
         .toolbar {
           ToolbarItem(placement: .navigationBarTrailing) {
             Button("Done") {

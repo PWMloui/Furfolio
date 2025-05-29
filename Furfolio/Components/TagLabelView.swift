@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import os
 
 private struct TagLabelFontKey: EnvironmentKey {
-  static let defaultValue: Font = .caption
+  static let defaultValue: Font = AppTheme.caption
 }
 private struct TagLabelCornerRadiusKey: EnvironmentKey {
-  static let defaultValue: CGFloat = 8
+  static let defaultValue: CGFloat = AppTheme.cornerRadius
 }
 private struct TagLabelHorizontalPaddingKey: EnvironmentKey {
   static let defaultValue: CGFloat = 8
@@ -20,10 +21,10 @@ private struct TagLabelVerticalPaddingKey: EnvironmentKey {
   static let defaultValue: CGFloat = 4
 }
 private struct TagLabelBackgroundColorKey: EnvironmentKey {
-  static let defaultValue: Color = .appSecondary
+  static let defaultValue: Color = AppTheme.accent
 }
 private struct TagLabelTextColorKey: EnvironmentKey {
-  static let defaultValue: Color = .white
+  static let defaultValue: Color = AppTheme.background
 }
 
 extension EnvironmentValues {
@@ -55,6 +56,7 @@ extension EnvironmentValues {
 
 /// A view that displays a text tag or badge with customizable styling and accessibility support.
 struct TagLabelView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TagLabelView")
   /// The text content of the tag.
   let text: String
 
@@ -103,6 +105,9 @@ struct TagLabelView: View {
       .cornerRadius(cornerRadiusToUse)
       .accessibilityLabel(Text(text))
       .accessibilityAddTraits(.isStaticText)
+      .onAppear {
+          logger.log("TagLabelView presented: \(text)")
+      }
   }
 }
 

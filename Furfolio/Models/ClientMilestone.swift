@@ -8,9 +8,11 @@
 
 import SwiftData
 import Foundation
+import os
 
 @Model
 final class ClientMilestone: Identifiable, Hashable {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ClientMilestone")
     
     // MARK: – Persistent Properties
     
@@ -122,6 +124,7 @@ final class ClientMilestone: Identifiable, Hashable {
       self.dateAchieved = dateAchieved
       self.details = details?.trimmingCharacters(in: .whitespacesAndNewlines)
       // createdAt default applies
+      logger.log("Initialized ClientMilestone id: \(id), type: \(type.rawValue) for owner: \(dogOwner.id)")
     }
 
     /// Designated initializer for ClientMilestone model.
@@ -141,6 +144,7 @@ final class ClientMilestone: Identifiable, Hashable {
       self.details = details?.trimmingCharacters(in: .whitespacesAndNewlines)
       self.createdAt = createdAt
       self.updatedAt = updatedAt
+      logger.log("Initialized ClientMilestone id: \(id), type: \(type.rawValue) for owner: \(dogOwner.id)")
     }
     
     
@@ -152,10 +156,12 @@ final class ClientMilestone: Identifiable, Hashable {
         dateAchieved: Date,
         details: String?
     ) {
+        logger.log("Updating ClientMilestone \(id): type=\(type.rawValue), date=\(dateAchieved), details=\(details ?? "nil")")
         self.type = type
         self.dateAchieved = dateAchieved
         self.details = details?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.updatedAt = Date.now
+        logger.log("Updated ClientMilestone \(id) at \(updatedAt!)")
     }
     
     
@@ -167,12 +173,14 @@ final class ClientMilestone: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> ClientMilestone {
+        logger.log("Recording First Visit milestone for owner: \(owner.id)")
         let m = ClientMilestone(
             type: .firstVisit,
             owner: owner,
             details: NSLocalizedString("Congratulations on your first visit!", comment: "")
         )
         context.insert(m)
+        logger.log("Recorded ClientMilestone id: \(m.id)")
         return m
     }
     
@@ -182,12 +190,14 @@ final class ClientMilestone: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> ClientMilestone {
+        logger.log("Recording Five Visits milestone for owner: \(owner.id)")
         let m = ClientMilestone(
             type: .fiveVisits,
             owner: owner,
             details: NSLocalizedString("You've reached 5 visits—thank you!", comment: "")
         )
         context.insert(m)
+        logger.log("Recorded ClientMilestone id: \(m.id)")
         return m
     }
     
@@ -198,12 +208,14 @@ final class ClientMilestone: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> ClientMilestone {
+        logger.log("Recording Revenue Threshold milestone for owner: \(owner.id)")
         let detail = String(
             format: NSLocalizedString("Total revenue reached $%.2f", comment: ""),
             amount
         )
         let m = ClientMilestone(type: .revenueThreshold, owner: owner, details: detail)
         context.insert(m)
+        logger.log("Recorded ClientMilestone id: \(m.id)")
         return m
     }
     
@@ -213,12 +225,14 @@ final class ClientMilestone: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> ClientMilestone {
+        logger.log("Recording Retention Risk milestone for owner: \(owner.id)")
         let m = ClientMilestone(
             type: .retentionRisk,
             owner: owner,
             details: NSLocalizedString("No visits in over 60 days", comment: "")
         )
         context.insert(m)
+        logger.log("Recorded ClientMilestone id: \(m.id)")
         return m
     }
     
@@ -230,10 +244,12 @@ final class ClientMilestone: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> ClientMilestone {
+        logger.log("Recording Custom milestone for owner: \(owner.id)")
         let combined = name.trimmingCharacters(in: .whitespacesAndNewlines)
             + (details.map { ": \($0)" } ?? "")
         let m = ClientMilestone(type: .custom, owner: owner, details: combined)
         context.insert(m)
+        logger.log("Recorded ClientMilestone id: \(m.id)")
         return m
     }
     
@@ -245,27 +261,33 @@ final class ClientMilestone: Identifiable, Hashable {
         for owner: DogOwner,
         in context: ModelContext
     ) -> [ClientMilestone] {
+        logger.log("Fetching milestones for owner: \(owner.id)")
         let descriptor = FetchDescriptor<ClientMilestone>(
             predicate: #Predicate { $0.dogOwner.id == owner.id },
             sortBy: [ SortDescriptor(\ClientMilestone.dateAchieved, order: .reverse) ]
         )
         do {
-            return try context.fetch(descriptor)
+            let results = try context.fetch(descriptor)
+            logger.log("Fetched \(results.count) milestones for owner \(owner.id)")
+            return results
         } catch {
-            print("⚠️ ClientMilestone.fetchAll failed:", error)
+            logger.error("ClientMilestone.fetchAll failed: \(error.localizedDescription)")
             return []
         }
     }
     
     /// Fetches all milestones, newest first.
     static func fetchAll(in context: ModelContext) -> [ClientMilestone] {
+        logger.log("Fetching all ClientMilestones")
         let descriptor = FetchDescriptor<ClientMilestone>(
             sortBy: [ SortDescriptor(\ClientMilestone.dateAchieved, order: .reverse) ]
         )
         do {
-            return try context.fetch(descriptor)
+            let results = try context.fetch(descriptor)
+            logger.log("Fetched \(results.count) ClientMilestones")
+            return results
         } catch {
-            print("⚠️ ClientMilestone.fetchAll(in:) failed:", error)
+            logger.error("ClientMilestone.fetchAll(in:) failed: \(error.localizedDescription)")
             return []
         }
     }

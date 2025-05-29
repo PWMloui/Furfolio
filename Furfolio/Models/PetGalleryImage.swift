@@ -9,10 +9,13 @@
 import Foundation
 import SwiftData
 import UIKit
+import os
 @MainActor
 
 @Model
 final class PetGalleryImage: Identifiable, Hashable {
+    
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryImage")
     
     // MARK: – Transformer Name
     
@@ -67,6 +70,7 @@ final class PetGalleryImage: Identifiable, Hashable {
       self.tags        = tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       self.dogOwner    = owner
       self.appointment = appointment
+      logger.log("Initialized PetGalleryImage id: \(id), caption: \(caption ?? "nil"), tags: \(tags)")
     }
     
     /// Designated initializer for PetGalleryImage.
@@ -88,6 +92,7 @@ final class PetGalleryImage: Identifiable, Hashable {
       self.appointment = appointment
       self.dateAdded = dateAdded
       self.updatedAt = updatedAt
+      logger.log("Initialized PetGalleryImage id: \(id), dateAdded: \(dateAdded)")
     }
     
     
@@ -96,6 +101,7 @@ final class PetGalleryImage: Identifiable, Hashable {
     /// UIImage representation of stored imageData.
     @Transient
     var uiImage: UIImage? {
+        logger.log("Accessing uiImage for PetGalleryImage id: \(id)")
         guard let data = imageData else { return nil }
         return UIImage(data: data)
     }
@@ -103,6 +109,7 @@ final class PetGalleryImage: Identifiable, Hashable {
     /// Thumbnail resized to 200px width.
     @Transient
     var thumbnail: UIImage? {
+        logger.log("Generating thumbnail for PetGalleryImage id: \(id)")
         guard let data = imageData,
               let resizedData = ImageProcessor.resize(data: data, targetWidth: 200),
               let img = UIImage(data: resizedData)
@@ -115,22 +122,28 @@ final class PetGalleryImage: Identifiable, Hashable {
     
     /// Adds a trimmed tag if not already present, stamping `updatedAt`.
     func addTag(_ tag: String) {
+        logger.log("Adding tag to PetGalleryImage \(id): \(tag)")
         let t = tag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, !tags.contains(t) else { return }
         tags.append(t)
         updatedAt = Date()                         // was `.now`
+        logger.log("Tags now: \(tags)")
     }
     
     /// Removes the specified tag, stamping `updatedAt`.
     func removeTag(_ tag: String) {
+        logger.log("Removing tag from PetGalleryImage \(id): \(tag)")
         tags.removeAll { $0 == tag }
         updatedAt = Date()
+        logger.log("Tags now: \(tags)")
     }
     
     /// Clears all tags and updates `updatedAt`.
     func clearTags() {
+        logger.log("Clearing tags for PetGalleryImage \(id)")
         tags.removeAll()
         updatedAt = Date()
+        logger.log("Tags cleared")
     }
     
     
@@ -138,14 +151,18 @@ final class PetGalleryImage: Identifiable, Hashable {
     
     /// Updates the caption text, trimming whitespace and stamping `updatedAt`.
     func update(caption: String?) {
+        logger.log("Updating caption for PetGalleryImage \(id): \(caption ?? "nil")")
         self.caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
         updatedAt = Date()
+        logger.log("UpdatedAt stamped: \(updatedAt!)")
     }
     
     /// Updates the associated appointment and stamps `updatedAt`.
     func update(appointment: Appointment?) {
+        logger.log("Updating appointment for PetGalleryImage \(id): \(String(describing: appointment?.id))")
         self.appointment = appointment
         updatedAt = Date()
+        logger.log("UpdatedAt stamped: \(updatedAt!)")
     }
     
     
@@ -161,6 +178,8 @@ final class PetGalleryImage: Identifiable, Hashable {
       appointment: Appointment? = nil,
       in context: ModelContext
     ) -> PetGalleryImage {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryImage")
+      logger.log("Recording PetGalleryImage for owner \(owner.id)")
       let entry = PetGalleryImage(
         imageData: imageData,
         caption: caption,
@@ -169,6 +188,7 @@ final class PetGalleryImage: Identifiable, Hashable {
         appointment: appointment
       )
       context.insert(entry)
+      logger.log("Recorded PetGalleryImage id: \(entry.id)")
       return entry
     }
     
@@ -180,11 +200,15 @@ final class PetGalleryImage: Identifiable, Hashable {
       for owner: DogOwner,
       in context: ModelContext
     ) -> [PetGalleryImage] {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryImage")
+      logger.log("Fetching all PetGalleryImage for owner \(owner.id)")
       let desc = FetchDescriptor<PetGalleryImage>(
         predicate: #Predicate { $0.dogOwner.id == owner.id },
         sortBy: [ SortDescriptor(\PetGalleryImage.dateAdded, order: .reverse) ]
       )
-      return (try? context.fetch(desc)) ?? []
+      let result = (try? context.fetch(desc)) ?? []
+      logger.log("Fetched \(result.count) images")
+      return result
     }
     
     /// Fetches all images for a specific appointment, newest first.
@@ -192,11 +216,15 @@ final class PetGalleryImage: Identifiable, Hashable {
       for appointment: Appointment,
       in context: ModelContext
     ) -> [PetGalleryImage] {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryImage")
+      logger.log("Fetching images for appointment \(appointment.id)")
       let desc = FetchDescriptor<PetGalleryImage>(
         predicate: #Predicate { $0.appointment?.id == appointment.id },
         sortBy: [ SortDescriptor(\PetGalleryImage.dateAdded, order: .reverse) ]
       )
-      return (try? context.fetch(desc)) ?? []
+      let result = (try? context.fetch(desc)) ?? []
+      logger.log("Fetched \(result.count) images")
+      return result
     }
     
     /// Fetches images in a date range for the owner, newest first.
@@ -205,6 +233,8 @@ final class PetGalleryImage: Identifiable, Hashable {
       for owner: DogOwner,
       in context: ModelContext
     ) -> [PetGalleryImage] {
+      let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PetGalleryImage")
+      logger.log("Fetching images in range \(range.lowerBound)–\(range.upperBound) for owner \(owner.id)")
       let desc = FetchDescriptor<PetGalleryImage>(
         predicate: #Predicate {
           $0.dogOwner.id == owner.id &&
@@ -213,7 +243,9 @@ final class PetGalleryImage: Identifiable, Hashable {
         },
         sortBy: [ SortDescriptor(\PetGalleryImage.dateAdded, order: .reverse) ]
       )
-      return (try? context.fetch(desc)) ?? []
+      let result = (try? context.fetch(desc)) ?? []
+      logger.log("Fetched \(result.count) images")
+      return result
     }
     
     

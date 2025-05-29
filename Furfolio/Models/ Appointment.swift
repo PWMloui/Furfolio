@@ -8,6 +8,7 @@
 
 import Foundation
 import SwiftData
+import os
 
 extension Appointment {
   /// Default pet birthdays array.
@@ -20,6 +21,8 @@ extension Appointment {
 
 @Model
 final class Appointment: Identifiable {
+  
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Appointment")
   
   /// Shared calendar and formatter for display and comparisons.
   private static let calendar = Calendar.current
@@ -176,26 +179,40 @@ final class Appointment: Identifiable {
     
   /// Schedules a local notification for this appointment with the given offset.
   func scheduleReminder() {
-    guard isUpcoming else { return }
-    ReminderScheduler.scheduleReminder(for: self, offset: reminderOffset)
-    isNotified = true
+      guard isUpcoming else { 
+          logger.log("Attempted to schedule reminder for past appointment \(id)")
+          return 
+      }
+      logger.log("Scheduling reminder for appointment \(id) with offset \(reminderOffset) minutes")
+      ReminderScheduler.shared.scheduleReminder(
+          id: id.uuidString,
+          date: Calendar.current.date(byAdding: .minute, value: -reminderOffset, to: date)!,
+          title: "Upcoming Appointment",
+          body: summary
+      )
+      isNotified = true
+      logger.log("Scheduled reminder, isNotified set to true for appointment \(id)")
   }
   /// Cancels any previously scheduled notification for this appointment.
   func cancelReminder() {
-    ReminderScheduler.cancelReminder(for: self)
-    isNotified = false
+      logger.log("Cancelling reminder for appointment \(id)")
+      ReminderScheduler.shared.cancelReminder(id: id.uuidString)
+      isNotified = false
+      logger.log("Cancelled reminder, isNotified set to false for appointment \(id)")
   }
     
   // MARK: – Behavior Logging
     
   /// Logs a behavior entry and updates the pet’s profile badges if needed.
   func logBehavior(_ entry: String) {
-    behaviorLog.append(entry)
-    // Centralize badge logic in BadgeEngine
-    let badge = BadgeEngine.behaviorBadge(from: entry)
+      logger.log("Logging behavior entry for appointment \(id): '\(entry)'")
+      behaviorLog.append(entry)
+      let badge = BadgeEngine.behaviorBadge(from: entry)
+      logger.log("Computed behavior badge '\(badge.rawValue)' for entry")
       if !profileBadges.contains(badge.rawValue) {
           profileBadges.append(badge.rawValue)
-    }
+          logger.log("Appended new profile badge '\(badge.rawValue)' to appointment \(id)")
+      }
   }
 }
 

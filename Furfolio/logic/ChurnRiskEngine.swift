@@ -6,9 +6,25 @@
 //
 
 import Foundation
+import os
+import FirebaseRemoteConfigService
 
 @MainActor
 enum ChurnRiskEngine {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ChurnRiskEngine")
+
+    private static var recencyWindow: Double {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .churnRecencyWindowDays)
+    }
+    private static var recencyWeight: Double {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .churnWeightRecency)
+    }
+    private static var frequencyWeight: Double {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .churnWeightFrequency)
+    }
+    private static var monetaryWeight: Double {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .churnWeightMonetary)
+    }
     /// Runs synchronous work off the main thread and returns its result.
     private static func runAsync<T>(
         _ work: @Sendable @escaping () -> T
@@ -17,36 +33,39 @@ enum ChurnRiskEngine {
     }
     
     static func rfm(in appointments: [Appointment], charges: [Charge], referenceDate: Date = Date()) -> (recency: Double, frequency: Double, monetary: Double) {
+        logger.log("Computing RFM with \(appointments.count) appts, \(charges.count) charges, referenceDate: \(referenceDate)")
         let largeRecencyDefault = 365.0 * 10 // 10 years in days
-        
+
         let recency: Double
         if let mostRecent = appointments.map({ $0.date }).max() {
             recency = referenceDate.timeIntervalSince(mostRecent) / (60 * 60 * 24)
         } else {
             recency = largeRecencyDefault
         }
-        
+
         let frequency = Double(appointments.count)
         let monetary = charges.reduce(0.0) { $0 + $1.amount }
-        
+
+        logger.log("RFM values - recency: \(recency), frequency: \(frequency), monetary: \(monetary)")
         return (recency, frequency, monetary)
     }
     
     static func churnRiskScore(in appointments: [Appointment], charges: [Charge]) -> Double {
+        logger.log("Computing churnRiskScore")
         let (recency, frequency, monetary) = rfm(in: appointments, charges: charges)
-        
-        // Normalize recency: cap at 90 days, then divide by 90 so range is 0..1
-        let recencyNorm = min(recency, 90) / 90.0
-        
-        // Normalize frequency: invert so more visits means lower risk
+
+        let recencyNorm = min(recency, recencyWindow) / recencyWindow
+        logger.log("Normalized recency: \(recencyNorm)")
+
         let frequencyNorm = 1.0 / (frequency + 1.0)
-        
-        // Normalize monetary: invert so more spending means lower risk
         let monetaryNorm = 1.0 / (monetary + 1.0)
-        
-        // Weighted risk score
-        let riskScore = 0.5 * recencyNorm + 0.3 * frequencyNorm + 0.2 * monetaryNorm
-        
+        logger.log("Normalized frequency: \(frequencyNorm), monetary: \(monetaryNorm)")
+
+        let riskScore = recencyWeight * recencyNorm
+                      + frequencyWeight * frequencyNorm
+                      + monetaryWeight * monetaryNorm
+        logger.log("Churn risk score: \(riskScore)")
+
         return riskScore
     }
     
@@ -55,7 +74,8 @@ enum ChurnRiskEngine {
         charges: [Charge],
         referenceDate: Date = Date()
     ) async -> (recency: Double, frequency: Double, monetary: Double) {
-        await runAsync {
+        logger.log("rfmAsync invoked")
+        return await runAsync {
             rfm(in: appointments, charges: charges, referenceDate: referenceDate)
         }
     }
@@ -64,7 +84,8 @@ enum ChurnRiskEngine {
         in appointments: [Appointment],
         charges: [Charge]
     ) async -> Double {
-        await runAsync {
+        logger.log("churnRiskScoreAsync invoked")
+        return await runAsync {
             churnRiskScore(in: appointments, charges: charges)
         }
     }

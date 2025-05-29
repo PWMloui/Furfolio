@@ -10,10 +10,13 @@ import Foundation
 // TODO: Centralize transformer registration in PersistenceController and move formatting logic to a ViewModel or FormatterService.
 import SwiftData
 import SwiftUI
+import os
 
 @preconcurrency
 @Model
 final class Charge: Identifiable, Hashable {
+    
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
     
     // MARK: – Transformer Names
     private static let stringArrayTransformerName = "StringArrayTransformer"
@@ -62,6 +65,7 @@ final class Charge: Identifiable, Hashable {
         self.petBadges = petBadges
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        logger.log("Initialized Charge id: \(id), amount: \(amount), serviceType: \(serviceType.rawValue)")
     }
 
     // MARK: – Enumerations
@@ -158,28 +162,37 @@ final class Charge: Identifiable, Hashable {
     // MARK: – Actions
     /// Adds a badge to the charge if not already present and updates updatedAt.
     func addBadge(_ badge: String) {
+        logger.log("Adding badge '\(badge)' to Charge \(id)")
         guard !petBadges.contains(badge) else { return }
         petBadges.append(badge)
+        logger.log("Added badge. Current badges: \(petBadges)")
         updatedAt = Date.now
     }
     /// Updates the charge’s amount and notes, enforcing non-negative amount, and updates updatedAt.
     func update(amount: Double? = nil, notes: String? = nil) {
+        logger.log("Updating Charge \(id) with amount: \(String(describing: amount)), notes: \(String(describing: notes))")
         if let amt = amount { self.amount = max(0, amt) }
         if let n = notes?.trimmingCharacters(in: .whitespacesAndNewlines) {
             self.notes = n
         }
+        logger.log("Updated fields. Pre-update values -> amount: \(self.amount), notes: \(self.notes ?? "")")
         updatedAt = Date.now
+        logger.log("Set updatedAt for Charge \(id): \(updatedAt!)")
     }
     /// Marks the charge as archived (soft-delete) and updates timestamp.
     func archive() {
+        logger.log("Archiving Charge \(id)")
         isArchived = true
         updatedAt = Date.now
+        logger.log("Archived Charge \(id), updatedAt: \(updatedAt!)")
     }
 
     /// Restores an archived charge.
     func restore() {
+        logger.log("Restoring Charge \(id)")
         isArchived = false
         updatedAt = Date.now
+        logger.log("Restored Charge \(id), updatedAt: \(updatedAt!)")
     }
     
     // MARK: – Static Create & Fetch
@@ -196,6 +209,8 @@ final class Charge: Identifiable, Hashable {
         appointment: Appointment? = nil,
         in context: ModelContext
     ) -> Charge {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
+        logger.log("Creating Charge with amount: \(amount), serviceType: \(serviceType.rawValue)")
         let charge = Charge(
             date: date,
             serviceType: serviceType,
@@ -207,42 +222,63 @@ final class Charge: Identifiable, Hashable {
             petBadges: petBadges
         )
         context.insert(charge)
+        logger.log("Created Charge id: \(charge.id)")
         return charge
     }
     /// Fetches all charges in reverse chronological order.
     static func fetchAll(in context: ModelContext) -> [Charge] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
+        logger.log("Fetching all Charges")
         let descriptor = FetchDescriptor<Charge>(
             predicate: #Predicate { !$0.isArchived },
             sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
         )
-        return (try? context.fetch(descriptor)) ?? []
+        let charges = (try? context.fetch(descriptor)) ?? []
+        logger.log("Fetched \(charges.count) Charges")
+        return charges
     }
     /// Fetches charges for a specific owner in reverse chronological order.
     static func fetch(for owner: DogOwner, in context: ModelContext) -> [Charge] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
+        logger.log("Fetching Charges for owner id: \(owner.id)")
         let descriptor = FetchDescriptor<Charge>(
             predicate: #Predicate { $0.dogOwner == owner && !$0.isArchived },
             sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
         )
-        return (try? context.fetch(descriptor)) ?? []
+        let charges = (try? context.fetch(descriptor)) ?? []
+        logger.log("Fetched \(charges.count) Charges for owner")
+        return charges
     }
     /// Fetches only archived charges.
     static func fetchArchived(in context: ModelContext) -> [Charge] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
+        logger.log("Fetching archived Charges")
         let descriptor = FetchDescriptor<Charge>(
             predicate: #Predicate { $0.isArchived },
             sortBy: [SortDescriptor(\Charge.date, order: .reverse)]
         )
-        return (try? context.fetch(descriptor)) ?? []
+        let charges = (try? context.fetch(descriptor)) ?? []
+        logger.log("Fetched \(charges.count) archived Charges")
+        return charges
     }
     
     // MARK: – New: Totals by Service Type
     /// Aggregates total amounts by service type from the provided charges.
     static func totalByType(_ charges: [Charge]) -> [ServiceType: Double] {
-        Dictionary(grouping: charges, by: \.serviceType)
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
+        logger.log("Calculating totals by type for \(charges.count) charges")
+        let totals = Dictionary(grouping: charges, by: \.serviceType)
             .mapValues { group in group.reduce(0) { $0 + $1.amount } }
+        logger.log("Totals by type: \(totals)")
+        return totals
     }
     /// Fetches all charges and returns totals by service type.
     static func fetchTotalsByType(in context: ModelContext) -> [ServiceType: Double] {
-        totalByType(fetchAll(in: context))
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "Charge")
+        logger.log("Fetching totals by type from context")
+        let totals = totalByType(fetchAll(in: context))
+        logger.log("Fetched totals by type: \(totals)")
+        return totals
     }
     
     // MARK: – Hashable

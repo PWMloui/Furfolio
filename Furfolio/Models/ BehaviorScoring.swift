@@ -8,9 +8,12 @@
 
 import Foundation
 import SwiftUI
+import os
 
 /// Utility for converting behavior notes into severity scores and risk categories.
 struct BehaviorScoring {
+    
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "BehaviorScoring")
     
     // MARK: — Severity Levels
     
@@ -70,13 +73,16 @@ struct BehaviorScoring {
         note: String,
         keywordMap: [String: SeverityLevel] = defaultKeywordMap
     ) -> SeverityLevel {
+        logger.log("Scoring note: '\(note)'")
         let lower = note.lowercased()
-        return keywordMap.reduce(.calm) { current, pair in
+        let result = keywordMap.reduce(.calm) { current, pair in
             let (keyword, level) = pair
             return lower.contains(keyword) && level > current
                 ? level
                 : current
         }
+        logger.log("Resulting severity for note: '\(note)' -> \(result.rawValue)")
+        return result
     }
     
     // MARK: — Aggregate Scoring
@@ -89,9 +95,12 @@ struct BehaviorScoring {
         for notes: [String],
         keywordMap: [String: SeverityLevel] = defaultKeywordMap
     ) -> Double {
+        logger.log("Computing averageSeverity for notes count: \(notes.count)")
         guard !notes.isEmpty else { return 0 }
         let total = notes.map { score(note: $0, keywordMap: keywordMap).rawValue }.reduce(0, +)
-        return Double(total) / Double(notes.count)
+        let average = Double(total) / Double(notes.count)
+        logger.log("Computed averageSeverity: \(average)")
+        return average
     }
     
     /// Convenience for extracting notes from `PetBehaviorLog` objects.
@@ -99,7 +108,10 @@ struct BehaviorScoring {
         from logs: [PetBehaviorLog],
         keywordMap: [String: SeverityLevel] = defaultKeywordMap
     ) -> Double {
-        averageSeverity(for: logs.map(\.note), keywordMap: keywordMap)
+        logger.log("Computing averageSeverity from logs count: \(logs.count)")
+        let result = averageSeverity(for: logs.map(\.note), keywordMap: keywordMap)
+        logger.log("Computed averageSeverity from logs: \(result)")
+        return result
     }
     
     // MARK: — Risk Categories
@@ -138,11 +150,15 @@ struct BehaviorScoring {
     /// - Parameter average: The computed average severity.
     /// - Returns: The corresponding RiskCategory.
     static func riskCategory(for average: Double) -> RiskCategory {
+        logger.log("Determining riskCategory for average: \(average)")
+        let category: RiskCategory
         switch average {
-        case 0..<1:    return .low
-        case 1..<2:    return .moderate
-        default:       return .high
+        case 0..<1:    category = .low
+        case 1..<2:    category = .moderate
+        default:       category = .high
         }
+        logger.log("Assigned riskCategory: \(category.rawValue)")
+        return category
     }
     
     /// Convenience for computing a `RiskCategory` directly from logs.
@@ -150,7 +166,10 @@ struct BehaviorScoring {
         from logs: [PetBehaviorLog],
         keywordMap: [String: SeverityLevel] = defaultKeywordMap
     ) -> RiskCategory {
-        riskCategory(for: averageSeverity(from: logs, keywordMap: keywordMap))
+        logger.log("Determining riskCategory from logs count: \(logs.count)")
+        let category = riskCategory(for: averageSeverity(from: logs, keywordMap: keywordMap))
+        logger.log("Assigned riskCategory from logs: \(category.rawValue)")
+        return category
     }
 }
 

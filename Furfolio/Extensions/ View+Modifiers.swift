@@ -7,11 +7,13 @@
 
 
 import SwiftUI
+import os
+private let viewModifierLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ViewModifiers")
 
 // MARK: - Environment Keys for Theming
 
 private struct CardCornerRadiusKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 10
+    static let defaultValue: CGFloat = AppTheme.cornerRadius
 }
 extension EnvironmentValues {
     /// Corner radius to use for `cardStyle`.
@@ -22,7 +24,7 @@ extension EnvironmentValues {
 }
 
 private struct CardShadowRadiusKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 5
+    static let defaultValue: CGFloat = AppTheme.cornerRadius
 }
 extension EnvironmentValues {
     /// Shadow radius to use for `cardStyle`.
@@ -40,8 +42,9 @@ extension View {
         shadowRadius: CGFloat
     ) -> some View {
         self
+            .onAppear { viewModifierLogger.log("Applied cardStyle with cornerRadius \(cornerRadius), shadowRadius \(shadowRadius)") }
             .padding()
-            .background(Color.cardBackground)
+            .background(AppTheme.background)
             .cornerRadius(cornerRadius)
             .shadow(color: Color.black.opacity(0.1),
                     radius: shadowRadius,
@@ -60,10 +63,11 @@ extension View {
     func animatedCardStyle() -> some View {
         self
             .cardStyle()
-            .opacity(0)
+            .opacity(0.01)
             .onAppear {
                 withAnimation(.easeIn(duration: 0.3)) {
                     // Trigger fade-in
+                    .opacity(1)
                 }
             }
     }
@@ -72,7 +76,7 @@ extension View {
     func errorCardStyle() -> some View {
         self
             .padding()
-            .background(Color.cardBackground)
+            .background(AppTheme.background)
             .cornerRadius(Environment(\.cardCornerRadius).wrappedValue)
             .overlay(
                 RoundedRectangle(cornerRadius: Environment(\.cardCornerRadius).wrappedValue)
@@ -87,8 +91,9 @@ extension View {
             .foregroundColor(.white)
             .padding()
             .frame(maxWidth: .infinity)
-            .background(Color.appPrimary)
+            .background(AppTheme.accent)
             .cornerRadius(cornerRadius)
+            .onAppear { viewModifierLogger.log("Applied primaryButtonStyle") }
     }
 
     /// Styles a view as the secondary app button.
@@ -98,15 +103,16 @@ extension View {
             .foregroundColor(.white)
             .padding()
             .frame(maxWidth: .infinity)
-            .background(Color.appSecondary)
+            .background(AppTheme.info)
             .cornerRadius(cornerRadius)
+            .onAppear { viewModifierLogger.log("Applied secondaryButtonStyle") }
     }
 
     /// Applies styling for input fields.
     func inputFieldStyle(borderColor: Color = Color.disabled) -> some View {
         self
             .padding(10)
-            .background(Color.background)
+            .background(AppTheme.background)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -117,36 +123,37 @@ extension View {
     /// Styles a section header text.
     func sectionHeaderStyle() -> some View {
         self
-            .font(.title3)
-            .foregroundColor(.appPrimary)
+            .font(AppTheme.title)
+            .foregroundColor(AppTheme.primaryText)
             .padding(.vertical, 4)
     }
 
     /// Styles informational text.
     func infoTextStyle() -> some View {
         self
-            .font(.subheadline)
-            .foregroundColor(.info)
+            .font(AppTheme.body)
+            .foregroundColor(AppTheme.info)
     }
 
     /// Styles warning text.
     func warningTextStyle() -> some View {
         self
-            .font(.subheadline)
-            .foregroundColor(.warning)
+            .font(AppTheme.body)
+            .foregroundColor(AppTheme.warning)
     }
 
     /// Styles a view to indicate a disabled state with reduced opacity.
     func disabledStyle() -> some View {
         self
             .opacity(0.5)
+            .onAppear { viewModifierLogger.log("Applied disabledStyle") }
     }
 
     /// Styles an input field to indicate an error with a red border.
     func errorFieldStyle() -> some View {
         self
             .padding(10)
-            .background(Color.background)
+            .background(AppTheme.background)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)

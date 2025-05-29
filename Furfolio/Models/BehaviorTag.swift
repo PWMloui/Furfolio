@@ -6,11 +6,15 @@
 //  Updated on Jun 8, 2025 — polished FetchDescriptors, added SwiftUI previews, Swifty tweaks.
 //
 
+
 import SwiftData
+import os
 
 // TODO: Refactor computed properties to be transient attributes to avoid unnecessary persistence
 @Model
 final class BehaviorTag: Identifiable, Hashable {
+    
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "BehaviorTag")
     
     // MARK: – Persistent Properties
     
@@ -50,6 +54,7 @@ final class BehaviorTag: Identifiable, Hashable {
         self.name   = name.trimmingCharacters(in: .whitespacesAndNewlines)
         self.icon   = icon
         self.detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        logger.log("Initialized BehaviorTag id: \(id), name: \(name)")
     }
     
     
@@ -119,29 +124,39 @@ final class BehaviorTag: Identifiable, Hashable {
     
     /// Fetches all BehaviorTags sorted by name. Returns empty array on error.
     static func fetchAll(in context: ModelContext) -> [BehaviorTag] {
+        logger.log("Fetching all BehaviorTag entries")
         let descriptor = FetchDescriptor<BehaviorTag>(
             predicate: #Predicate { !$0.isArchived },
             sortBy: [ SortDescriptor(\BehaviorTag.name, order: .forward) ]
         )
         do {
-            return try context.fetch(descriptor)
+            let tags = try context.fetch(descriptor)
+            logger.log("Fetched \(tags.count) BehaviorTag entries")
+            return tags
         } catch {
-            print("⚠️ BehaviorTag.fetchAll failed:", error)
+            logger.error("BehaviorTag.fetchAll failed: \(error.localizedDescription)")
             return []
         }
     }
     
     /// Fetches the first BehaviorTag matching the trimmed name, or nil on error.
     static func fetch(named name: String, in context: ModelContext) -> BehaviorTag? {
+        logger.log("Fetching BehaviorTag named: \(name)")
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let descriptor = FetchDescriptor<BehaviorTag>(
             predicate: #Predicate { $0.name == trimmed && !$0.isArchived },
             sortBy: [ SortDescriptor(\BehaviorTag.createdAt, order: .reverse) ]
         )
         do {
-            return try context.fetch(descriptor).first
+            let results = try context.fetch(descriptor)
+            if let tag = results.first {
+                logger.log("Found BehaviorTag id: \(tag.id) for name: \(trimmed)")
+            } else {
+                logger.log("No BehaviorTag found for name: \(trimmed)")
+            }
+            return results.first
         } catch {
-            print("⚠️ BehaviorTag.fetch(named:) failed:", error)
+            logger.error("BehaviorTag.fetch(named:) failed: \(error.localizedDescription)")
             return nil
         }
     }
@@ -155,10 +170,12 @@ final class BehaviorTag: Identifiable, Hashable {
         icon: String,
         detail: String?
     ) {
+        logger.log("Updating BehaviorTag id: \(id)")
         self.name      = name.trimmingCharacters(in: .whitespacesAndNewlines)
         self.icon      = icon
         self.detail    = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.updatedAt = Date.now
+        logger.log("Updated BehaviorTag id: \(id) at \(updatedAt!)")
         AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "update", in: context)
     }
     
@@ -167,6 +184,7 @@ final class BehaviorTag: Identifiable, Hashable {
     
     /// Tags the given appointment if not already tagged.
     func tag(_ appointment: Appointment) {
+        logger.log("Tagging appointment \(appointment.id) with BehaviorTag id: \(id)")
         guard !appointments.contains(where: { $0.id == appointment.id }) else { return }
         appointments.append(appointment)
         AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "tag", metadata: ["appointmentID": appointment.id.uuidString], in: context)
@@ -174,12 +192,14 @@ final class BehaviorTag: Identifiable, Hashable {
     
     /// Removes the tag from the given appointment.
     func untag(_ appointment: Appointment) {
+        logger.log("Untagging appointment \(appointment.id) from BehaviorTag id: \(id)")
         appointments.removeAll { $0.id == appointment.id }
         AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "untag", metadata: ["appointmentID": appointment.id.uuidString], in: context)
     }
     
     /// Removes this tag from all associated appointments.
     func clearAllTags() {
+        logger.log("Clearing all tags from BehaviorTag id: \(id)")
         appointments.removeAll()
         AuditLog.create(entity: "BehaviorTag", entityID: id.uuidString, action: "clearAll", in: context)
     }

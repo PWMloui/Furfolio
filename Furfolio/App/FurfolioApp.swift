@@ -8,7 +8,8 @@
 import SwiftUI
 import UIKit
 import AppShortcutHandler
-import RemoteConfigService
+import FirebaseRemoteConfigService
+import ReminderScheduler
 
 @main
 struct FurfolioApp: App {
@@ -21,7 +22,10 @@ struct FurfolioApp: App {
         // Request notification permissions
         NotificationManager.shared.requestAuthorization()
         AppShortcutHandler.startListening()
-        RemoteConfigService.shared.fetchAndActivate { success, error in
+        // Reschedule any pending reminders on app launch
+        ReminderScheduler.shared.cancelAllReminders()
+        appState.rescheduleReminders()
+        FirebaseRemoteConfigService.shared.fetchAndActivate { success, error in
             if let error = error {
                 print("🔴 RemoteConfig error: \(error)")
             }
@@ -32,10 +36,14 @@ struct FurfolioApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                ContentView()
-                    .environmentObject(appState)
-                    .environmentObject(onboardingManager)
-                    .environment(\.modelContext, persistenceController.container.viewContext)
+                if onboardingManager.isFirstLaunch {
+                    OnboardingView()
+                        .environmentObject(onboardingManager)
+                } else {
+                    ContentView()
+                        .environmentObject(appState)
+                        .environment(\.modelContext, persistenceController.container.viewContext)
+                }
             }
             .onAppear {
                 AppShortcutHandler.registerShortcuts(
@@ -57,6 +65,10 @@ struct FurfolioApp: App {
         .onChange(of: scenePhase) { newPhase in
             switch newPhase {
             case .active:
+                // Refresh remote config and reschedule reminders when becoming active
+                FirebaseRemoteConfigService.shared.fetchAndActivate()
+                ReminderScheduler.shared.cancelAllReminders()
+                appState.rescheduleReminders()
                 AppShortcutHandler.registerShortcuts(
                     hasOwners: appState.hasOwners,
                     hasAppointments: appState.hasAppointments

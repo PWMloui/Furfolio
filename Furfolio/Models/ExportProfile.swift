@@ -1,4 +1,3 @@
-
 //
 //  ExportProfile.swift
 //  Furfolio
@@ -9,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import os
 
 enum ExportFormat: String, CaseIterable, Identifiable {
     case json = "JSON"
@@ -18,6 +18,7 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 }
 
 struct ExportProfileView: View {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ExportProfileView")
     let dogOwner: DogOwner
     @State private var isSharing = false
     @State private var exportURL: URL?
@@ -31,6 +32,7 @@ struct ExportProfileView: View {
                 }
             }
             Button("Export") {
+                logger.log("Export button tapped for format: \(selectedFormat.rawValue)")
                 exportProfile(format: selectedFormat)
             }
         } label: {
@@ -51,6 +53,7 @@ struct ExportProfileView: View {
     }
 
     private func exportProfile(format: ExportFormat) {
+        logger.log("Starting exportProfile with format: \(format.rawValue) for owner id: \(dogOwner.id)")
         let data: Data?
         let fileExtension: String
         switch format {
@@ -64,20 +67,23 @@ struct ExportProfileView: View {
             data = profilePDF()
             fileExtension = "pdf"
         }
-        guard let data = data,
-              let url = saveToTempFile(data: data, fileExtension: fileExtension)
+        guard let data = data else { return }
+        logger.log("Generated data of length: \(data.count) bytes")
+        guard let url = saveToTempFile(data: data, fileExtension: fileExtension)
         else { return }
         exportURL = url
         isSharing = true
     }
 
     private func profileJSON() -> Data? {
+        logger.log("Generating JSON profile")
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         return try? encoder.encode(dogOwner)
     }
 
     private func profileCSV() -> Data? {
+        logger.log("Generating CSV profile")
         let headers = ["Name","Contact","Address"]
         let values = [dogOwner.name, dogOwner.phone, dogOwner.address]
         let csvString = ([headers, values].map { $0.joined(separator: ",") }).joined(separator: "\n")
@@ -85,6 +91,7 @@ struct ExportProfileView: View {
     }
 
     private func profilePDF() -> Data? {
+        logger.log("Generating PDF profile")
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
         return renderer.pdfData { ctx in
             ctx.beginPage()
@@ -99,13 +106,16 @@ struct ExportProfileView: View {
     }
 
     private func saveToTempFile(data: Data, fileExtension: String = "json") -> URL? {
+        logger.log("Saving data to temp file with extension: .\(fileExtension)")
         let tempDir = FileManager.default.temporaryDirectory
         let filename = "DogOwnerProfile-\(UUID().uuidString).\(fileExtension)"
         let fileURL = tempDir.appendingPathComponent(filename)
         do {
             try data.write(to: fileURL, options: [.atomic])
+            logger.log("Saved temp file at path: \(fileURL.path)")
             return fileURL
         } catch {
+            logger.error("Failed to save temp file: \(error.localizedDescription)")
             return nil
         }
     }
@@ -129,4 +139,3 @@ struct ActivityView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
-

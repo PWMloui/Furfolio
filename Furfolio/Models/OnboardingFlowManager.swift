@@ -8,8 +8,16 @@
 
 import SwiftUI
 import Combine
+import os
+import FirebaseRemoteConfigService
 
 final class OnboardingFlowManager: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "OnboardingFlow")
+    private var loadingTask: Task<Void, Never>?
+    /// Loading delay configured via Remote Config (in seconds).
+    private var loadingDelay: TimeInterval {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .onboardingLoadingDelay)
+    }
     static let shared = OnboardingFlowManager()
     @AppStorage("OnboardingFlowManager.hasCompleted") private var hasCompletedStorage: Bool = false
     @AppStorage("OnboardingFlowManager.hasSkippedTutorial") private var hasSkippedTutorial: Bool = false
@@ -20,9 +28,13 @@ final class OnboardingFlowManager: ObservableObject {
         isPresenting = !hasCompletedStorage
         currentStep = isPresenting ? .loading : .completed
         if isPresenting {
-            Task {
-                try await Task.sleep(nanoseconds: 500_000_000)
-                await MainActor.run { self.advance() }
+            loadingTask = Task {
+                let delayNs = UInt64(loadingDelay * 1_000_000_000)
+                try await Task.sleep(nanoseconds: delayNs)
+                await MainActor.run { 
+                    logger.log("Onboarding loading complete, advancing to welcome")
+                    self.advance() 
+                }
             }
         }
         $currentStep
@@ -39,7 +51,7 @@ final class OnboardingFlowManager: ObservableObject {
         case tutorial
         case completed
         func next() -> Step {
-            let all: [Step] = [.loading, .welcome, .permissions, .tutorial, .completed]
+            let all = Self.allCases
             guard let idx = all.firstIndex(of: self), idx + 1 < all.count else {
                 return .completed
             }
@@ -47,19 +59,29 @@ final class OnboardingFlowManager: ObservableObject {
         }
     }
     func advance() {
+        logger.log("Advancing onboarding from \(currentStep) to \(currentStep.next())")
         currentStep = currentStep.next()
     }
     func skip() {
+        loadingTask?.cancel()
+        logger.log("Onboarding skipped by user")
         hasSkippedTutorial = true
         currentStep = .completed
     }
     private func completeOnboarding() {
+        logger.log("Onboarding completed")
         hasCompletedStorage = true
         isPresenting = false
     }
     func reset() {
+        loadingTask?.cancel()
+        logger.log("Onboarding reset to start")
         hasCompletedStorage = false
         currentStep = .welcome
         isPresenting = true
     }
+}
+
+extension OnboardingFlowManager.Step: Identifiable {
+    var id: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 }
