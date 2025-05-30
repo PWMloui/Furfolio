@@ -7,6 +7,7 @@
 
 import SwiftUI
 import os
+import AppTheme
 
 private struct TagLabelFontKey: EnvironmentKey {
   static let defaultValue: Font = AppTheme.caption
@@ -15,10 +16,10 @@ private struct TagLabelCornerRadiusKey: EnvironmentKey {
   static let defaultValue: CGFloat = AppTheme.cornerRadius
 }
 private struct TagLabelHorizontalPaddingKey: EnvironmentKey {
-  static let defaultValue: CGFloat = 8
+  static let defaultValue: CGFloat = AppTheme.Spacing.medium
 }
 private struct TagLabelVerticalPaddingKey: EnvironmentKey {
-  static let defaultValue: CGFloat = 4
+  static let defaultValue: CGFloat = AppTheme.Spacing.small
 }
 private struct TagLabelBackgroundColorKey: EnvironmentKey {
   static let defaultValue: Color = AppTheme.accent
@@ -54,7 +55,7 @@ extension EnvironmentValues {
   }
 }
 
-/// A view that displays a text tag or badge with customizable styling and accessibility support.
+/// A customizable label view for displaying tags or badges with consistent theming and accessibility.
 struct TagLabelView: View {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TagLabelView")
   /// The text content of the tag.
@@ -73,6 +74,7 @@ struct TagLabelView: View {
     textColor: Color? = nil,
     cornerRadius: CGFloat? = nil
   ) {
+      logger.log("Initializing TagLabelView with text: '\(text)'")
     self.text = text
     self.font = font
     self.backgroundColor = backgroundColor
@@ -124,3 +126,15 @@ struct TagLabelView_Previews: PreviewProvider {
     }
 }
 #endif
+
+extension View {
+  /// Applies tag-label styling to this view.
+  func tagLabelStyle(
+    font: Font? = nil,
+    backgroundColor: Color? = nil,
+    textColor: Color? = nil,
+    cornerRadius: CGFloat? = nil
+  ) -> some View {
+    self.modifier(TagLabelView(text: "", font: font, backgroundColor: backgroundColor, textColor: textColor, cornerRadius: cornerRadius))
+  }
+}

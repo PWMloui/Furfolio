@@ -9,11 +9,22 @@
 import Foundation
 import Combine
 import os
+import FirebaseRemoteConfigService
 
 final class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "SettingsManager")
+    
+    /// Remote-configurable default loyalty threshold.
+    private static var defaultLoyaltyThreshold: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .loyaltyThreshold)
+    }
+    
+    /// Remote-configurable default reminder offset (minutes).
+    private static var defaultReminderOffsetMinutes: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .defaultReminderOffset)
+    }
     
     private enum Keys {
         static let darkModeLock = "SettingsManager.darkModeLock"
@@ -43,19 +54,21 @@ final class SettingsManager: ObservableObject {
 
     private init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [
+        let initialDefaults: [String: Any] = [
             Keys.darkModeLock: false,
             Keys.fontSizeScale: 1.0,
-            Keys.defaultReminderOffset: 7,
-            Keys.loyaltyThreshold: 5,
+            Keys.defaultReminderOffset: Self.defaultReminderOffsetMinutes,
+            Keys.loyaltyThreshold: Self.defaultLoyaltyThreshold,
             Keys.rewardThresholds: [100.0, 250.0, 500.0],
             Keys.loyaltyPointsPerTier: [1, 2, 3]
-        ])
+        ]
+        defaults.register(defaults: initialDefaults)
         logger.log("Registered default settings")
+        // Load stored or remote-configured values
         self.darkModeLock = defaults.bool(forKey: Keys.darkModeLock)
         self.fontSizeScale = defaults.double(forKey: Keys.fontSizeScale).nonZeroOrDefault(1.0)
-        self.defaultReminderOffset = defaults.integer(forKey: Keys.defaultReminderOffset).nonZeroOrDefault(7)
-        self.loyaltyThreshold = defaults.integer(forKey: Keys.loyaltyThreshold).nonZeroOrDefault(5)
+        self.defaultReminderOffset = defaults.integer(forKey: Keys.defaultReminderOffset).nonZeroOrDefault(Self.defaultReminderOffsetMinutes)
+        self.loyaltyThreshold = defaults.integer(forKey: Keys.loyaltyThreshold).nonZeroOrDefault(Self.defaultLoyaltyThreshold)
         self.rewardThresholds = defaults.object(forKey: Keys.rewardThresholds) as? [Double] ?? [100, 250, 500]
         self.loyaltyPointsPerTier = defaults.object(forKey: Keys.loyaltyPointsPerTier) as? [Int] ?? [1, 2, 3]
 

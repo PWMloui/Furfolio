@@ -7,9 +7,11 @@
 
 import Foundation
 import FirebaseRemoteConfig
+import os
 
 /// A typed wrapper around Firebase Remote Config for Furfolio.
 final class FirebaseRemoteConfigService {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "FirebaseRemoteConfigService")
     static let shared = FirebaseRemoteConfigService()
     private let remoteConfig: RemoteConfig
     private let defaultValues: [String: NSObject]
@@ -29,6 +31,7 @@ final class FirebaseRemoteConfigService {
             ConfigKey.allCases.map { ($0.rawValue, $0.defaultValue as? NSObject ?? "" as NSString) }
         )
         remoteConfig.setDefaults(defaultValues)
+        logger.log("FirebaseRemoteConfigService initialized with defaults: \(defaultValues.keys)")
     }
 
     /// Remote config keys used by the app.
@@ -54,13 +57,13 @@ final class FirebaseRemoteConfigService {
     /// Fetches and activates the latest remote config values.
     /// - Parameter completion: Callback with success flag and optional error.
     func fetchAndActivate(completion: ((Bool, Error?) -> Void)? = nil) {
-        remoteConfig.fetchAndActivate { status, error in
+        remoteConfig.fetchAndActivate { [logger] status, error in
             if let error = error {
-                print("🔥 RemoteConfig fetch error: \(error.localizedDescription)")
+                logger.error("RemoteConfig fetch error: \(error.localizedDescription)")
                 completion?(false, error)
             } else {
                 let success = (status == .successFetchedFromRemote || status == .successUsingPreFetchedData)
-                print("✅ RemoteConfig fetch status: \(status.rawValue), applied: \(success)")
+                logger.log("RemoteConfig fetch status: \(status.rawValue), applied: \(success)")
                 completion?(success, nil)
             }
         }
@@ -68,35 +71,47 @@ final class FirebaseRemoteConfigService {
 
     /// Retrieves a String value for the given config key.
     func string(forKey key: ConfigKey) -> String {
-        remoteConfig.configValue(forKey: key.rawValue).stringValue
-        ?? (key.defaultValue as? String ?? "")
+        logger.log("Retrieving String for key: \(key.rawValue)")
+        let value = remoteConfig.configValue(forKey: key.rawValue).stringValue ?? (key.defaultValue as? String ?? "")
+        logger.log("Value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Retrieves a Bool value for the given config key.
     func bool(forKey key: ConfigKey) -> Bool {
-        remoteConfig.configValue(forKey: key.rawValue).boolValue
+        logger.log("Retrieving Bool for key: \(key.rawValue)")
+        let value = remoteConfig.configValue(forKey: key.rawValue).boolValue
+        logger.log("Value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Retrieves an Int value for the given config key.
     func int(forKey key: ConfigKey) -> Int {
-        remoteConfig.configValue(forKey: key.rawValue).numberValue?.intValue
-        ?? (key.defaultValue as? Int ?? 0)
+        logger.log("Retrieving Int for key: \(key.rawValue)")
+        let value = remoteConfig.configValue(forKey: key.rawValue).numberValue?.intValue ?? (key.defaultValue as? Int ?? 0)
+        logger.log("Value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Retrieves a Double value for the given config key.
     func double(forKey key: ConfigKey) -> Double {
-        remoteConfig.configValue(forKey: key.rawValue).numberValue?.doubleValue
-        ?? (key.defaultValue as? Double ?? 0.0)
+        logger.log("Retrieving Double for key: \(key.rawValue)")
+        let value = remoteConfig.configValue(forKey: key.rawValue).numberValue?.doubleValue ?? (key.defaultValue as? Double ?? 0.0)
+        logger.log("Value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Retrieves a generic config value for the given key, falling back to default.
     func configValue<T>(forKey key: ConfigKey) -> T {
-        let value = remoteConfig.configValue(forKey: key.rawValue).jsonValue as? T
-        return value ?? (key.defaultValue as! T)
+        logger.log("Retrieving config value for key: \(key.rawValue)")
+        let value = remoteConfig.configValue(forKey: key.rawValue).jsonValue as? T ?? (key.defaultValue as! T)
+        logger.log("Value for \(key.rawValue): \(String(describing: value))")
+        return value
     }
 
     /// Clears all fetched values and resets to defaults.
     func reset() {
+        logger.log("Resetting RemoteConfig to defaults")
         remoteConfig.setDefaults(defaultValues)
     }
 }

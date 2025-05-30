@@ -34,10 +34,22 @@ struct AppTheme {
     static var caption: Font {
         Font.system(size: 12, weight: .regular, design: .default)
     }
+    /// Font style for subtitles, medium weight and size 18.
+    static var subtitle: Font {
+        Font.system(size: 18, weight: .medium, design: .default)
+    }
+    /// Font style for footnotes, regular weight and size 10.
+    static var footnote: Font {
+        Font.system(size: 10, weight: .regular, design: .default)
+    }
 
     // MARK: - Corners & Shadows
     static let cornerRadius: CGFloat = 8
     static let shadowRadius: CGFloat = 4
+    /// Default padding for cards.
+    static let cardPadding: CGFloat = 12
+    /// Default shadow color for cards with low opacity.
+    static let cardShadowColor = Color.black.opacity(0.1)
 
     // MARK: - Spacing
     struct Spacing {
@@ -59,6 +71,14 @@ extension View {
     func furfolioAccent() -> some View {
         self.accentColor(AppTheme.accent)
     }
+    /// Applies a card style with padding, background, corner radius, and shadow.
+    func cardStyle() -> some View {
+        self
+            .padding(AppTheme.cardPadding)
+            .background(AppTheme.surface)
+            .cornerRadius(AppTheme.cornerRadius)
+            .shadow(color: AppTheme.cardShadowColor, radius: AppTheme.shadowRadius)
+    }
 }
 
 struct FurfolioButtonStyle: ButtonStyle {
@@ -68,6 +88,6 @@ struct FurfolioButtonStyle: ButtonStyle {
             .background(AppTheme.accent)
             .foregroundColor(.white)
             .cornerRadius(AppTheme.cornerRadius)
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .opacity(configuration.isPressed ? 0.8 : (configuration.isEnabled ? 1.0 : 0.5))
     }
 }

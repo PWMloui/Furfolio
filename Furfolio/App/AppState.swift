@@ -11,6 +11,7 @@ import UIKit
 import SwiftData
 import YourDataService
 import os
+import FirebaseRemoteConfigService
 
 enum ActiveSheet: Identifiable {
   case addOwner, addAppointment, addCharge
@@ -20,12 +21,18 @@ enum ActiveSheet: Identifiable {
 
 /// Global application state and quick-action handlers.
 final class AppState: ObservableObject {
+    /// Remote-configurable default loyalty threshold.
+    private static var defaultLoyaltyThreshold: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .loyaltyThreshold)
+    }
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppState")
   /// Shared singleton instance.
   static let shared = AppState()
 
   /// Controls presentation of the active sheet.
   @Published var activeSheet: ActiveSheet?
+    /// Logs sheet presentation changes.
+    private var sheetLoggerCancellable: AnyCancellable?
   /// Indicates whether the user is authenticated.
   @Published var isAuthenticated: Bool = false
   /// Number of visits required to earn a loyalty reward.
@@ -137,17 +144,25 @@ final class AppState: ObservableObject {
   func updateLoyaltyThreshold(to newValue: Int) {
         logger.log("Updating loyaltyThreshold to \(newValue)")
     loyaltyThreshold = newValue
+        logger.log("loyaltyThreshold persisted: \(newValue)")
   }
 
   /// Initializes the shared AppState and registers quick-action listeners.
   private init() {
-    // Load loyalty threshold from UserDefaults or default to 10
-    self.loyaltyThreshold = UserDefaults.standard.integer(forKey: "loyaltyThreshold")
-    if self.loyaltyThreshold == 0 {
-      self.loyaltyThreshold = 10
-    }
+    // Load loyalty threshold from UserDefaults or Remote Config default
+    let saved = UserDefaults.standard.integer(forKey: "loyaltyThreshold")
+    self.loyaltyThreshold = (saved > 0) ? saved : Self.defaultLoyaltyThreshold
     registerQuickActionSubscriptions()
     startListening()
+        // Observe and log ActiveSheet changes
+        sheetLoggerCancellable = $activeSheet
+            .sink { sheet in
+                if let sheet = sheet {
+                    logger.log("ActiveSheet changed to: \(sheet)")
+                } else {
+                    logger.log("ActiveSheet dismissed")
+                }
+            }
         logger.log("AppState initialized; loyaltyThreshold=\(loyaltyThreshold)")
   }
 }

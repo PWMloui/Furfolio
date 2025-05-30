@@ -11,11 +11,13 @@ import Foundation
 import SwiftData
 // TODO: Consider injecting UNUserNotificationCenter and Calendar for testability and centralizing reminder logic.
 import UserNotifications
+import os
 
 /// Model representing a user task with scheduling, reminders, and status helpers.
 @MainActor
 @Model
 final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringConvertible {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
     /// Notification center, injectable for testing.
     static var notificationCenter: UNUserNotificationCenter = .current()
 
@@ -73,6 +75,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
         self.priority    = priority
         self.owner       = owner
         self.reminderOffsetMinutes = reminderOffsetMinutes
+        logger.log("Initialized ScheduledTask id: \(id), title: '\(title)', dueDate: \(String(describing: dueDate)), priority: \(priority)")
         scheduleReminder()
     }
 
@@ -81,6 +84,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     @Transient
     /// Formatted like “May 17, 3:00 PM”
     var dueDateFormatted: String? {
+        logger.log("Computing dueDateFormatted for ScheduledTask id: \(id)")
         guard let d = dueDate else { return nil }
         return ScheduledTask.dateFormatter.string(from: d)
     }
@@ -88,6 +92,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     @Transient
     /// “in 2 days” or “yesterday”
     var dueDateRelative: String? {
+        logger.log("Computing dueDateRelative for ScheduledTask id: \(id)")
         guard let d = dueDate else { return nil }
         return ScheduledTask.relativeFormatter.localizedString(for: d, relativeTo: Date.now)
     }
@@ -95,6 +100,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     @Transient
     /// True if past due and not yet completed
     var isOverdue: Bool {
+        logger.log("Evaluating isOverdue for ScheduledTask id: \(id)")
         guard let d = dueDate else { return false }
         return !isCompleted && d < Date.now
     }
@@ -102,6 +108,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     @Transient
     /// True if due today
     var isDueToday: Bool {
+        logger.log("Evaluating isDueToday for ScheduledTask id: \(id)")
         guard let d = dueDate else { return false }
         return ScheduledTask.calendar.isDateInToday(d)
     }
@@ -112,6 +119,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     @Transient
     /// A one-line summary
     var summary: String {
+        logger.log("Generating summary for ScheduledTask id: \(id)")
         var parts: [String] = ["\(priorityIcon) \(title)"]
         if let dto = dueDateFormatted {
             parts.append("Due: \(dto)")
@@ -127,6 +135,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     @Transient
     /// Description of reminder offset for display
     var reminderOffsetDescription: String {
+        logger.log("Accessing reminderOffsetDescription for ScheduledTask id: \(id)")
         "\(reminderOffsetMinutes) min before"
     }
 
@@ -134,15 +143,19 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
 
     /// Marks the task as completed and updates timestamp.
     func markCompleted() {
+        logger.log("Marking ScheduledTask \(id) as completed")
         guard !isCompleted else { return }
         isCompleted = true
         updatedAt = Date.now
+        logger.log("ScheduledTask \(id) marked completed at \(updatedAt!)")
     }
 
     /// Reschedules the task to a new date and updates timestamp.
     func reschedule(to newDate: Date) {
+        logger.log("Rescheduling ScheduledTask \(id) to newDate: \(newDate)")
         dueDate = newDate
         updatedAt = Date.now
+        logger.log("ScheduledTask \(id) rescheduled at \(updatedAt!)")
         scheduleReminder()
     }
 
@@ -154,6 +167,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
         priority: TaskPriority? = nil,
         reminderOffsetMinutes: Int? = nil
     ) {
+        logger.log("Updating ScheduledTask \(id) with values title=\(String(describing: title)), details=\(String(describing: details)), dueDate=\(String(describing: dueDate)), priority=\(String(describing: priority)), offset=\(String(describing: reminderOffsetMinutes))")
         var didUpdate = false
         if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
             self.title = t
@@ -179,6 +193,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
             updatedAt = Date.now
             // Reschedule reminder when due date or offset changes
             scheduleReminder()
+            logger.log("ScheduledTask \(id) updated at \(updatedAt!)")
         }
     }
 
@@ -190,6 +205,7 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
     }
 
     private func scheduleReminder(minutesBefore: Int) {
+        logger.log("Scheduling reminder for ScheduledTask \(id), minutesBefore: \(minutesBefore)")
         guard let due = dueDate else { return }
         let triggerDate = Self.calendarProvider.date(byAdding: .minute, value: -minutesBefore, to: due) ?? due
 
@@ -205,55 +221,76 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
             trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
         )
         Self.notificationCenter.add(request)
+        logger.log("Registered UNNotificationRequest for ScheduledTask \(id)")
     }
 
     /// Cancels any pending local notification reminders for this task.
     func cancelReminder() {
+        logger.log("Canceling reminder for ScheduledTask \(id)")
         Self.notificationCenter.removePendingNotificationRequests(withIdentifiers: [id.uuidString])
+        logger.log("Canceled reminders for ScheduledTask \(id)")
     }
 
     // MARK: – Fetch Helpers
 
     /// Fetches all tasks sorted by due date and priority.
     static func fetchAll(in context: ModelContext) -> [ScheduledTask] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
+        logger.log("Calling fetchAll")
         let desc = FetchDescriptor<ScheduledTask>(
             sortBy: [
                 SortDescriptor(\.dueDate, order: .forward),
                 SortDescriptor(\.priority, order: .forward)
             ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) ScheduledTask entries")
+        return results
     }
 
     /// Fetches all pending (not completed) tasks.
     static func fetchPending(in context: ModelContext) -> [ScheduledTask] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
+        logger.log("Calling fetchPending")
         let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate { !$0.isCompleted },
             sortBy: [ SortDescriptor(\.dueDate, order: .forward) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) ScheduledTask entries")
+        return results
     }
 
     /// Fetches all completed tasks.
     static func fetchCompleted(in context: ModelContext) -> [ScheduledTask] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
+        logger.log("Calling fetchCompleted")
         let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate { $0.isCompleted },
             sortBy: [ SortDescriptor(\.updatedAt, order: .reverse) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) ScheduledTask entries")
+        return results
     }
 
     /// Fetches all overdue tasks.
     static func fetchOverdue(in context: ModelContext) -> [ScheduledTask] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
+        logger.log("Calling fetchOverdue")
         let desc = FetchDescriptor<ScheduledTask>(
             predicate: #Predicate { !$0.isCompleted && ($0.dueDate ?? .distantPast) < Date.now },
             sortBy: [ SortDescriptor(\.dueDate, order: .forward) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) ScheduledTask entries")
+        return results
     }
 
     /// Fetches tasks due between the start of today and tomorrow.
     static func fetchDueToday(in context: ModelContext) -> [ScheduledTask] {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
+        logger.log("Calling fetchDueToday")
         let start = ScheduledTask.calendar.startOfDay(for: Date.now)
         guard let end = ScheduledTask.calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
         let desc = FetchDescriptor<ScheduledTask>(
@@ -263,7 +300,9 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
             },
             sortBy: [ SortDescriptor(\.dueDate, order: .forward) ]
         )
-        return (try? context.fetch(desc)) ?? []
+        let results = (try? context.fetch(desc)) ?? []
+        logger.log("Fetched \(results.count) ScheduledTask entries")
+        return results
     }
 
     /// Creates and inserts a new Task into the context.
@@ -276,9 +315,13 @@ final class ScheduledTask: @preconcurrency Identifiable, Hashable, CustomStringC
         owner: DogOwner? = nil,
         in context: ModelContext
     ) -> ScheduledTask {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ScheduledTask")
+        logger.log("Creating ScheduledTask with title: \(title)")
         let t = ScheduledTask(title: title, details: details, dueDate: dueDate, priority: priority, owner: owner)
         context.insert(t)
+        logger.log("Created ScheduledTask id: \(t.id)")
         t.scheduleReminder()
+        logger.log("Created ScheduledTask id: \(t.id)")
         return t
     }
 

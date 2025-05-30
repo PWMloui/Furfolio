@@ -7,9 +7,11 @@
 
 import SwiftUI
 import Combine
+import os
 
 @MainActor
 class AppCoordinator: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "AppCoordinator")
     enum Route: Equatable {
         case login
         case dashboard
@@ -23,6 +25,7 @@ class AppCoordinator: ObservableObject {
     
     /// Returns the appropriate root view using a NavigationStack.
     func rootView() -> some View {
+        logger.log("Creating rootView; isAuthenticated=\(AppState.shared.isAuthenticated)")
         NavigationStack(path: $path) {
             Group {
                 if AppState.shared.isAuthenticated {
@@ -50,13 +53,17 @@ class AppCoordinator: ObservableObject {
             }
         }
         .onOpenURL { url in
+            logger.log("Received deep link URL: \(url.absoluteString)")
             handleDeepLink(url)
         }
         .onChange(of: AppState.shared.isAuthenticated) { isAuthenticated in
+            logger.log("Authentication state changed: isAuthenticated=\(isAuthenticated)")
             if isAuthenticated {
                 resetNavigation()
+                logger.log("Navigating to dashboard after login")
                 navigate(to: .dashboard)
             } else {
+                logger.log("Navigating to login after logout")
                 path = [.login]
             }
         }
@@ -64,21 +71,25 @@ class AppCoordinator: ObservableObject {
     
     /// Handles deep-links of form furfolio://appointment/{UUID}
     func handleDeepLink(_ url: URL) {
+        logger.log("handleDeepLink called with URL: \(url.absoluteString)")
         guard url.scheme == "furfolio" else { return }
         let pathComponents = url.pathComponents.filter { $0 != "/" }
         guard pathComponents.count == 2, pathComponents[0] == "appointment" else { return }
         if let uuid = UUID(uuidString: pathComponents[1]) {
+            logger.log("Deep link to appointment id: \(uuid)")
             navigate(to: .appointment(id: uuid))
         }
     }
     
     /// Programmatic navigation helper.
     func navigate(to route: Route) {
+        logger.log("navigate called with route: \(route)")
         path.append(route)
     }
     
     /// Resets the navigation path.
     func resetNavigation() {
+        logger.log("resetNavigation called")
         path = []
     }
 }

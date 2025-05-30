@@ -37,10 +37,12 @@ final class RemoteConfigService {
         // Register default values for all keys
         defaultValues = defaultsDictionary
         remoteConfig.setDefaults(defaultsDictionary)
+        logger.log("Registered default RemoteConfig values for keys: \(Array(defaultsDictionary.keys))")
     }
 
     /// Default values for remote config parameters
     private var defaultsDictionary: [String: NSObject] {
+        logger.log("Building defaultsDictionary for RemoteConfigKey cases")
         var defaults: [String: NSObject] = [:]
         // List all keys with their default values here
         for key in RemoteConfigKey.allCases {
@@ -87,29 +89,42 @@ final class RemoteConfigService {
 
     /// Retrieve a Bool flag for the given key.
     func boolValue(for key: RemoteConfigKey) -> Bool {
-        remoteConfig.configValue(forKey: key.rawValue).boolValue
+        logger.log("Retrieving Bool value for key: \(key.rawValue)")
+        let value = remoteConfig.configValue(forKey: key.rawValue).boolValue
+        logger.log("Bool value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Retrieve an Int flag for the given key.
     func intValue(for key: RemoteConfigKey) -> Int {
-        remoteConfig.configValue(forKey: key.rawValue).numberValue?.intValue
-            ?? (key.defaultValue as? Int ?? 0)
+        logger.log("Retrieving Int value for key: \(key.rawValue)")
+        let raw = remoteConfig.configValue(forKey: key.rawValue).numberValue?.intValue
+        let value = raw ?? (key.defaultValue as? Int ?? 0)
+        logger.log("Int value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Retrieve a String flag for the given key.
     func stringValue(for key: RemoteConfigKey) -> String {
-        remoteConfig.configValue(forKey: key.rawValue).stringValue
-            ?? (key.defaultValue as? String ?? "")
+        logger.log("Retrieving String value for key: \(key.rawValue)")
+        let raw = remoteConfig.configValue(forKey: key.rawValue).stringValue
+        let value = raw ?? (key.defaultValue as? String ?? "")
+        logger.log("String value for \(key.rawValue): '\(value)'")
+        return value
     }
 
     /// Retrieves a generic config value for the given key, falling back to default.
     func configValue<T>(for key: RemoteConfigKey) -> T {
-        let value = remoteConfig.configValue(forKey: key.rawValue).jsonValue as? T
-        return value ?? (key.defaultValue as! T)
+        logger.log("Retrieving JSON config for key: \(key.rawValue)")
+        let raw = remoteConfig.configValue(forKey: key.rawValue).jsonValue as? T
+        let value = raw ?? (key.defaultValue as! T)
+        logger.log("Config value for \(key.rawValue): \(value)")
+        return value
     }
 
     /// Clears all fetched remote config values and resets to defaults.
     func reset() {
+        logger.log("Resetting RemoteConfig to defaults")
         remoteConfig.setDefaults(defaultValues)
         logger.log("RemoteConfig defaults reset")
     }

@@ -21,8 +21,18 @@ extension EnvironmentValues {
   var progressRingGradient: Gradient? { self[ProgressRingGradientKey.self] }
 }
 
-/// A circular progress indicator that visually represents a value between 0.0 and 1.0.
-/// Optionally displays custom content in the center.
+/// A circular progress indicator that visually represents a value between 0.0 and 1.0,
+/// with optional custom content in the center.
+/// - Parameters:
+///   - progress: Binding to a Double (0…1) representing current progress.
+///   - strokeGradient: Optional gradient for the progress stroke; defaults to accent.
+///   - lineCap: Line cap style for the ring stroke.
+///   - lineJoin: Line join style for the ring stroke.
+///   - dash: Dash pattern for the stroke.
+///   - lineWidthParam: Optional custom width; falls back to environment default.
+///   - animationStyle: Style of animation applied when progress changes.
+///   - onComplete: Closure called once when progress crosses completion.
+///   - isIndeterminate: If true, rotates indefinitely rather than showing trim.
 struct ProgressRingView<CenterContent: View>: View {
   private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ProgressRingView")
   @Environment(\.progressRingLineWidth) private var envLineWidth
@@ -103,12 +113,14 @@ struct ProgressRingView<CenterContent: View>: View {
         }
       }
       .accessibilityValue("\(Int(progress * 100)) percent")
+      .accessibilityLabel(Text("Progress: \(Int(progress * 100)) percent"))
       .onAppear {
         logger.log("ProgressRingView appeared with progress: \(progress)")
         if isIndeterminate {
           withAnimation(envAnimation.repeatForever(autoreverses: false)) {
             animateIndeterminate = true
           }
+          logger.log("Indeterminate animation started")
         }
       }
     }
@@ -144,8 +156,8 @@ extension ProgressRingView where CenterContent == AnyView {
       self.centerContent = {
         AnyView(
           Text("\(Int((progress.wrappedValue * 100).rounded()))%")
-            .font(.system(size: 12 * 0.8, weight: .semibold))
-            .foregroundColor(Color.accentColor)
+            .font(AppTheme.subtitle)
+            .foregroundColor(AppTheme.accent)
         )
       }
     } else {
@@ -193,7 +205,7 @@ struct ProgressRingView_Previews: PreviewProvider {
         .frame(width: 100, height: 100)
 
       // Thicker green ring, percentage
-        ProgressRingView(progress: $progress2, showsPercentage: true, strokeGradient: Gradient(colors: [.green, .blue]), lineCap: .round, lineJoin: .round, dash: [], animationStyle: .ease)
+      ProgressRingView(progress: $progress2, showsPercentage: true, strokeGradient: Gradient(colors: [.green, .blue]), lineCap: .round, lineJoin: .round, dash: [], animationStyle: .ease)
         .frame(width: 120, height: 120)
 
       // Custom center content (paw icon)

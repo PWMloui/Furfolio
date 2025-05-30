@@ -8,6 +8,7 @@
 
 import Foundation
 import os
+import FirebaseRemoteConfigService
 private let trendLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ServiceTrendAnalyzer")
 import _Concurrency
 
@@ -15,6 +16,16 @@ import _Concurrency
 /// Analyzes appointment data to surface service usage trends, including frequency, trend scoring, and forecasting.
 struct ServiceTrendAnalyzer {
     private static let logger = trendLogger
+
+    /// Default “top-N” limit pulled from Remote Config.
+    private static var defaultTopLimit: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .analyticsTopServicesLimit)
+    }
+
+    /// Default window size (days) for trend scoring, from Remote Config.
+    private static var defaultTrendWindowDays: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .trendWindowDays)
+    }
   /// Shared calendar for date calculations.
   private static let calendar = Calendar.current
 
@@ -37,7 +48,7 @@ struct ServiceTrendAnalyzer {
   /// - Returns: Array of (service, count) tuples sorted descending, where service is Appointment.ServiceType.
   static func topServices(
     in appointments: [Appointment],
-    top n: Int
+    top n: Int = ServiceTrendAnalyzer.defaultTopLimit
   ) -> [(service: Appointment.ServiceType, count: Int)] {
       logger.log("topServices: computing top \(n) from \(appointments.count) appointments")
       let freqs = frequency(in: appointments)
@@ -53,7 +64,7 @@ struct ServiceTrendAnalyzer {
   /// - Returns: Dictionary mapping Appointment.ServiceType to percent change score.
   static func trendScores(
     in appointments: [Appointment],
-    recentWindow days: Int = 30
+    recentWindow days: Int = ServiceTrendAnalyzer.defaultTrendWindowDays
   ) -> [Appointment.ServiceType: Double] {
       logger.log("trendScores: computing with \(appointments.count) appointments over \(days)-day windows")
     let now = Date.now
@@ -94,8 +105,8 @@ struct ServiceTrendAnalyzer {
   /// - Returns: Array of (service, score) tuples sorted descending, where service is Appointment.ServiceType.
   static func topTrendingServices(
     in appointments: [Appointment],
-    top n: Int,
-    recentWindow days: Int = 30
+    top n: Int = ServiceTrendAnalyzer.defaultTopLimit,
+    recentWindow days: Int = ServiceTrendAnalyzer.defaultTrendWindowDays
   ) -> [(service: Appointment.ServiceType, score: Double)] {
       logger.log("topTrendingServices: computing top \(n) trending over \(days)-day window")
       let scores = trendScores(in: appointments, recentWindow: days)
@@ -117,14 +128,16 @@ struct ServiceTrendAnalyzer {
     overPast days: Int = 30,
     alpha: Double = 0.3
   ) -> Double {
-      logger.log("forecast: starting for service \(service) over past \(days) days with alpha \(alpha)")
+    let windowDays = FirebaseRemoteConfigService.shared.configValue(forKey: .forecastWindowDays)
+    let smoothingAlpha = FirebaseRemoteConfigService.shared.configValue(forKey: .forecastSmoothingAlpha)
+      logger.log("forecast: starting for service \(service) over past \(windowDays) days with alpha \(smoothingAlpha)")
     let now = Date.now
     let cal = Self.calendar
-    let start = cal.date(byAdding: .day, value: -days, to: now)!
+    let start = cal.date(byAdding: .day, value: -windowDays, to: now)!
 
     // Build a time‐series of daily counts
     var dailyCounts: [Int] = []
-    for offset in 0..<days {
+    for offset in 0..<windowDays {
       let dayStart = cal.date(byAdding: .day, value: -offset, to: now)!
       let nextDay  = cal.date(byAdding: .day, value: -(offset-1), to: now)!
       let count = appointments.filter {
@@ -138,7 +151,7 @@ struct ServiceTrendAnalyzer {
     // Exponential smoothing
     var forecast = Double(dailyCounts.first ?? 0)
     for count in dailyCounts.dropFirst() {
-      forecast = alpha * Double(count) + (1 - alpha) * forecast
+      forecast = smoothingAlpha * Double(count) + (1 - smoothingAlpha) * forecast
     }
       logger.log("forecast: result \(forecast)")
     return forecast

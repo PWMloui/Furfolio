@@ -8,16 +8,20 @@
 import SwiftUI
 import os
 
+/// Environment key for default padding used in section headers.
 private struct SectionHeaderPaddingKey: EnvironmentKey {
   static let defaultValue = EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16)
 }
+/// Environment key for default background color used in section headers.
 private struct SectionHeaderBackgroundKey: EnvironmentKey {
   static let defaultValue = AppTheme.background
 }
 
+/// Environment key for default font used in section headers.
 private struct SectionHeaderFontKey: EnvironmentKey {
   static let defaultValue: Font = AppTheme.title
 }
+/// Environment key for default foreground color used in section headers.
 private struct SectionHeaderForegroundKey: EnvironmentKey {
   static let defaultValue: Color = AppTheme.primaryText
 }
@@ -57,6 +61,14 @@ struct SectionHeaderView: View {
 
   private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "SectionHeaderView")
 
+  /// Creates a styled section header.
+  ///
+  /// - Parameters:
+  ///   - title: The text displayed as the section header.
+  ///   - padding: Optional custom padding; falls back to theme default.
+  ///   - backgroundColor: Optional background color; falls back to theme default.
+  ///   - font: Optional font; falls back to theme default.
+  ///   - foregroundColor: Optional text color; falls back to theme default.
   init(
     title: String,
     padding: EdgeInsets? = nil,
@@ -81,9 +93,11 @@ struct SectionHeaderView: View {
     Text(title)
       .font(fnt)
       .foregroundColor(fg)
+      .accessibilityAddTraits(.isHeader)
       .onAppear {
           logger.log("SectionHeaderView displayed: \(title)")
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
       .padding(pad)
       .background(bg)
   }

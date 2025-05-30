@@ -115,6 +115,7 @@ struct TooltipView<Content: View>: View {
     self.cornerRadius = cornerRadius
     self.animation = animation
     self.onDismiss = onDismiss
+    logger.log("TooltipView initialized: message='\(message)', displayDuration=\(resolvedDisplayDuration), font=\(String(describing: font)), padding=\(resolvedPadding), backgroundColor=\(resolvedBackgroundColor), textColor=\(resolvedTextColor), cornerRadius=\(resolvedCornerRadius)")
     self.content = content
   }
 
@@ -125,6 +126,7 @@ struct TooltipView<Content: View>: View {
           logger.log("TooltipView tapped, presenting tooltip: \(message)")
           // Cancel any pending hide
           hideTask?.cancel()
+          logger.log("Cancelled existing hideTask for tooltip: \(message)")
           
           // Show tooltip
           withAnimation(animation) {
@@ -133,6 +135,7 @@ struct TooltipView<Content: View>: View {
           
           // Schedule hide via Task
           hideTask = Task {
+              logger.log("Scheduled hideTask to dismiss tooltip after \(resolvedDisplayDuration)s")
             try await Task.sleep(nanoseconds: UInt64(resolvedDisplayDuration * 1_000_000_000))
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -160,6 +163,10 @@ struct TooltipView<Content: View>: View {
           .onAppear {
             logger.log("TooltipView overlay appeared: \(message)")
           }
+          .onDisappear {
+            logger.log("TooltipView overlay onDisappear: \(message)")
+          }
+          .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
       }
     }
   }

@@ -8,9 +8,11 @@
 
 import Foundation
 import SwiftUI
+import os
 
 /// Defines urgency levels for tasks, including sorting, display metadata, and theming support.
 enum TaskPriority: String, CaseIterable, Identifiable, Comparable, Codable {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "TaskPriority")
   case low
   case medium
   case high
@@ -56,7 +58,8 @@ enum TaskPriority: String, CaseIterable, Identifiable, Comparable, Codable {
 
   /// Sorts priorities so that `.high` comes before `.medium`, which comes before `.low`.
   static func < (lhs: TaskPriority, rhs: TaskPriority) -> Bool {
-    lhs.sortOrder < rhs.sortOrder
+        TaskPriority.logger.log("Comparing priorities: \(lhs.rawValue) < \(rhs.rawValue) -> \(lhs.sortOrder < rhs.sortOrder)")
+        return lhs.sortOrder < rhs.sortOrder
   }
 }
 
@@ -77,13 +80,19 @@ extension EnvironmentValues {
 }
 
 extension TaskPriority {
-  /// Returns the appropriate Color from the current environment's mapping.
-  func prioritizedColor(in environment: EnvironmentValues) -> Color {
-    environment.taskPriorityColors[self] ?? .primary
-  }
+    /// Returns the appropriate Color from the current environment's mapping.
+    func prioritizedColor(in environment: EnvironmentValues) -> Color {
+        TaskPriority.logger.log("Resolving prioritizedColor for \(self.rawValue)")
+        let color = environment.taskPriorityColors[self] ?? .primary
+        TaskPriority.logger.log("Resolved color: \(color.description) for priority \(self.rawValue)")
+        return color
+    }
 
-  /// Default color for this priority, without needing an EnvironmentValues.
-  var defaultColor: Color {
-    TaskPriorityColorMappingKey.defaultValue[self] ?? .primary
-  }
+    /// Default color for this priority, without needing an EnvironmentValues.
+    var defaultColor: Color {
+        TaskPriority.logger.log("Accessing defaultColor for \(self.rawValue)")
+        let color = TaskPriorityColorMappingKey.defaultValue[self] ?? .primary
+        TaskPriority.logger.log("Default color: \(color.description) for priority \(self.rawValue)")
+        return color
+    }
 }

@@ -59,10 +59,14 @@ struct EmptyStateView: View {
                 .frame(width: imageSize, height: imageSize)
                 .foregroundColor(AppTheme.secondaryText)
                 .padding(.bottom, 8)
+                .onAppear {
+                    logger.log("EmptyStateView image displayed: \(imageName)")
+                }
 
             Text(title)
                 .font(AppTheme.title)
                 .fontWeight(.bold)
+                .foregroundColor(AppTheme.primaryText)
 
             if let message = message {
                 Text(message)
@@ -77,7 +81,7 @@ struct EmptyStateView: View {
                     logger.log("EmptyStateView action tapped: \(actionTitle)")
                     action()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(FurfolioButtonStyle())
                 .padding(.top, 8)
                 .onActionHaptic(enableHaptics)
             }

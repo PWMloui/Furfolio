@@ -9,9 +9,15 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 import os
+import FirebaseRemoteConfigService
 import ReminderScheduler
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "NotificationManager")
+
+    /// Default lead time (minutes) for notifications from Remote Config.
+    private static var defaultLeadMinutes: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .notificationLeadTime)
+    }
 
 // MARK: - Model Container Holder
 
@@ -173,6 +179,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     center.delegate = self
     logger.log("Notification center delegate configured")
     requestPermissions()
+    logger.log("NotificationManager configured with defaultLeadMinutes: \(Self.defaultLeadMinutes)")
   }
   
   /// Requests alert, badge, and sound permissions.
@@ -205,19 +212,36 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   ) {
     logger.log("Notification response received: \(response.notification.request.identifier)")
     NotificationCenter.default.post(name: .didReceiveNotificationResponse, object: response)
+    logger.log("Notification action: \(response.actionIdentifier) for \(response.notification.request.identifier)")
     completionHandler()
   }
   
   /// Schedules a local notification through ReminderScheduler.
-  func scheduleReminder(id: String, title: String, body: String, date: Date) {
-      logger.log("Scheduling local notification \(id) at \(date)")
-      ReminderScheduler.shared.scheduleReminder(id: id, date: date, title: title, body: body)
+  ///
+  /// - Parameters:
+  ///   - id: Unique identifier for the notification.
+  ///   - title: Notification title.
+  ///   - body: Notification body text.
+  ///   - date: Optional fire date. If nil, will schedule notification with default lead time from Remote Config.
+  func scheduleReminder(id: String, title: String, body: String, date: Date? = nil) {
+      let fireDate = date ?? Calendar.current.date(byAdding: .minute,
+          value: -Self.defaultLeadMinutes,
+          to: Date())!
+      logger.log("Scheduling local notification \(id) at \(fireDate) (computed lead time: \(Self.defaultLeadMinutes) min)")
+      ReminderScheduler.shared.scheduleReminder(id: id, date: fireDate, title: title, body: body)
   }
 
   /// Cancels a scheduled local notification.
+  ///
+  /// Also forwards cancellation event to Firebase Analytics.
+  ///
+  /// - Parameter id: Unique identifier for the notification to cancel.
   func cancelReminder(id: String) {
       logger.log("Cancelling local notification \(id)")
       ReminderScheduler.shared.cancelReminder(id: id)
+      logger.log("Also forwarding cancel to Firebase analytics")
+      // Example analytics hook
+      Analytics.logEvent("notification_cancelled", parameters: ["id": id])
   }
 }
 

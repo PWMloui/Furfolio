@@ -36,6 +36,7 @@ final class PersistenceController {
         logger.log("ModelContainer initialized with models: \(container.modelSchema.entities.map { $0.name })")
         do {
             ServiceSeeder.seed(in: container.mainContext)
+            logger.log("Data seeding succeeded")
         } catch {
             logger.error("Data seeding failed: \(error.localizedDescription)")
         }
@@ -44,21 +45,26 @@ final class PersistenceController {
 
     /// Registers all custom ValueTransformers for transformable @Attribute properties.
     private func registerTransformers() {
-      ValueTransformer.setValueTransformer(
-        DateArrayTransformer(),
-        forName: NSValueTransformerName(Appointment.dateArrayTransformerName)
-      )
-      ValueTransformer.setValueTransformer(
-        StringArrayTransformer(),
-        forName: NSValueTransformerName(Appointment.stringArrayTransformerName)
-      )
+        logger.log("Registering DateArrayTransformer with name: \(Appointment.dateArrayTransformerName)")
+        ValueTransformer.setValueTransformer(
+            DateArrayTransformer(),
+            forName: NSValueTransformerName(Appointment.dateArrayTransformerName)
+        )
+        logger.log("Registering StringArrayTransformer with name: \(Appointment.stringArrayTransformerName)")
+        ValueTransformer.setValueTransformer(
+            StringArrayTransformer(),
+            forName: NSValueTransformerName(Appointment.stringArrayTransformerName)
+        )
+        logger.log("Completed registering custom ValueTransformers")
     }
 
     /// A context configured for SwiftUI previews and testing (in-memory).
     static var previewContext: ModelContext = {
-      let controller = PersistenceController(inMemory: true)
-      // Use the main context for previews
-      return controller.container.mainContext
+        let controller = PersistenceController(inMemory: true)
+        let previewLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "PersistenceController")
+        previewLogger.log("Created previewContext (inMemory: true)")
+        // Use the main context for previews
+        return controller.container.mainContext
     }()
 
     /// Logs counts of key entities for diagnostic purposes.
@@ -68,6 +74,7 @@ final class PersistenceController {
         let apptCount = (try? ctx.fetch(FetchDescriptor<Appointment>()))?.count ?? 0
         let chargeCount = (try? ctx.fetch(FetchDescriptor<Charge>()))?.count ?? 0
         logger.log("Initial data counts — Owners: \(ownerCount), Appointments: \(apptCount), Charges: \(chargeCount)")
+        logger.log("Completed initial entity count logging")
     }
 }
 

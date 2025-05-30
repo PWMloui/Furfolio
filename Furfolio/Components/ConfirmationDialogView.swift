@@ -75,6 +75,7 @@ struct ConfirmationDialogView<Presenting: View>: View {
       if isPresented {
         Rectangle()
           .fill(Color.black.opacity(backdropOpacity))
+          .background(AppTheme.background.opacity(backdropOpacity))
           .ignoresSafeArea()
           .contentShape(Rectangle())
           .onTapGesture {
@@ -87,9 +88,11 @@ struct ConfirmationDialogView<Presenting: View>: View {
         VStack(spacing: 16) {
           Text(title)
             .font(AppTheme.header)
+            .foregroundColor(AppTheme.primaryText)
           if let message = message {
             Text(message)
               .font(AppTheme.body)
+              .foregroundColor(AppTheme.secondaryText)
           }
           HStack {
             Button(cancelButtonTitle) {
@@ -102,7 +105,7 @@ struct ConfirmationDialogView<Presenting: View>: View {
                 isPresented = false
               }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(FurfolioButtonStyle())
             Button(confirmButtonTitle, role: confirmButtonRole) {
               logger.log("ConfirmationDialog confirmed")
               if enableHaptics {
@@ -114,14 +117,17 @@ struct ConfirmationDialogView<Presenting: View>: View {
                 onConfirm()
               }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(FurfolioButtonStyle())
+          }
+          .onAppear {
+            logger.log("ConfirmationDialog actions rendered")
           }
         }
         .onAppear {
           logger.log("ConfirmationDialog presented: \(title)")
         }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 12).fill(AppTheme.background))
+        .background(RoundedRectangle(cornerRadius: AppTheme.cornerRadius).fill(AppTheme.background))
         .shadow(color: Color.black.opacity(0.2), radius: AppTheme.cornerRadius)
         .transition(.scale.combined(with: .opacity))
       }

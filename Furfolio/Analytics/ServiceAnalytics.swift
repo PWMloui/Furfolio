@@ -9,11 +9,16 @@
 
 import Foundation
 import os
+import FirebaseRemoteConfigService
 private let analyticsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.furfolio", category: "ServiceAnalytics")
 import _Concurrency
 /// Provides analytics functions for appointments and charges, such as frequency, duration, and revenue metrics.
 struct ServiceAnalytics {
     private static let logger = analyticsLogger
+    /// Default “top-N” limit pulled from Remote Config.
+    private static var defaultTopLimit: Int {
+        FirebaseRemoteConfigService.shared.configValue(forKey: .analyticsTopServicesLimit)
+    }
     
     private static func runAsync<T>(
         _ work: @Sendable @escaping () -> T
@@ -24,7 +29,6 @@ struct ServiceAnalytics {
         return result
     }
     
-    /// Aggregated metrics for a specific service type.
     /// Aggregated metrics for a specific service type.
     struct ServiceMetrics {
         let frequency: Int           // Number of appointments
@@ -196,7 +200,7 @@ struct ServiceAnalytics {
     /// Returns the top-N service types by total revenue.
     static func topRevenueServices(
         from metrics: [Appointment.ServiceType: ServiceMetrics],
-        limit: Int = 3
+        limit: Int = ServiceAnalytics.defaultTopLimit
     ) -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
         logger.log("topRevenueServices(from:limit:) called with limit: \(limit)")
         let result = topServicesByMetric(from: metrics, limit: limit) { $0.totalRevenue }
@@ -207,7 +211,7 @@ struct ServiceAnalytics {
     /// Returns the top-N service types by appointment frequency.
     static func topFrequentServices(
         from metrics: [Appointment.ServiceType: ServiceMetrics],
-        limit: Int = 3
+        limit: Int = ServiceAnalytics.defaultTopLimit
     ) -> [(type: Appointment.ServiceType, frequency: Int)] {
         logger.log("topFrequentServices(from:limit:) called with limit: \(limit)")
         let result = topServicesByMetric(from: metrics, limit: limit) { Double($0.frequency) }
@@ -220,7 +224,7 @@ struct ServiceAnalytics {
     static func topRevenueServices(
         for appointments: [Appointment],
         charges: [Charge],
-        limit: Int = 3
+        limit: Int = ServiceAnalytics.defaultTopLimit
     ) async -> [(type: Appointment.ServiceType, metrics: ServiceMetrics)] {
         logger.log("topRevenueServices(for:charges:limit:) async called with limit: \(limit)")
         let m = await metrics(for: appointments, charges: charges)
@@ -232,7 +236,7 @@ struct ServiceAnalytics {
     /// Returns the top-N service types by revenue per minute.
     static func topRevenuePerMinuteServices(
         from metrics: [Appointment.ServiceType: ServiceMetrics],
-        limit: Int = 3
+        limit: Int = ServiceAnalytics.defaultTopLimit
     ) -> [(type: Appointment.ServiceType, value: Double)] {
         logger.log("topRevenuePerMinuteServices(from:limit:) called with limit: \(limit)")
         let result = metrics
@@ -248,7 +252,7 @@ struct ServiceAnalytics {
     static func topRevenuePerMinuteServices(
         for appointments: [Appointment],
         charges: [Charge],
-        limit: Int = 3
+        limit: Int = ServiceAnalytics.defaultTopLimit
     ) async -> [(type: Appointment.ServiceType, value: Double)] {
         logger.log("topRevenuePerMinuteServices(for:charges:limit:) async called with limit: \(limit)")
         let m = await metrics(for: appointments, charges: charges)
