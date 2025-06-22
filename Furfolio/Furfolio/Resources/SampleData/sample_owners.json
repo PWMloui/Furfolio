@@ -1,0 +1,42 @@
+[
+  {
+    "id": "O1",
+    "name": "Jane Doe",
+    "contact": "555-1234",
+    "email": "jane.doe@email.com",
+    "address": "123 Main St, Cityville",
+    "dogIDs": ["D1"]
+  },
+  {
+    "id": "O2",
+    "name": "Sam Lee",
+    "contact": "555-5678",
+    "email": "sam.lee@email.com",
+    "address": "456 Oak Ave, Cityville",
+    "dogIDs": ["D2"]
+  },
+  {
+    "id": "O3",
+    "name": "Alex Smith",
+    "contact": "555-2468",
+    "email": "alex.smith@email.com",
+    "address": "789 Pine Rd, Cityville",
+    "dogIDs": ["D3"]
+  },
+  {
+    "id": "O4",
+    "name": "Emma Garcia",
+    "contact": "555-1122",
+    "email": "emma.garcia@email.com",
+    "address": "321 Maple Ln, Cityville",
+    "dogIDs": ["D4"]
+  },
+  {
+    "id": "O5",
+    "name": "Chris Kim",
+    "contact": "555-7531",
+    "email": "chris.kim@email.com",
+    "address": "89 Willow Blvd, Cityville",
+    "dogIDs": ["D5"]
+  }
+]

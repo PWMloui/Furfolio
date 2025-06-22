@@ -1,0 +1,18 @@
+//
+//  LocalizedStrings_es.strings
+//  Furfolio
+//
+//  Created by mac on 6/19/25.
+//
+
+"expense_summary_title" = "Resumen de gastos";
+"total_expenses_label" = "Gastos totales";
+"search_placeholder_expenses" = "Buscar categoría o notas";
+"no_expenses_found" = "No se encontraron gastos.";
+"add_expense_button" = "Agregar gasto";
+"vendor_summary_title" = "Proveedores";
+"add_vendor_button" = "Agregar proveedor";
+"no_vendors_found" = "No se encontraron proveedores.";
+"recurring_expenses_title" = "Gastos recurrentes";
+"add_recurring_expense_button" = "Agregar gasto recurrente";
+"no_recurring_expenses_found" = "No se encontraron gastos recurrentes.";

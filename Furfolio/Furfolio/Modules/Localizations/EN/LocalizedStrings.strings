@@ -1,0 +1,18 @@
+//
+//  LocalizedStrings.strings
+//  Furfolio
+//
+//  Created by mac on 6/19/25.
+//
+
+"expense_summary_title" = "Expense Summary";
+"total_expenses_label" = "Total Expenses";
+"search_placeholder_expenses" = "Search category or notes";
+"no_expenses_found" = "No expenses found.";
+"add_expense_button" = "Add Expense";
+"vendor_summary_title" = "Vendors";
+"add_vendor_button" = "Add Vendor";
+"no_vendors_found" = "No vendors found.";
+"recurring_expenses_title" = "Recurring Expenses";
+"add_recurring_expense_button" = "Add Recurring Expense";
+"no_recurring_expenses_found" = "No recurring expenses found.";

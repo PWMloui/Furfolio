@@ -1,0 +1,67 @@
+
+[
+  {
+    "id": "A1F6E122-98B7-49C3-90A9-3DF1F29E8881",
+    "date": "2025-06-18T10:00:00Z",
+    "serviceType": "Full Groom",
+    "notes": "Regular customer, likes blueberry shampoo.",
+    "dog": {
+      "id": "D1",
+      "name": "Bella",
+      "breed": "Shih Tzu"
+    },
+    "owner": {
+      "id": "O1",
+      "name": "Jane Doe",
+      "contact": "555-1234"
+    }
+  },
+  {
+    "id": "A2A38E53-8DE3-4F02-807A-ED1D944E36DA",
+    "date": "2025-06-18T13:30:00Z",
+    "serviceType": "Bath & Brush",
+    "notes": "Skittish; ask owner to help with muzzle.",
+    "dog": {
+      "id": "D2",
+      "name": "Max",
+      "breed": "Labrador Retriever"
+    },
+    "owner": {
+      "id": "O2",
+      "name": "Sam Lee",
+      "contact": "555-5678"
+    }
+  },
+  {
+    "id": "A3CC6C1C-9B6F-456D-8F1B-441C80797818",
+    "date": "2025-06-19T09:00:00Z",
+    "serviceType": "Nail Trim",
+    "notes": "Aggressive, use extra caution.",
+    "dog": {
+      "id": "D3",
+      "name": "Daisy",
+      "breed": "Beagle"
+    },
+    "owner": {
+      "id": "O3",
+      "name": "Alex Smith",
+      "contact": "555-2468"
+    }
+  },
+  {
+    "id": "A4FA42D4-37D2-4E9B-8A31-59D0BA0F4413",
+    "date": "2025-06-19T11:00:00Z",
+    "serviceType": "Full Groom",
+    "notes": "Senior dog, needs assistance getting in tub.",
+    "dog": {
+      "id": "D4",
+      "name": "Lucky",
+      "breed": "Golden Retriever"
+    },
+    "owner": {
+      "id": "O4",
+      "name": "Emma Garcia",
+      "contact": "555-1122"
+    }
+  }
+]
