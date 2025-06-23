@@ -75,7 +75,7 @@ struct ChargeListView: View {
         charges.remove(atOffsets: offsets)
         // TODO: Delete from persistence layer
     }
-}
+
 
 // MARK: - Charge Row View
 

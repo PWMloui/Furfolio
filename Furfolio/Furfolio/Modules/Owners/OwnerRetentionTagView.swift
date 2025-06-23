@@ -4,88 +4,79 @@
 //
 //  Created by mac on 6/19/25.
 //
+//  ENHANCED: Refactored to be a 'dumb' view that relies on the
+//  CustomerRetentionAnalyzer for all business logic, ensuring a single
+//  source of truth for retention status.
+//
 
 import SwiftUI
 
-/// Displays a retention status tag for a DogOwner based on last visit, activity, or risk.
-/// Expand or connect to your analytics/badge engine as needed.
+/// A view that displays a retention status tag for a DogOwner.
+/// It determines the appropriate tag by using the centralized CustomerRetentionAnalyzer.
 struct OwnerRetentionTagView: View {
-    let lastAppointmentDate: Date?
-    let totalAppointments: Int
-    let newClientThresholdDays: Int = 14
-    let retentionRiskThresholdDays: Int = 60
+    let owner: DogOwner
+
+    /// The single source of truth for retention logic.
+    private let analyzer = CustomerRetentionAnalyzer.shared
 
     var body: some View {
-        HStack(spacing: 8) {
-            if isNewClient {
-                tag(text: "New Client", icon: "sparkles", color: .blue)
-            }
-            if isRetentionRisk {
-                tag(text: "Retention Risk", icon: "exclamationmark.triangle.fill", color: .orange)
-            }
-            if isReturning {
-                tag(text: "Returning Client", icon: "arrow.2.squarepath", color: .green)
-            }
-            if isActive {
-                tag(text: "Active", icon: "bolt.fill", color: .accentColor)
-            }
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
-    }
+        // Calculate the retention tag using the centralized analyzer.
+        let tag = analyzer.retentionTag(for: owner)
 
-    // MARK: - Retention Logic
-
-    private var isNewClient: Bool {
-        guard let last = lastAppointmentDate else { return true }
-        let days = Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? 99
-        return days <= newClientThresholdDays && totalAppointments <= 1
-    }
-
-    private var isRetentionRisk: Bool {
-        guard let last = lastAppointmentDate else { return false }
-        let days = Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? 0
-        return days > retentionRiskThresholdDays
-    }
-
-    private var isReturning: Bool {
-        totalAppointments > 1 && !isRetentionRisk
-    }
-
-    private var isActive: Bool {
-        guard let last = lastAppointmentDate else { return false }
-        let days = Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? 99
-        return days <= 30 && totalAppointments > 0
-    }
-
-    // MARK: - Tag Builder
-
-    private func tag(text: String, icon: String, color: Color) -> some View {
+        // The view now simply renders the tag provided by the analyzer.
+        // All styling uses design system tokens.
         Label {
-            Text(text)
-                .font(.caption)
-                .foregroundColor(.primary)
+            Text(tag.label)
+                .font(AppFonts.caption)
         } icon: {
-            Image(systemName: icon)
-                .foregroundColor(color)
+            Image(systemName: tag.icon.symbol)
         }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 10)
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-        .shadow(color: color.opacity(0.13), radius: 1, x: 0, y: 1)
+        .foregroundColor(tag.color)
+        .padding(.horizontal, AppSpacing.medium)
+        .padding(.vertical, AppSpacing.small)
+        .background(tag.color.opacity(0.13))
+        .clipShape(Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Retention Status: \(tag.label)")
     }
 }
+
 
 // MARK: - Preview
 
-#Preview {
-    VStack(spacing: 18) {
-        OwnerRetentionTagView(lastAppointmentDate: Calendar.current.date(byAdding: .day, value: -2, to: Date()), totalAppointments: 1) // New Client + Active
-        OwnerRetentionTagView(lastAppointmentDate: Calendar.current.date(byAdding: .day, value: -70, to: Date()), totalAppointments: 8) // Retention Risk
-        OwnerRetentionTagView(lastAppointmentDate: Calendar.current.date(byAdding: .day, value: -10, to: Date()), totalAppointments: 4) // Returning + Active
-        OwnerRetentionTagView(lastAppointmentDate: nil, totalAppointments: 0) // New Client
+#if DEBUG
+@available(iOS 18.0, *)
+struct OwnerRetentionTagView_Previews: PreviewProvider {
+    static var previews: some View {
+        // Sample owners representing each retention status for the preview.
+        let newOwner = DogOwner(ownerName: "New Owner")
+        
+        let activeOwner = DogOwner(ownerName: "Active Owner")
+        activeOwner.appointments = [Appointment(date: Date().addingTimeInterval(-20 * 86400), serviceType: .fullGroom)]
+        
+        let returningOwner = DogOwner(ownerName: "Returning Owner")
+        returningOwner.appointments = [
+            Appointment(date: Date().addingTimeInterval(-100 * 86400), serviceType: .fullGroom),
+            Appointment(date: Date().addingTimeInterval(-45 * 86400), serviceType: .fullGroom)
+        ]
+        
+        let riskOwner = DogOwner(ownerName: "Risk Owner")
+        riskOwner.appointments = [Appointment(date: Date().addingTimeInterval(-75 * 86400), serviceType: .nailTrim)]
+        
+        let inactiveOwner = DogOwner(ownerName: "Inactive Owner")
+        inactiveOwner.appointments = [Appointment(date: Date().addingTimeInterval(-200 * 86400), serviceType: .fullGroom)]
+        
+        return VStack(alignment: .leading, spacing: 18) {
+            OwnerRetentionTagView(owner: newOwner)
+            OwnerRetentionTagView(owner: activeOwner)
+            OwnerRetentionTagView(owner: returningOwner)
+            OwnerRetentionTagView(owner: riskOwner)
+            OwnerRetentionTagView(owner: inactiveOwner)
+        }
+        .padding()
+        .background(AppColors.background)
+        .previewLayout(.sizeThatFits)
     }
-    .padding()
-    .background(Color(.systemGroupedBackground))
 }
+#endif
+

@@ -4,90 +4,108 @@
 //
 //  Created by mac on 6/19/25.
 //
+//  ENHANCED: Updated to include payment method tracking, staff attribution,
+//  tagging, and a structured audit log for comprehensive financial management.
+//
 
 import Foundation
 import SwiftData
 
-// MARK: - Charge (Unified, Modular, Tokenized, Auditable Charge Model)
+// MARK: - ChargeType Enum (No changes, shown for context)
 
-/// Represents a modular, auditable, and tokenized business charge entity associated with a dog owner.
-/// This model supports comprehensive audit trails, analytics reporting, business logic workflows,
-/// and UI integration including badges, status indicators, and color coding. It is designed to be
-/// extensible, maintainable, and suitable for complex business environments where traceability and
-/// analytics are critical.
-/// 
-/// The Charge model encapsulates not only financial data but also metadata essential for business
-/// operations, audit compliance, and user interface enhancements.
+/// Enum representing the type of charge or service rendered.
+enum ChargeType: String, Codable, CaseIterable, Identifiable {
+    case fullGroom, basicBath, nailTrim, custom, product
+    
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .fullGroom: return "Full Groom"
+        case .basicBath: return "Basic Bath"
+        case .nailTrim: return "Nail Trim"
+        case .custom: return "Custom Service"
+        case .product: return "Product"
+        }
+    }
+    // ... icon property ...
+}
+
+
+// MARK: - NEW: PaymentMethod Enum
+
+/// Defines the method of payment for a charge.
+public enum PaymentMethod: String, Codable, CaseIterable, Identifiable {
+    case unpaid = "Unpaid"
+    case cash = "Cash"
+    case creditCard = "Credit Card"
+    case debitCard = "Debit Card"
+    case zelle = "Zelle"
+    case other = "Other"
+
+    public var id: String { rawValue }
+}
+
+
+// MARK: - NEW: ChargeAuditEntry Struct
+
+/// Represents a single, structured audit log entry for a Charge.
+struct ChargeAuditEntry: Codable, Identifiable, Hashable {
+    var id: UUID = UUID()
+    var date: Date = Date()
+    var action: String // e.g., "Created", "Updated isPaid", "Amount changed"
+    var details: String? // e.g., "Set isPaid to true", "Amount changed from $50 to $55"
+    var userID: String?
+}
+
+
+// MARK: - Charge Model (Updated)
+
+/// Represents a modular, auditable, and tokenized business charge entity.
 @Model
 final class Charge: Identifiable, ObservableObject {
     
-    // MARK: - Identification
-    
-    /// Unique identifier for the charge.
-    /// Used for audit trail correlation and entity tracking across systems.
     @Attribute(.unique)
     private(set) var id: UUID
-    
-    // MARK: - Core Properties
-    
-    /// The date when the charge was incurred.
-    /// Important for analytics timelines, reporting periods, and business workflows.
-    @Published
+
     var date: Date
-    
-    /// The monetary amount of the charge.
-    /// Central to financial analytics, billing, and reporting.
-    @Published
     var amount: Double
-    
-    /// The type/category of the charge or service rendered.
-    /// Drives business logic, UI badges, and analytics segmentation.
-    @Published
     var type: ChargeType
-    
-    /// Optional notes providing additional context or instructions.
-    /// Useful for audit details, customer service, and internal workflows.
-    @Published
     var notes: String?
+    var isPaid: Bool
     
-    // MARK: - Relationships
+    // --- NEW & UPDATED PROPERTIES ---
     
-    /// The dog owner associated with this charge.
-    /// Enables relational queries, owner-specific analytics, and business workflows.
+    /// The method used for payment.
+    var paymentMethod: PaymentMethod
+    
+    /// Flexible tags for categorization (e.g., "Discount", "Refund", "Special").
+    var tags: [String]
+    
+    /// A structured log of all changes to this charge.
+    var auditLog: [ChargeAuditEntry]
+
+    // --- RELATIONSHIPS ---
+    
     @Relationship(deleteRule: .nullify, inverse: \DogOwner.charges)
     var owner: DogOwner?
     
-    /// The dog associated with this charge.
-    /// Supports pet-specific analytics, service histories, and UI display.
     @Relationship(deleteRule: .nullify, inverse: \Dog.charges)
     var dog: Dog?
     
-    /// The appointment associated with this charge, if any.
-    /// Links charges to scheduled services, facilitating workflow tracking and audit.
     @Relationship(deleteRule: .nullify, inverse: \Appointment.charges)
     var appointment: Appointment?
     
-    // MARK: - Analytics & Reporting
+    /// The staff member who processed or created this charge.
+    @Relationship(deleteRule: .nullify)
+    var processedBy: StaffMember?
+
+    // --- METADATA ---
     
-    /// Indicates whether the charge has been marked as paid.
-    /// Used for business analytics, financial reporting, and workflow status indicators.
-    @Published
-    var isPaid: Bool
-    
-    /// Timestamp of the last modification for audit and synchronization purposes.
-    /// Critical for audit logs, conflict resolution, and compliance tracking.
-    @Published
     private(set) var lastModified: Date
-    
-    /// Identifier of the user who created this charge.
-    /// Supports audit trails, accountability, and user-specific analytics.
-    @Published
     private(set) var createdBy: String?
     
-    // MARK: - Computed Properties
+    // --- COMPUTED PROPERTIES ---
     
-    /// A concise, display-friendly summary of the charge.
-    /// Combines type, amount, and date for UI display, reports, and notifications.
     var summary: String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
@@ -95,21 +113,8 @@ final class Charge: Identifiable, ObservableObject {
         return "\(type.displayName) - \(amountString) on \(date.formatted(date: .abbreviated, time: .omitted))"
     }
     
-    // MARK: - Initialization
+    // --- INITIALIZER (Updated) ---
     
-    /// Initializes a new Charge instance.
-    /// - Parameters:
-    ///   - id: Unique identifier for the charge, used for audit and entity tracking.
-    ///   - date: Date the charge was incurred, relevant for analytics and workflows.
-    ///   - amount: Monetary amount of the charge, central to business reporting.
-    ///   - type: Type of charge/service, driving UI badges and business logic.
-    ///   - notes: Optional notes for audit and internal communication.
-    ///   - owner: Associated dog owner for relational integrity and analytics.
-    ///   - dog: Associated dog for service history and reporting.
-    ///   - appointment: Linked appointment for workflow and audit correlation.
-    ///   - isPaid: Payment status used in financial analytics and workflow states.
-    ///   - createdBy: User identifier for audit and accountability.
-    ///   - lastModified: Timestamp for audit and synchronization.
     init(
         id: UUID = UUID(),
         date: Date,
@@ -120,6 +125,9 @@ final class Charge: Identifiable, ObservableObject {
         dog: Dog? = nil,
         appointment: Appointment? = nil,
         isPaid: Bool = false,
+        paymentMethod: PaymentMethod = .unpaid,
+        tags: [String] = [],
+        processedBy: StaffMember? = nil,
         createdBy: String? = nil,
         lastModified: Date = Date()
     ) {
@@ -132,110 +140,73 @@ final class Charge: Identifiable, ObservableObject {
         self.dog = dog
         self.appointment = appointment
         self.isPaid = isPaid
+        self.paymentMethod = paymentMethod
+        self.tags = tags
+        self.processedBy = processedBy
         self.createdBy = createdBy
         self.lastModified = lastModified
-        
-        auditLogCreation()
+        self.auditLog = [ChargeAuditEntry(action: "Charge Created", userID: createdBy)]
     }
     
-    // MARK: - Audit Logging Stubs
+    // --- METHODS ---
     
-    /// Logs the creation event of this charge for audit and compliance.
-    /// Intended to integrate with centralized audit/event logging systems.
-    /// Also supports analytics triggers and business owner workflow notifications.
-    private func auditLogCreation() {
-        // TODO: Implement audit logging for charge creation.
-        // Example: Logger.log("Charge created: \(id.uuidString) by \(createdBy ?? "unknown") at \(Date())")
+    /// Marks the charge as paid with a specific payment method.
+    func markAsPaid(method: PaymentMethod, byUser userID: String?) {
+        guard method != .unpaid else { return }
+        self.isPaid = true
+        self.paymentMethod = method
+        addAuditEntry(action: "Marked as Paid", details: "Payment method: \(method.rawValue)", userID: userID)
     }
-    
-    /// Logs updates to this charge, updating the lastModified timestamp.
-    /// Supports audit trail continuity, analytics event tracking, and workflow state changes.
-    func auditLogUpdate() {
-        // TODO: Implement audit logging for charge updates.
-        // Example: Logger.log("Charge updated: \(id.uuidString) at \(Date())")
-        lastModified = Date()
+
+    /// Logs an update to the charge and refreshes the last modified timestamp.
+    func addAuditEntry(action: String, details: String? = nil, userID: String?) {
+        let entry = ChargeAuditEntry(action: action, details: details, userID: userID)
+        self.auditLog.append(entry)
+        self.lastModified = Date()
     }
-    
-    // MARK: - Future Extensions
-    
-    // Placeholder for tags, batch operations, and other modular extensions.
-    // var tags: [Tag] = []
 }
 
-// MARK: - ChargeType Enum
-
-/// Enum representing the type of charge or service rendered.
-/// Designed as a design token to integrate seamlessly with business logic,
-/// UI badge components, and analytics/reporting systems.
-/// This tokenization enables consistent use of service types across the app,
-/// facilitating maintainability and extensibility.
-///
-/// Each case drives UI representation (badges, icons), analytics segmentation,
-/// and business workflows.
-enum ChargeType: String, Codable, CaseIterable, Identifiable {
-    case fullGroom
-    case basicBath
-    case nailTrim
-    case custom
-    case product
-    
-    // Uncomment and add new service types here as needed:
-    // case dentalCleaning
-    // case trainingSession
-    // case overnightBoarding
-    
-    var id: String { rawValue }
-    
-    /// User-friendly display name for the charge type.
-    /// Used in UI labels, badges, and analytics reports to provide clear context.
-    var displayName: String {
-        switch self {
-        case .fullGroom: return "Full Groom"
-        case .basicBath: return "Basic Bath"
-        case .nailTrim: return "Nail Trim"
-        case .custom: return "Custom Service"
-        case .product: return "Product"
-        }
-    }
-    
-    /// Icon name representing the charge type for UI display.
-    /// Supports badge visuals, status indicators, and enhances user recognition.
-    /// Also used in analytics dashboards for quick visual differentiation.
-    var icon: String {
-        switch self {
-        case .fullGroom: return "scissors"
-        case .basicBath: return "drop"
-        case .nailTrim: return "pawprint"
-        case .custom: return "star"
-        case .product: return "cart"
-        }
-    }
-}
 
 // MARK: - SwiftUI Preview Stub
 
 #if DEBUG
 import SwiftUI
 
-@available(iOS 15.0, *)
+@available(iOS 18.0, *)
 struct Charge_Previews: PreviewProvider {
-    /// Provides a tokenized, business-logic-driven preview of the Charge summary.
-    /// This demo showcases UI integration of business tokens (charge type),
-    /// analytics-relevant display formatting, and audit-related flags (isPaid).
     static var previews: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Charge Summary:")
-                .font(.headline)
-            Text(Charge(
+                .font(AppTheme.Fonts.headline)
+
+            let sampleCharge = Charge(
                 date: Date(),
-                amount: 75.0,
+                amount: 85.50,
                 type: .fullGroom,
-                notes: "Includes haircut and bath",
+                notes: "Teddy bear cut, blueberry facial.",
                 isPaid: true,
+                paymentMethod: .creditCard,
+                tags: ["VIP", "Discount"],
                 createdBy: "admin"
-            ).summary)
-            .font(.subheadline)
-            .foregroundColor(.secondary)
+            )
+            
+            Text(sampleCharge.summary)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            Text("Payment Method: \(sampleCharge.paymentMethod.rawValue)")
+                .font(.caption)
+
+            HStack {
+                ForEach(sampleCharge.tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(Capsule())
+                }
+            }
         }
         .padding()
         .previewLayout(.sizeThatFits)

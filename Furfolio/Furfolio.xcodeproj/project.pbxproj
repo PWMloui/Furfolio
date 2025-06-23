@@ -6,6 +6,21 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildRule section */
+		04A32E8E2E09445B00115BF5 /* PBXBuildRule */ = {
+			isa = PBXBuildRule;
+			compilerSpec = com.apple.compilers.proxy.script;
+			fileType = image.png;
+			inputFiles = (
+				"",
+			);
+			isEditable = 1;
+			outputFiles = (
+			);
+			script = "# copypng\n";
+		};
+/* End PBXBuildRule section */
+
 /* Begin PBXFileReference section */
 		04562C442E051E2900FDC0A2 /* Furfolio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Furfolio.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -82,6 +97,7 @@
 				04562C422E051E2900FDC0A2 /* Resources */,
 			);
 			buildRules = (
+				04A32E8E2E09445B00115BF5 /* PBXBuildRule */,
 			);
 			dependencies = (
 			);

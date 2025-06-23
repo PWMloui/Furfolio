@@ -358,8 +358,8 @@ private extension QuickActionsMenu {
                 .foregroundColor(AppColors.textPrimary)
             QuickActionsMenu(
                 customActions: [
-                    (label: "Custom 1", systemImage: "star.fill", color: AppColors.yellow) { print("Custom 1") },
-                    (label: "Custom 2", systemImage: "bolt.fill", color: AppColors.purple) { print("Custom 2") }
+                    (label: "Custom 1", systemImage: "star.fill", color: AppColors.yellow), { print("Custom 1") },
+                    (label: "Custom 2", systemImage: "bolt.fill", color: AppColors.purple), { print("Custom 2") }
                 ],
                 helperText: "Includes custom actions"
             )
