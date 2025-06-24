@@ -1,136 +1,130 @@
-//FeedbackView.swift
-
+//
+//  FeedbackView.swift
+//  Furfolio
+//
+//  Created by mac on 6/19/25.
+//  Modernized, tokenized, and accessible.
+//
 
 import SwiftUI
-import PhotosUI
 
-/// A user feedback form for Furfolio (for feature requests, bug reports, ratings, etc.)
 struct FeedbackView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    // Feedback state
-    @State private var rating: Int = 5
-    @State private var feedbackText: String = ""
-    @State private var screenshotImage: UIImage? = nil
-    @State private var showPhotoPicker = false
-    @State private var showConfirmationAlert = false
-
-    var onSubmit: ((UserFeedback) -> Void)? = nil
+    @StateObject private var viewModel = FeedbackViewModel()
 
     var body: some View {
-        NavigationView {
-            Form {
-                experienceSection
-                commentsSection
-                screenshotSection
-            }
-            .navigationTitle("Send Feedback")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: dismiss.callAsFunction)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Submit", action: submitFeedback)
-                        .disabled(feedbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .photosPicker(isPresented: $showPhotoPicker, selection: .constant(nil), matching: .images) { item in
-                Task {
-                    if let data = try? await item?.loadTransferable(type: Data.self),
-                       let image = UIImage(data: data) {
-                        screenshotImage = image
-                    }
-                }
-            }
-            .alert("Thank You!", isPresented: $showConfirmationAlert) {
-                Button("OK") {
-                    dismiss()
-                }
-            } message: {
-                Text("Your feedback helps us improve Furfolio.")
-            }
-        }
-    }
+        VStack(alignment: .leading, spacing: AppSpacing.lg) { // TODO: define AppSpacing.lg = 24
+            Text(LocalizedStringKey("We value your feedback"))
+                .font(AppFonts.title2Bold)
+                .foregroundColor(AppColors.textPrimary)
+                .padding(.bottom, AppSpacing.sm) // TODO: define AppSpacing.sm = 8
+                .accessibilityLabel(LocalizedStringKey("Feedback header"))
+                .accessibilityHint(LocalizedStringKey("Indicates the feedback section"))
 
-    private var experienceSection: some View {
-        Section(header: Text("Your Experience")) {
-            HStack(spacing: 8) {
-                ForEach(1...5, id: \.self) { star in
-                    Image(systemName: star <= rating ? "star.fill" : "star")
-                        .resizable()
-                        .frame(width: 28, height: 28)
-                        .foregroundColor(star <= rating ? .yellow : .gray.opacity(0.4))
-                        .onTapGesture { rating = star }
-                        .accessibilityLabel("\(star) star\(star > 1 ? "s" : "")")
+            Text(LocalizedStringKey("Let us know if you have suggestions, encounter bugs, or need support. Your input helps improve Furfolio."))
+                .font(AppFonts.body)
+                .foregroundColor(AppColors.textSecondary)
+                .accessibilityLabel(LocalizedStringKey("Feedback description"))
+
+            Picker(LocalizedStringKey("Category"), selection: $viewModel.category) {
+                ForEach(FeedbackCategory.allCases) { cat in
+                    Text(LocalizedStringKey(cat.rawValue)).tag(cat)
                 }
             }
-            .padding(.vertical, 8)
-        }
-    }
+            .pickerStyle(SegmentedPickerStyle())
+            .accessibilityLabel(LocalizedStringKey("Feedback category picker"))
+            .accessibilityHint(LocalizedStringKey("Select the category of your feedback"))
 
-    private var commentsSection: some View {
-        Section(header: Text("Comments / Suggestions")) {
-            TextEditor(text: $feedbackText)
-                .frame(minHeight: 100)
-                .padding(.vertical, 3)
+            TextEditor(text: $viewModel.message)
+                .frame(minHeight: AppSpacing.xxl) // TODO: define AppSpacing.xxl = 120
+                .padding(AppSpacing.sm)
+                .background(AppColors.inputBackground)
+                .cornerRadius(AppRadius.md) // TODO: define AppRadius.md = 12
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.2))
+                    RoundedRectangle(cornerRadius: AppRadius.md)
+                        .stroke(AppColors.inputBorder, lineWidth: 1)
                 )
-                .accessibilityLabel("Feedback text")
-        }
-    }
+                .accessibilityLabel(LocalizedStringKey("Feedback message"))
+                .accessibilityHint(LocalizedStringKey("Enter your feedback message here"))
 
-    private var screenshotSection: some View {
-        Section(header: Text("Add a Screenshot (Optional)")) {
-            if let image = screenshotImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(height: 100)
-                    .cornerRadius(8)
-                    .shadow(radius: 2)
-                    .onTapGesture { showPhotoPicker = true }
-            } else {
-                Button {
-                    showPhotoPicker = true
-                } label: {
-                    Label("Attach Screenshot", systemImage: "photo")
+            TextField(LocalizedStringKey("Your email or phone (optional)"), text: $viewModel.contact)
+                .textContentType(.emailAddress)
+                .keyboardType(.emailAddress)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .padding(AppSpacing.sm)
+                .background(AppColors.inputBackground)
+                .cornerRadius(AppRadius.md)
+                .accessibilityLabel(LocalizedStringKey("Contact info"))
+                .accessibilityHint(LocalizedStringKey("Optional email or phone number for contact"))
+
+            if let error = viewModel.errorMessage {
+                Text(error)
+                    .foregroundColor(AppColors.error)
+                    .font(AppFonts.footnote)
+                    .padding(.top, -AppSpacing.xs) // TODO: define AppSpacing.xs = 10
+                    .accessibilityLabel(LocalizedStringKey("Error message"))
+            }
+
+            if viewModel.showSuccess {
+                HStack {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundColor(AppColors.success)
+                    Text(LocalizedStringKey("Thank you for your feedback!"))
+                        .foregroundColor(AppColors.success)
+                        .font(AppFonts.footnote)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(LocalizedStringKey("Feedback submission success"))
+            }
+
+            Button(action: { viewModel.submitFeedback() }) {
+                if viewModel.isSubmitting {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text(LocalizedStringKey("Submit"))
+                        .font(AppFonts.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(AppColors.accent)
+                        .foregroundColor(AppColors.textOnAccent) // TODO: define AppColors.textOnAccent if needed
+                        .cornerRadius(AppRadius.lg) // TODO: define AppRadius.lg = 16
                 }
             }
+            .disabled(viewModel.isSubmitting)
+            .accessibilityLabel(LocalizedStringKey("Submit feedback button"))
+            .accessibilityHint(LocalizedStringKey("Tap to submit your feedback"))
         }
-    }
-
-    private func submitFeedback() {
-        let feedback = UserFeedback(
-            date: Date(),
-            rating: rating,
-            comment: feedbackText.trimmingCharacters(in: .whitespacesAndNewlines),
-            screenshot: screenshotImage
-        )
-        onSubmit?(feedback)
-        HapticManager.success()
-        showConfirmationAlert = true
+        .padding()
+        .background(AppColors.background)
+        .cornerRadius(AppRadius.xl) // TODO: define AppRadius.xl = 20
+        .shadow(radius: 8) // TODO: consider tokenizing shadow radius
+        .padding()
+        .navigationTitle(LocalizedStringKey("Feedback"))
+        .accessibilityAddTraits(.isHeader)
+        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { viewModel.showSuccess = false }
     }
 }
 
-// MARK: - User Feedback Data Model
-
-struct UserFeedback {
-    let date: Date
-    let rating: Int
-    let comment: String
-    let screenshot: UIImage?
-}
-
-// MARK: - Preview
-
-#if DEBUG
 struct FeedbackView_Previews: PreviewProvider {
     static var previews: some View {
-        FeedbackView { feedback in
-            print("Received feedback: \(feedback)")
+        Group {
+            FeedbackView()
+                .preferredColorScheme(.light)
+                .environment(\.sizeCategory, .medium)
+                .previewDisplayName("Light Mode")
+
+            FeedbackView()
+                .preferredColorScheme(.dark)
+                .environment(\.sizeCategory, .medium)
+                .previewDisplayName("Dark Mode")
+
+            FeedbackView()
+                .preferredColorScheme(.light)
+                .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+                .previewDisplayName("Accessibility Large Text")
         }
     }
 }
-#endif

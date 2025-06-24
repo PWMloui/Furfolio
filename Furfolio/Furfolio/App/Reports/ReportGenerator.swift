@@ -121,12 +121,17 @@ final class ReportGenerator {
     /// - Returns: PDF file data, or nil if generation fails or unsupported platform.
     func exportSummaryPDF(title: String, body: String) -> Data? {
         #if canImport(UIKit)
+        // TODO: Migrate all hardcoded typography (UIFont.boldSystemFont, UIFont.systemFont) and spacings (22, 14, 50, 40, 10, 6, 8) to AppFonts and AppSpacing tokens as soon as cross-platform PDF rendering supports design tokens.
+
+        // TODO: Localize all PDF metadata strings (creator, author, title) before export.
         // PDF Metadata
         let pdfMetaData = [
             kCGPDFContextCreator: "Furfolio",
             kCGPDFContextAuthor: "Furfolio App",
             kCGPDFContextTitle: title
         ]
+
+        // TODO: Log/report all PDF export attempts and errors for business analytics or Trust Center compliance.
 
         // Renderer Configuration
         let pageWidth: CGFloat = 612
@@ -167,6 +172,8 @@ final class ReportGenerator {
             title.draw(in: titleRect, withAttributes: titleAttributes)
             body.draw(in: bodyRect, withAttributes: bodyAttributes)
         }
+
+        // Reminder: Extend this function for new report layouts (tables, charts, images) as business requirements grow.
 
         return data
         #else

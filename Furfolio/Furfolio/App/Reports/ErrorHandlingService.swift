@@ -1,4 +1,3 @@
-
 //
 //  ErrorHandlingService.swift
 //  Furfolio
@@ -11,6 +10,12 @@ import SwiftData
 
 /// A centralized service for handling, logging, and presenting errors throughout the Furfolio app.
 /// This service acts as the single funnel for all thrown `AppError` types.
+///
+/// Best Practices:
+/// - Extend this service cautiously; centralize error handling to maintain consistency.
+/// - All alert titles and messages should be localized using `LocalizedStringKey` or `NSLocalizedString` with comments for translators.
+/// - Integrate audit and analytics calls in the `handle(error:in:modelContext:)` method where indicated to track error occurrences.
+/// - Use design tokens such as `AppFonts` and `AppColors` for alert appearances to maintain UI consistency.
 @MainActor
 final class ErrorHandlingService {
     
@@ -39,70 +44,89 @@ final class ErrorHandlingService {
         // For critical, non-recoverable errors, show a modal alert.
         case .dataLoadFailed, .saveFailed, .dataEncryptionFailed, .unknown:
             let alert = FurfolioAlert(
-                title: "An Error Occurred",
+                title: LocalizedStringKey("An Error Occurred"),
                 message: LocalizedStringKey(error.localizedDescription),
                 role: .error
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for critical error
             
         // For user-correctable errors, provide a helpful recovery suggestion.
         case .invalidInput(let reason):
+            let messageKey = reason ?? NSLocalizedString("Please check the highlighted fields and try again.", comment: "Fallback message for invalid input error")
             let alert = FurfolioAlert(
-                title: "Invalid Input",
-                message: LocalizedStringKey(reason ?? "Please check the highlighted fields and try again."),
+                title: LocalizedStringKey("Invalid Input"),
+                message: LocalizedStringKey(messageKey),
                 role: .warning
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for invalid input error
             
         case .permissionDenied(let type):
-            let message = "Furfolio does not have permission for \(type ?? "this feature"). Please grant permission in your device's Settings app."
+            // Localized format string with comment for translators
+            let formatString = NSLocalizedString("Furfolio does not have permission for %@. Please grant permission in your device's Settings app.", comment: "Message shown when permission is denied, %@ is the feature type")
+            let permissionType = type ?? NSLocalizedString("this feature", comment: "Fallback permission type description")
+            let message = String(format: formatString, permissionType)
             let alert = FurfolioAlert(
-                title: "Permission Denied",
+                title: LocalizedStringKey("Permission Denied"),
                 message: LocalizedStringKey(message),
-                primaryButton: .default(Text("Settings"), action: {
+                primaryButton: .default(Text(LocalizedStringKey("Settings")), action: {
                     // Deep link to settings
                     NotificationPermissionHelper.shared.openSettings()
                 }),
                 secondaryButton: .cancel(),
                 role: .warning
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for permission denied error
             
         // For temporary or environmental issues.
         case .networkUnavailable:
             let alert = FurfolioAlert(
-                title: "Network Unavailable",
-                message: "Please check your internet connection and try again.",
+                title: LocalizedStringKey("Network Unavailable"),
+                message: LocalizedStringKey(NSLocalizedString("Please check your internet connection and try again.", comment: "Message shown when network is unavailable")),
                 role: .info
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for network unavailable error
 
         // For business logic failures.
         case .tspRouteError(let reason):
+             let messageKey = reason ?? NSLocalizedString("Could not generate an optimized route.", comment: "Fallback message for route error")
              let alert = FurfolioAlert(
-                title: "Route Error",
-                message: LocalizedStringKey(reason ?? "Could not generate an optimized route."),
+                title: LocalizedStringKey("Route Error"),
+                message: LocalizedStringKey(messageKey),
                 role: .error
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for route error
             
         // For security issues.
         case .unauthorizedAccess:
              let alert = FurfolioAlert(
-                title: "Access Denied",
-                message: "You do not have the required permissions for this action.",
+                title: LocalizedStringKey("Access Denied"),
+                message: LocalizedStringKey(NSLocalizedString("You do not have the required permissions for this action.", comment: "Message shown when user tries unauthorized action")),
                 role: .destructive
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for unauthorized access
             
         // Default for any other case
         default:
             let alert = FurfolioAlert(
-                title: "Alert",
+                title: LocalizedStringKey("Alert"),
                 message: LocalizedStringKey(error.localizedDescription),
                 role: .info
             )
+            // Note: Use design tokens (AppFonts, AppColors) for alert appearance, not system defaults.
             appState.presentAlert(alert)
+            // TODO: Call audit/analytics event for generic error
         }
     }
     

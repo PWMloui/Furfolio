@@ -4,17 +4,21 @@
 //
 //  Created by mac on 6/19/25.
 //
-
 import Foundation
 
 // MARK: - Badge (Unified, Modular, Tokenized, Auditable Badge System)
 
-/// Types of badges available in Furfolio.
-///
-/// This enum defines all badge types in a modular, tokenized manner, enabling consistent audit trails,
-/// comprehensive analytics, business logic enforcement, and seamless integration with SwiftUI and SwiftData.
-/// Each badge type is fully documented, tokenized, and prepared for localization, audit, reporting, and UI token/badge integration.
-/// This design ensures badges can be leveraged across dashboards, workflows, and reporting systems with clarity and consistency.
+// Reminder: All badges and tags used for business purposes, analytics, retention, and client risk
+// MUST use this Badge struct exclusively. Do NOT create separate models or types for retention or risk tags.
+
+// Types of badges available in Furfolio.
+//
+// This enum defines all badge types in a modular, tokenized manner, enabling consistent audit trails,
+// comprehensive analytics, business logic enforcement, and seamless integration with SwiftUI and SwiftData.
+// Each badge type is fully documented, tokenized, and prepared for localization, audit, reporting, and UI token/badge integration.
+// This design ensures badges can be leveraged across dashboards, workflows, and reporting systems with clarity and consistency.
+//
+// Note: Retention and client risk badges are represented by the `.retentionRisk` case here, consolidating all retention tags.
 enum BadgeType: String, CaseIterable, Identifiable, Codable {
     case birthday
     case topSpender
@@ -89,6 +93,7 @@ enum BadgeType: String, CaseIterable, Identifiable, Codable {
 /// It supports audit trails, multi-user assignment, flexible entity association, and detailed analytics reporting.
 /// Badges can be associated with any model entity, enabling comprehensive dashboard integration,
 /// business logic enforcement, and UI token/badge rendering.
+/// All retention and client risk badges are created using the `.retentionRisk` badge type here, consolidating all retention tags.
 /// All properties and methods are designed for clarity in audit, business workflows, and UI presentation.
 struct Badge: Identifiable, Codable, Hashable, Equatable {
     // MARK: - Identifiers
@@ -128,6 +133,16 @@ struct Badge: Identifiable, Codable, Hashable, Equatable {
     /// Supports multi-user audit trails, accountability, and user-based analytics.
     let awardedBy: UUID?
 
+    /// Optional custom icon for the badge.
+    ///
+    /// Allows creation of custom badges/tags without modifying the BadgeType enum.
+    let customIcon: String?
+
+    /// Optional custom label for the badge.
+    ///
+    /// Allows creation of custom badges/tags without modifying the BadgeType enum.
+    let customLabel: String?
+
     // MARK: - Initialization
 
     /// Initializes a new badge instance.
@@ -139,13 +154,17 @@ struct Badge: Identifiable, Codable, Hashable, Equatable {
     ///   - entityType: Optional string representing the associated entity type, enabling flexible dashboard and audit linkage.
     ///   - entityID: Optional UUID of the associated entity instance, essential for precise audit and analytics tracking.
     ///   - awardedBy: Optional UUID of the user who awarded the badge, supporting multi-user audit and accountability.
+    ///   - customIcon: Optional custom icon string for flexible badge representation.
+    ///   - customLabel: Optional custom label string for flexible badge representation.
     init(
         type: BadgeType,
         dateAwarded: Date = Date(),
         notes: String? = nil,
         entityType: String? = nil,
         entityID: UUID? = nil,
-        awardedBy: UUID? = nil
+        awardedBy: UUID? = nil,
+        customIcon: String? = nil,
+        customLabel: String? = nil
     ) {
         self.id = UUID()
         self.type = type
@@ -154,6 +173,8 @@ struct Badge: Identifiable, Codable, Hashable, Equatable {
         self.entityType = entityType
         self.entityID = entityID
         self.awardedBy = awardedBy
+        self.customIcon = customIcon
+        self.customLabel = customLabel
     }
 
     // MARK: - Computed Properties
@@ -161,8 +182,11 @@ struct Badge: Identifiable, Codable, Hashable, Equatable {
     /// A display-friendly string combining icon and label for UI presentation.
     ///
     /// Used in UI badge components and reporting views as a tokenized representation.
+    /// Always localize this string for display.
     var displayString: String {
-        "\(type.icon) \(type.label)"
+        let iconToUse = customIcon ?? type.icon
+        let labelToUse = customLabel ?? type.label
+        return "\(iconToUse) \(labelToUse)"
     }
 
     // MARK: - Static Helpers

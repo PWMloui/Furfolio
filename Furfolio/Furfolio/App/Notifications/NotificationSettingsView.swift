@@ -81,70 +81,83 @@ struct NotificationSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(header: Text(NSLocalizedString("Push Notifications", comment: "Section header"))) {
+                Section(header:
+                    Text(NSLocalizedString("Push Notifications", comment: "Section header"))
+                        .accessibilityAddTraits(.isHeader)
+                ) {
                     Toggle(isOn: $viewModel.notificationsEnabled) {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
                             Text(NSLocalizedString("Enable Notifications", comment: "Toggle title"))
-                                .fontWeight(.semibold)
+                                .font(AppFonts.body) // replaced .fontWeight(.semibold) with AppFonts.body
                             Text(NSLocalizedString("Receive important alerts, reminders, and updates from Furfolio.", comment: "Toggle description"))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(AppFonts.caption) // replaced .font(.caption)
+                                .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
                         }
                     }
                     .onChange(of: viewModel.notificationsEnabled) { newValue in
                         viewModel.handleNotificationsEnabledChanged(to: newValue)
                     }
+                    .accessibilityLabel(Text(NSLocalizedString("Enable Notifications", comment: "Toggle title")))
+                    .accessibilityHint(Text(NSLocalizedString("Toggle to receive important alerts, reminders, and updates from Furfolio.", comment: "Toggle accessibility hint")))
+
                     HStack {
                         Spacer()
                         Link(NSLocalizedString("Learn More", comment: "Learn more link"), destination: viewModel.learnMoreURL)
-                            .font(.caption)
+                            .font(AppFonts.caption) // replaced .font(.caption)
+                            .accessibilityLabel(Text(NSLocalizedString("Learn more about notifications", comment: "Accessibility label for learn more link")))
+                            .accessibilityHint(Text(NSLocalizedString("Opens Furfolio documentation about notifications in your browser.", comment: "Accessibility hint for learn more link")))
                         Spacer()
                     }
                 }
+                .accessibilityElement(children: .contain)
 
                 if viewModel.notificationsEnabled {
-                    Section(header: Text(NSLocalizedString("Notification Types", comment: "Section header"))) {
+                    Section(header:
+                        Text(NSLocalizedString("Notification Types", comment: "Section header"))
+                            .accessibilityAddTraits(.isHeader)
+                    ) {
                         Toggle(isOn: $viewModel.appointmentRemindersEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
                                 Text(NSLocalizedString("Appointment Reminders", comment: "Toggle title"))
                                 Text(NSLocalizedString("Get reminders for upcoming grooming appointments.", comment: "Toggle description"))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2) // replaced .font(.caption2)
+                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.taskRemindersEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
                                 Text(NSLocalizedString("Task Reminders", comment: "Toggle title"))
                                 Text(NSLocalizedString("Be notified about tasks and to-dos.", comment: "Toggle description"))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2) // replaced .font(.caption2)
+                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.marketingNotificationsEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
                                 Text(NSLocalizedString("Marketing & Tips", comment: "Toggle title"))
                                 Text(NSLocalizedString("Occasional updates, business tips, and special offers.", comment: "Toggle description"))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2) // replaced .font(.caption2)
+                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.expenseRemindersEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
                                 Text(NSLocalizedString("Expense Reminders", comment: "Toggle title"))
                                 Text(NSLocalizedString("Get reminders for expense tracking and payments. (Coming Soon)", comment: "Toggle description"))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2) // replaced .font(.caption2)
+                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.inventoryNotificationsEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
                                 Text(NSLocalizedString("Inventory Notifications", comment: "Toggle title"))
                                 Text(NSLocalizedString("Be alerted about low inventory and supply levels. (Coming Soon)", comment: "Toggle description"))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2) // replaced .font(.caption2)
+                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
                             }
                         }
                     }
+                    .accessibilityElement(children: .contain)
                 }
             }
             .navigationTitle(NSLocalizedString("Notifications", comment: "Navigation title"))
@@ -169,14 +182,30 @@ struct NotificationSettingsView: View {
 }
 
 #Preview {
-    NotificationSettingsView(viewModel: {
-        let mock = NotificationSettingsViewModel()
-        mock.notificationsEnabled = true
-        mock.appointmentRemindersEnabled = true
-        mock.taskRemindersEnabled = false
-        mock.marketingNotificationsEnabled = true
-        mock.expenseRemindersEnabled = false
-        mock.inventoryNotificationsEnabled = false
-        return mock
-    }())
+    Group {
+        NotificationSettingsView(viewModel: {
+            let mock = NotificationSettingsViewModel()
+            mock.notificationsEnabled = true
+            mock.appointmentRemindersEnabled = true
+            mock.taskRemindersEnabled = false
+            mock.marketingNotificationsEnabled = true
+            mock.expenseRemindersEnabled = false
+            mock.inventoryNotificationsEnabled = false
+            return mock
+        }())
+        .previewDisplayName("Default Preview")
+
+        NotificationSettingsView(viewModel: {
+            let mock = NotificationSettingsViewModel()
+            mock.notificationsEnabled = true
+            mock.appointmentRemindersEnabled = true
+            mock.taskRemindersEnabled = false
+            mock.marketingNotificationsEnabled = true
+            mock.expenseRemindersEnabled = false
+            mock.inventoryNotificationsEnabled = false
+            return mock
+        }())
+        .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+        .previewDisplayName("Accessibility Large Text Preview")
+    }
 }

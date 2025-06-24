@@ -4,11 +4,14 @@
 //
 //  Created by mac on 6/19/25.
 //
+//  RetentionAlertEngine is now fully merged into BadgeEngine.swift and should be deleted.
+//
 
 import Foundation
 
 /// Types of badges available in Furfolio.
 /// Represents predefined categories of badges that can be awarded to dogs, owners, or appointments.
+/// This engine covers all badge awarding, revoking, and analytics—including retention/risk alerts.
 public enum BadgeType: String, CaseIterable, Identifiable {
     case birthday
     case topSpender
@@ -104,9 +107,10 @@ public extension Badge {
 
 // MARK: - BadgeEngine
 
-/// BadgeEngine computes and manages awarding badges.
-/// Thread-safe singleton class responsible for business logic related to awarding badges.
+/// BadgeEngine computes and manages awarding and revoking badges.
+/// Thread-safe singleton class responsible for business logic related to awarding, revoking badges and analytics.
 /// Supports injection of custom badge assignment rules and auditing hooks.
+/// This engine fully covers all badge awarding, revoking, and analytics—including retention/risk alerts.
 @MainActor
 public final class BadgeEngine {
 
@@ -122,6 +126,10 @@ public final class BadgeEngine {
     /// Type alias for custom badge assignment closure.
     /// Allows injecting custom business logic to award badges for a given model.
     public typealias CustomBadgeLogic<T> = (T) -> [Badge]
+
+    /// Type alias for custom badge revocation closure.
+    /// Allows injecting custom business logic to revoke badges from a given model.
+    public typealias CustomBadgeRevocationLogic<T> = (T, Badge) -> Bool
 
     // MARK: - Properties
 
@@ -140,6 +148,10 @@ public final class BadgeEngine {
     /// Closure called whenever a badge is awarded.
     /// Provides an audit hook for logging or analytics.
     public var badgeAwardedHandler: ((Badge, Any) -> Void)?
+
+    /// Closure called whenever a badge is revoked.
+    /// Provides an audit hook for logging or analytics.
+    public var badgeRevokedHandler: ((Badge, Any) -> Void)?
 
     // MARK: - Badge Assignment Logic (Dog)
 
@@ -306,6 +318,24 @@ public final class BadgeEngine {
         return awarded
     }
 
+    // MARK: - Badge Revocation Logic
+
+    /// Revokes a badge from a given model (dog, owner, appointment).
+    ///
+    /// - Parameters:
+    ///   - badge: The badge to revoke.
+    ///   - model: The model instance (Dog, DogOwner, Appointment) from which to revoke the badge.
+    ///
+    /// This method enables centralized badge revocation, completing the full badge lifecycle management.
+    public func revokeBadge(_ badge: Badge, from model: Any) {
+        // Perform revocation logic here.
+        // Since Badge instances are immutable and models are external,
+        // actual removal should be handled by the caller's data store or model layer.
+        // This method triggers the auditRevocation hook and posts notifications for analytics.
+
+        auditRevocation(badge: badge, for: model)
+    }
+
     // MARK: - Utility Methods
 
     /// Human-readable string summary for a list of badges.
@@ -332,6 +362,21 @@ public final class BadgeEngine {
                                         object: self,
                                         userInfo: ["badge": badge, "model": model])
     }
+
+    /// Internal method to trigger auditing hooks when a badge is revoked.
+    ///
+    /// - Parameters:
+    ///   - badge: The badge revoked.
+    ///   - model: The model instance (Dog, DogOwner, Appointment) the badge was revoked from.
+    private func auditRevocation(badge: Badge, for model: Any) {
+        // Trigger the badge revoked handler closure if set.
+        badgeRevokedHandler?(badge, model)
+
+        // Post a notification for observers if needed.
+        NotificationCenter.default.post(name: .badgeRevoked,
+                                        object: self,
+                                        userInfo: ["badge": badge, "model": model])
+    }
 }
 
 // MARK: - Notification Names
@@ -339,4 +384,7 @@ public final class BadgeEngine {
 public extension Notification.Name {
     /// Notification posted when a badge is awarded.
     static let badgeAwarded = Notification.Name("BadgeEngineBadgeAwardedNotification")
+
+    /// Notification posted when a badge is revoked.
+    static let badgeRevoked = Notification.Name("BadgeEngineBadgeRevokedNotification")
 }

@@ -15,6 +15,13 @@ import SwiftData
 /// compliance requirements including audit trails, badge/category logic for UI filtering, and is prepared for future encryption.
 /// Designed for scalable owner-focused dashboards, business reporting, multi-user audit trails, and seamless UI integration.
 /// Enables classification, filtering, and reporting while ensuring data integrity and compliance in multi-user environments.
+///
+/// Extension points:
+/// - UI: Integrate with badge/category logic and apply design tokens for color, typography, and spacing.
+///   // TODO: Apply design tokens to badge/category UI logic when presenting notes in the UI.
+///   // TODO: If any user-facing string is displayed in badge/category or error reporting, localize all such strings.
+/// - Logging: Extend for centralized logging (see auditLog) and diagnostics.
+/// - Analytics: Extend for business analytics and Trust Center event reporting.
 @Model
 public final class QuickNote: Identifiable, ObservableObject {
 
@@ -180,19 +187,63 @@ public final class QuickNote: Identifiable, ObservableObject {
     }
 }
 
-/// Service responsible for managing QuickNote entities with modularity, auditability, and business analytics.
-/// Supports multi-user environments with comprehensive audit trails and tokenized data handling.
-/// Implements async operations with robust error propagation for reliable workflows.
-/// Designed to facilitate analytics, compliance, and scalable business reporting.
+/**
+ QuickNoteAssistant
+ ==================
+ Service responsible for managing QuickNote entities with modularity, auditability, and business analytics.
+ Supports multi-user environments with comprehensive audit trails and tokenized data handling.
+ Implements async operations with robust error propagation for reliable workflows.
+ Designed to facilitate analytics, compliance, and scalable business reporting.
+ 
+ Extension points:
+ - UI: Extend for business dashboards, filtering, and localized error/status reporting.
+   // TODO: Localize any user-facing strings in future UI logic (e.g., badge/category labels, error reporting).
+ - Logging: When a centralized logger (e.g., AppLogger or diagnostics engine) is introduced, migrate auditLog to use it.
+ - Analytics: Integrate with Trust Center and business analytics platforms for event reporting.
+
+ ## Concurrency & SwiftData Compatibility
+ - All async methods are marked `@MainActor` to ensure SwiftUI/SwiftData safety.
+ - All context usages are private; use the provided getter for debugging.
+ - Only call async methods from the main thread or SwiftUI views.
+
+ ## Dependency Injection & Testing
+ - Use `QuickNoteAssistant.shared` for production.
+ - For testing/previews, you may inject a testable ModelContext via `init(context:)`.
+ - Use `QuickNoteAssistant.shared(with:)` to obtain a shared assistant using a custom context.
+
+ ## Audit Logging & Analytics
+ - All create, update, pin, and delete actions trigger audit logging.
+ - You may plug in an external logger/analytics via the `externalAuditHandler` closure.
+ - // TODO: Log audit events to Trust Center or business analytics platform, not just via print/externalAuditHandler.
+
+ ## Fetching & Sorting
+ - Fetch methods use SwiftData predicates for performance.
+ - Supports sorting by pinned, created, updated, and accessed date.
+ - `fetchAllNotes` returns all notes.
+   // TODO: Add paging support or additional filtering as needed for large datasets.
+*/
 @MainActor
 public final class QuickNoteAssistant: ObservableObject {
 
     // MARK: - Properties
 
     /// Shared singleton instance for convenience and centralized management.
-    public static let shared = QuickNoteAssistant()
+    public static let shared: QuickNoteAssistant = {
+        QuickNoteAssistant()
+    }()
 
+    /// Returns a shared assistant using the provided context (for previews/tests), or the standard context.
+    public static func shared(with context: ModelContext) -> QuickNoteAssistant {
+        // Always returns a new instance with the given context (for testability).
+        QuickNoteAssistant(context: context)
+    }
+
+    /// The ModelContext used for all operations. Private for encapsulation.
     private let context: ModelContext
+
+    /// Optional external audit/analytics closure, called on every create, update, pin, or delete.
+    /// Hook for analytics, logging, or event reporting.
+    public var externalAuditHandler: ((_ action: String, _ note: QuickNote) -> Void)?
 
     // MARK: - Initialization
 
@@ -203,23 +254,17 @@ public final class QuickNoteAssistant: ObservableObject {
         self.context = context
     }
 
+    /// Returns the current ModelContext (for debugging/inspection only).
+    public var currentContext: ModelContext { context }
+
     // MARK: - Public Methods
 
-    /// Adds a new quick note asynchronously.
-    /// - Parameters:
-    ///   - content: Textual content of the note.
-    ///   - owner: Optional linked dog owner.
-    ///   - dog: Optional linked dog.
-    ///   - appointment: Optional linked appointment.
-    ///   - pinned: Whether the note should be pinned.
-    ///   - category: Category of the note.
-    ///   - createdBy: Optional identifier of the user creating the note.
+    /// Adds a new quick note asynchronously. (MainActor)
+    /// - Parameters: See sync version.
     /// - Returns: The newly created QuickNote.
     /// - Throws: Propagates errors from context save operations.
-    /// Audit & Compliance: Logs creation events with user and timestamp.
-    /// Analytics: Enables tracking of note creation trends and user activity.
-    /// Business: Supports workflow initiation and dashboard updates.
-    /// UI/Workflow: Ensures UI reflects new note immediately.
+    /// - Audit/Analytics: Triggers audit logging and external handler.
+    @MainActor
     public func addNote(
         content: String,
         owner: DogOwner? = nil,
@@ -283,39 +328,79 @@ public final class QuickNoteAssistant: ObservableObject {
         return note
     }
 
-    /// Fetches quick notes optionally filtered by owner, dog, appointment, or category.
+    /// Fetches quick notes optionally filtered and sorted.
     /// - Parameters:
     ///   - owner: Optional dog owner filter.
     ///   - dog: Optional dog filter.
     ///   - appointment: Optional appointment filter.
     ///   - category: Optional category filter.
-    /// - Returns: An array of QuickNote objects sorted by pinned status and last accessed date.
-    /// Audit & Compliance: Supports filtered retrieval for compliance reporting.
-    /// Analytics: Enables segmented data analysis and trend reporting.
-    /// Business: Supports dashboard and workflow filtering.
-    /// UI/Workflow: Provides filtered data for contextual display.
+    ///   - sortBy: Sorting criteria (`pinned`, `createdAt`, `updatedAt`, `lastAccessedAt`).
+    ///   - ascending: Sort order (default: descending for dates, pinned first).
+    /// - Returns: Array of QuickNote objects.
     /// - Throws: Propagates errors from fetch operations.
     public func fetchNotes(
         owner: DogOwner? = nil,
         dog: Dog? = nil,
         appointment: Appointment? = nil,
-        category: QuickNoteCategory? = nil
+        category: QuickNoteCategory? = nil,
+        sortBy: QuickNoteSort = .pinnedThenAccessed,
+        ascending: Bool? = nil
     ) throws -> [QuickNote] {
-        let fetchDescriptor = FetchDescriptor<QuickNote>()
-        let notes = try context.fetch(fetchDescriptor)
+        var predicates: [Predicate<QuickNote>] = []
+        if let owner = owner {
+            predicates.append(#Predicate { $0.owner?.id == owner.id })
+        }
+        if let dog = dog {
+            predicates.append(#Predicate { $0.dog?.id == dog.id })
+        }
+        if let appointment = appointment {
+            predicates.append(#Predicate { $0.appointment?.id == appointment.id })
+        }
+        if let category = category {
+            predicates.append(#Predicate { $0.category == category })
+        }
+        let predicate: Predicate<QuickNote>? = predicates.isEmpty ? nil :
+            predicates.dropFirst().reduce(predicates.first!) { $0 && $1 }
 
-        return notes.filter { note in
-            (owner == nil || note.owner?.id == owner?.id) &&
-            (dog == nil || note.dog?.id == dog?.id) &&
-            (appointment == nil || note.appointment?.id == appointment?.id) &&
-            (category == nil || note.category == category!)
+        let sortDescriptors: [SortDescriptor<QuickNote>]
+        switch sortBy {
+        case .pinnedThenAccessed:
+            // Pinned first, then by lastAccessedAt descending.
+            sortDescriptors = [
+                SortDescriptor(\.pinned, order: .reverse),
+                SortDescriptor(\.lastAccessedAt, order: .reverse)
+            ]
+        case .createdAt:
+            sortDescriptors = [
+                SortDescriptor(\.createdAt, order: ascending == true ? .forward : .reverse)
+            ]
+        case .updatedAt:
+            sortDescriptors = [
+                SortDescriptor(\.updatedAt, order: ascending == true ? .forward : .reverse)
+            ]
+        case .lastAccessedAt:
+            sortDescriptors = [
+                SortDescriptor(\.lastAccessedAt, order: ascending == true ? .forward : .reverse)
+            ]
+        case .pinnedOnly:
+            sortDescriptors = [
+                SortDescriptor(\.pinned, order: .reverse)
+            ]
         }
-        .sorted {
-            if $0.pinned == $1.pinned {
-                return $0.lastAccessedAt > $1.lastAccessedAt
-            }
-            return $0.pinned && !$1.pinned
-        }
+
+        let fetchDescriptor = FetchDescriptor<QuickNote>(
+            predicate: predicate,
+            sortBy: sortDescriptors
+        )
+        return try context.fetch(fetchDescriptor)
+    }
+
+    /// Fetches all notes, optionally paged (future).
+    /// - Returns: All QuickNote objects.
+    /// - Throws: Propagates errors from fetch operations.
+    public func fetchAllNotes() throws -> [QuickNote] {
+        // TODO: Add paging support or additional filtering for large datasets.
+        try fetchNotes()
     }
 
     /// Convenience fetch method for pinned notes only.
@@ -326,20 +411,14 @@ public final class QuickNoteAssistant: ObservableObject {
     /// UI/Workflow: Provides prioritized notes for quick user access.
     /// - Throws: Propagates errors from fetch operations.
     public func fetchPinnedNotes() throws -> [QuickNote] {
-        try fetchNotes(category: nil)
-            .filter { $0.pinned }
-            .sorted { $0.lastAccessedAt > $1.lastAccessedAt }
+        try fetchNotes(sortBy: .pinnedThenAccessed).filter { $0.pinned }
     }
 
-    /// Updates the content of a note asynchronously.
-    /// - Parameters:
-    ///   - note: The QuickNote to update.
-    ///   - newContent: The new content string.
+    /// Updates the content of a note asynchronously. (MainActor)
+    /// - Parameters: See sync version.
     /// - Throws: Propagates errors from context save operations.
-    /// Audit & Compliance: Logs content updates with user and timestamp.
-    /// Analytics: Tracks modification frequency and engagement.
-    /// Business: Supports collaborative editing workflows.
-    /// UI/Workflow: Triggers UI refresh and state management.
+    /// - Audit/Analytics: Triggers audit logging and external handler.
+    @MainActor
     public func updateNote(
         _ note: QuickNote,
         newContent: String
@@ -367,13 +446,11 @@ public final class QuickNoteAssistant: ObservableObject {
         auditLog(action: "Update Note Content", note: note)
     }
 
-    /// Toggles the pinned state of a note asynchronously.
+    /// Toggles the pinned state of a note asynchronously. (MainActor)
     /// - Parameter note: The QuickNote to toggle pin.
     /// - Throws: Propagates errors from context save operations.
-    /// Audit & Compliance: Records pin/unpin actions for monitoring.
-    /// Analytics: Supports analysis of user prioritization behavior.
-    /// Business: Enables customized workflow and dashboard display.
-    /// UI/Workflow: Updates UI badges and note prominence.
+    /// - Audit/Analytics: Triggers audit logging and external handler.
+    @MainActor
     public func togglePin(
         _ note: QuickNote
     ) async throws {
@@ -397,13 +474,11 @@ public final class QuickNoteAssistant: ObservableObject {
         auditLog(action: "Toggle Pin", note: note)
     }
 
-    /// Deletes a note asynchronously.
+    /// Deletes a note asynchronously. (MainActor)
     /// - Parameter note: The QuickNote to delete.
     /// - Throws: Propagates errors from context save operations.
-    /// Audit & Compliance: Logs deletion events for traceability and compliance.
-    /// Analytics: Tracks deletion trends and user behavior.
-    /// Business: Supports cleanup workflows and data lifecycle management.
-    /// UI/Workflow: Removes note from UI and updates state.
+    /// - Audit/Analytics: Triggers audit logging and external handler.
+    @MainActor
     public func deleteNote(
         _ note: QuickNote
     ) async throws {
@@ -441,15 +516,25 @@ public final class QuickNoteAssistant: ObservableObject {
         try context.save()
     }
 
-    /// Stub for audit logging of note changes.
-    /// Intended for integration with audit trails, compliance reporting, analytics, and Trust Center event monitoring.
-    /// Captures critical user actions, timestamps, and note identifiers to support trustworthy data governance.
+    /// Handles audit logging and triggers the external audit/analytics hook if provided.
     /// - Parameters:
     ///   - action: Description of the action performed.
     ///   - note: The QuickNote involved in the action.
     private func auditLog(action: String, note: QuickNote) {
-        // TODO: Implement audit trail logging integration here.
-        // Example: AuditLogger.log(user: note.createdBy, action: action, noteId: note.id, timestamp: Date())
+        // Internal audit log (can be replaced with a real logger)
+        // TODO: Migrate to centralized AppLogger or diagnostics engine when available.
+        // TODO: Log audit events to Trust Center or business analytics platform, not just via print/externalAuditHandler.
         print("[AuditLog] Action: \(action), Note ID: \(note.id), User: \(note.createdBy ?? "Unknown"), Timestamp: \(Date())")
+        // Call external audit/analytics handler if provided
+        externalAuditHandler?(action, note)
     }
+}
+
+/// Sorting options for QuickNote fetches.
+public enum QuickNoteSort {
+    case pinnedThenAccessed
+    case createdAt
+    case updatedAt
+    case lastAccessedAt
+    case pinnedOnly
 }

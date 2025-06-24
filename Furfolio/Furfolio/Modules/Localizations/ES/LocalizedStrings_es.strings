@@ -5,6 +5,48 @@
 //  Created by mac on 6/19/25.
 //
 
+/* General App Strings */
+"app_name" = "Furfolio";
+"dashboard_title" = "Panel";
+"owners_title" = "Propietarios";
+"appointments_title" = "Citas";
+"charges_title" = "Cobros";
+"tasks_title" = "Tareas";
+"settings_title" = "Configuración";
+"save_button" = "Guardar";
+"cancel_button" = "Cancelar";
+"delete_button" = "Eliminar";
+"edit_button" = "Editar";
+
+/* Notifications & Alerts */
+"appointment_reminder_title" = "Próxima cita de peluquería";
+"appointment_reminder_message" = "%@ tiene una sesión de peluquería pronto.";
+
+/* Settings */
+"business_info_header" = "Información del negocio";
+"preferences_header" = "Preferencias";
+"enable_notifications_toggle" = "Activar notificaciones";
+"theme_picker_label" = "Tema de la aplicación";
+"support_header" = "Soporte";
+"contact_support_button" = "Contactar soporte";
+"rate_app_button" = "Calificar app";
+"danger_zone_header" = "Zona de peligro";
+"reset_all_data_button" = "Restablecer todos los datos";
+"about_section_header" = "Acerca de";
+"version_build_format" = "Versión %@ (%@)";
+"reset_all_data_alert_title" = "Restablecer todos los datos";
+"reset_all_data_alert_message" = "¿Está seguro de que desea restablecer todos los datos? Esta acción no se puede deshacer.";
+"reset_confirm_button" = "Restablecer";
+
+/* Empty States */
+"no_owners_message" = "No se encontraron propietarios. Añade tu primer cliente para comenzar.";
+"no_appointments_message" = "No hay citas programadas.";
+
+/* Miscellaneous */
+"loading_message" = "Cargando...";
+
+
+
 "expense_summary_title" = "Resumen de gastos";
 "total_expenses_label" = "Gastos totales";
 "search_placeholder_expenses" = "Buscar categoría o notas";

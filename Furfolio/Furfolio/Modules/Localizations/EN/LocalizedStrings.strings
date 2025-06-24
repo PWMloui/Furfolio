@@ -5,6 +5,46 @@
 //  Created by mac on 6/19/25.
 //
 
+/* General App Strings */
+"app_name" = "Furfolio";
+"dashboard_title" = "Dashboard";
+"owners_title" = "Owners";
+"appointments_title" = "Appointments";
+"charges_title" = "Charges";
+"tasks_title" = "Tasks";
+"settings_title" = "Settings";
+"save_button" = "Save";
+"cancel_button" = "Cancel";
+"delete_button" = "Delete";
+"edit_button" = "Edit";
+
+/* Notifications & Alerts */
+"appointment_reminder_title" = "Upcoming Grooming Appointment";
+"appointment_reminder_message" = "%@ has a grooming session soon.";
+
+/* Settings */
+"business_info_header" = "Business Info";
+"preferences_header" = "Preferences";
+"enable_notifications_toggle" = "Enable Notifications";
+"theme_picker_label" = "App Theme";
+"support_header" = "Support";
+"contact_support_button" = "Contact Support";
+"rate_app_button" = "Rate App";
+"danger_zone_header" = "Danger Zone";
+"reset_all_data_button" = "Reset All Data";
+"about_section_header" = "About";
+"version_build_format" = "Version %@ (%@)";
+"reset_all_data_alert_title" = "Reset All Data";
+"reset_all_data_alert_message" = "Are you sure you want to reset all data? This action cannot be undone.";
+"reset_confirm_button" = "Reset";
+
+/* Empty States */
+"no_owners_message" = "No owners found. Add your first client to get started.";
+"no_appointments_message" = "No appointments scheduled.";
+
+/* Miscellaneous */
+"loading_message" = "Loading...";
+
 "expense_summary_title" = "Expense Summary";
 "total_expenses_label" = "Total Expenses";
 "search_placeholder_expenses" = "Search category or notes";

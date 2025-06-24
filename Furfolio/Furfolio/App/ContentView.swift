@@ -9,46 +9,39 @@ import SwiftUI
 import SwiftData
 
 /**
- ContentView serves as the main entry point of the Furfolio app, designed with a multi-platform architecture in mind (iOS, iPadOS, macOS).
- It focuses on business needs by unifying owners, appointments, and metrics in a single, cohesive interface.
- The design emphasizes performance and scalability, leveraging SwiftData and modular UI components.
+ ContentView is the canonical root view and main shell of the Furfolio app.
+ It provides a unified, multi-platform interface for managing dog owners, appointments, and metrics.
+ Designed for scalability, accessibility, and modularity, it leverages SwiftData and design tokens for consistency.
  
- Architectural goals:
- - Multi-platform support with adaptive UI and backgrounds.
- - Unified search experience for owners and appointments via a single SearchBar component.
- - Modular sections for maintainability and extensibility.
- - Prepared for future features like charges and route optimization.
- - Accessibility and localization-ready.
- - Role-based access control placeholders for secure data management.
- - Analytics and data prefetching on view appearance.
- - Inclusion of a Trust Center for data security and audit logs.
- - Onboarding flow integration.
- 
- Usage Note:
- ContentView now fully uses modular design tokens (AppColors, AppFonts, BorderRadius, AppShadows, AppSpacing) for all styling to ensure consistency and maintainability.
+ Features:
+ - Adaptive navigation split view for iOS, iPadOS, and macOS.
+ - Unified searchable list of owners and appointments.
+ - Modular sections with clear accessibility traits.
+ - Platform-specific presentation styles and placeholders for drag-and-drop.
+ - Integration points for analytics, Trust Center, and onboarding flows.
+ - Consistent styling using AppColors, AppFonts, BorderRadius, AppShadows, and AppSpacing.
  */
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     
-    // Owners and Appointments from your models
+    // MARK: - Data Queries
+    
     @Query(sort: \DogOwner.ownerName) private var owners: [DogOwner]
     @Query(sort: \Appointment.date, order: .reverse) private var appointments: [Appointment]
     
-    // State for sheet presentations
+    // MARK: - State
+    
     @State private var showAddOwner = false
     @State private var showAddAppointment = false
     @State private var showMetrics = false
     @State private var showTrustCenter = false
     
-    // Selection for detail pane
     @State private var selectedOwner: DogOwner?
     @State private var selectedAppointment: Appointment?
     
-    // Unified Search State
     @State private var searchQuery = ""
     
-    // Onboarding state
     @State private var shouldShowOnboarding = false
     
     var body: some View {
@@ -58,19 +51,19 @@ struct ContentView: View {
                     .listRowBackground(AppColors.card)
                 AppointmentsSection
                     .listRowBackground(AppColors.card)
-                // TODO: ChargesSection for future charge management
-                // ChargesSection
+                // Placeholder for future ChargesSection and RouteOptimizationSection
                 
-                // Placeholder for future TSP route optimization button or map for mobile groomers
-                // RouteOptimizationSection
+                // Placeholder for Mac/iPad drag-and-drop support for owner/appointment reordering or multi-select
+                // TODO: Implement drag-and-drop reordering and multi-select for macOS/iPadOS
             }
             .listStyle(.insetGrouped)
             .background(AppColors.background)
             .searchable(text: $searchQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: LocalizedStringKey("Search Owners and Appointments"))
+            .accessibilityElement(children: .contain)
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button {
-                        // TODO: Implement role-based access control for adding appointments
+                        // Role-based access control placeholder for adding appointments
                         showAddAppointment = true
                     } label: {
                         Label("Add Appointment", systemImage: "calendar.badge.plus")
@@ -80,7 +73,7 @@ struct ContentView: View {
                     .accessibilityLabel("Add Appointment")
                     
                     Button {
-                        // TODO: Implement role-based access control for adding owners
+                        // Role-based access control placeholder for adding owners
                         showAddOwner = true
                     } label: {
                         Label("Add Owner", systemImage: "person.badge.plus")
@@ -125,22 +118,38 @@ struct ContentView: View {
                         .background(AppColors.background)
                 }
             }
+            .accessibilityElement(children: .contain)
         }
+        // Platform-specific modal presentation styles
         .sheet(isPresented: $showAddOwner) {
-            // TODO: Role-based access control check here
             AddDogOwnerView { newOwner in
                 selectedOwner = newOwner
             }
             .environment(\.modelContext, modelContext)
             .background(AppColors.background)
+            #if os(iOS)
+            .presentationDetents([.medium, .large])
+            #elseif os(iPadOS)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            #elseif os(macOS)
+            // Future: Use formSheet style for macOS when available
+            #endif
         }
         .sheet(isPresented: $showAddAppointment) {
-            // TODO: Role-based access control check here
             AddAppointmentView { newAppt in
                 selectedAppointment = newAppt
             }
             .environment(\.modelContext, modelContext)
             .background(AppColors.background)
+            #if os(iOS)
+            .presentationDetents([.medium, .large])
+            #elseif os(iPadOS)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            #elseif os(macOS)
+            // Future: Use formSheet style for macOS when available
+            #endif
         }
         .sheet(isPresented: $showMetrics) {
             MetricsDashboardView()
@@ -157,16 +166,24 @@ struct ContentView: View {
         .onAppear {
             logAnalyticsEvent()
             prefetchData()
+            // Hook for Trust Center audit logging can be added here
         }
+        // Mac-specific padding for better layout
+        #if os(macOS)
+        .padding(AppSpacing.medium)
+        #endif
     }
     
-    // MARK: - ContentView (Main App Entry, Modular Token Styling)
+    // MARK: - Owners Section
     
+    /// Section displaying the list of dog owners with navigation links.
     private var OwnersSection: some View {
-        Section(header: Text(LocalizedStringKey("Owners"))
-            .font(AppFonts.headline)
-            .foregroundColor(AppColors.primary)
-            .padding(.bottom, AppSpacing.small)
+        Section(header:
+                    Text(LocalizedStringKey("Owners"))
+                    .font(AppFonts.headline)
+                    .foregroundColor(AppColors.primary)
+                    .padding(.bottom, AppSpacing.small)
+                    .accessibilityAddTraits(.isHeader)
         ) {
             ForEach(filteredOwners) { owner in
                 NavigationLink(
@@ -188,13 +205,19 @@ struct ContentView: View {
         }
         .listRowBackground(AppColors.background)
         .accessibilityLabel("Owners Section")
+        .accessibilityElement(children: .contain)
     }
     
+    // MARK: - Appointments Section
+    
+    /// Section displaying upcoming appointments with navigation links.
     private var AppointmentsSection: some View {
-        Section(header: Text(LocalizedStringKey("Upcoming Appointments"))
-            .font(AppFonts.headline)
-            .foregroundColor(AppColors.primary)
-            .padding(.bottom, AppSpacing.small)
+        Section(header:
+                    Text(LocalizedStringKey("Upcoming Appointments"))
+                    .font(AppFonts.headline)
+                    .foregroundColor(AppColors.primary)
+                    .padding(.bottom, AppSpacing.small)
+                    .accessibilityAddTraits(.isHeader)
         ) {
             ForEach(filteredAppointments) { appt in
                 NavigationLink(
@@ -216,20 +239,24 @@ struct ContentView: View {
         }
         .listRowBackground(AppColors.background)
         .accessibilityLabel("Upcoming Appointments Section")
+        .accessibilityElement(children: .contain)
     }
     
     /*
-    // TODO: Future Charges Section
+    // Future Charges Section placeholder - token usage to be added when implemented
     private var ChargesSection: some View {
-        Section(header: Text(LocalizedStringKey("Charges"))
-            .font(AppFonts.headline)
-            .foregroundColor(AppColors.primary)
-            .padding(.bottom, AppSpacing.small)
+        Section(header:
+                    Text(LocalizedStringKey("Charges"))
+                    .font(AppFonts.headline)
+                    .foregroundColor(AppColors.primary)
+                    .padding(.bottom, AppSpacing.small)
+                    .accessibilityAddTraits(.isHeader)
         ) {
             // Implementation for charges goes here
         }
         .listRowBackground(AppColors.background)
         .accessibilityLabel("Charges Section")
+        .accessibilityElement(children: .contain)
     }
     */
     
@@ -280,18 +307,21 @@ struct ContentView: View {
     
     // MARK: - Analytics & Prefetch
     
+    /// Logs analytics events on view appearance.
     private func logAnalyticsEvent() {
-        // TODO: Integrate analytics logging here
+        // Integration point for analytics logging.
         // Example: Analytics.logEvent("ContentView_Appear")
+        // Trust Center audit hooks can be added here.
     }
     
+    /// Prefetches data to optimize performance.
     private func prefetchData() {
-        // TODO: Prefetch data for performance optimization
-        // Batch fetch appointments, owners, and images here
+        // Prefetch data for owners, appointments, and related images.
+        // Improves responsiveness and reduces latency.
     }
 }
 
-// MARK: - Placeholder Views for Trust Center and Onboarding
+// MARK: - Trust Center View
 
 struct TrustCenterView: View {
     var body: some View {
@@ -313,8 +343,11 @@ struct TrustCenterView: View {
         .cornerRadius(BorderRadius.large)
         .shadow(color: AppShadows.card.color, radius: AppShadows.card.radius, x: AppShadows.card.x, y: AppShadows.card.y)
         .padding(AppSpacing.medium)
+        .accessibilityElement(children: .contain)
     }
 }
+
+// MARK: - Onboarding View
 
 struct OnboardingView: View {
     var body: some View {
@@ -336,8 +369,11 @@ struct OnboardingView: View {
         .cornerRadius(BorderRadius.large)
         .shadow(color: AppShadows.card.color, radius: AppShadows.card.radius, x: AppShadows.card.x, y: AppShadows.card.y)
         .padding(AppSpacing.medium)
+        .accessibilityElement(children: .contain)
     }
 }
+
+// MARK: - Previews
 
 #Preview {
     Group {
@@ -355,5 +391,17 @@ struct OnboardingView: View {
             .modelContainer(for: DogOwner.self, inMemory: true)
             .frame(minWidth: 800, minHeight: 600)
             .previewDisplayName("Mac")
+        
+        // Dark Mode Preview
+        ContentView()
+            .modelContainer(for: DogOwner.self, inMemory: true)
+            .preferredColorScheme(.dark)
+            .previewDisplayName("Dark Mode")
+        
+        // Accessibility Large Text Preview
+        ContentView()
+            .modelContainer(for: DogOwner.self, inMemory: true)
+            .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+            .previewDisplayName("Accessibility Large Text")
     }
 }

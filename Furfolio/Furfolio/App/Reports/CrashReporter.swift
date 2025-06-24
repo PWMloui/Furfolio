@@ -1,12 +1,20 @@
 /// Represents a logged crash, fatal error, or serious exception within the Furfolio app.
+///
+/// This model captures critical error information for diagnostics and user support.
+/// It is essential that all user-facing strings, especially the `type` values, are localized appropriately.
+/// Additionally, this class should integrate with audit and analytics systems to ensure compliance
+/// with Trust Center policies and business intelligence requirements.
+/// 
+/// TODO: Extend with more device/environment data (e.g., app version, OS version) in future versions.
+/// TODO: Consider an extension or protocol for automatic audit logging when a new `CrashReport` is created.
 @Model
 final class CrashReport: Identifiable, ObservableObject {
 
     // MARK: - Constants
 
-    static let typeCrash = "Crash"
-    static let typeFatalError = "Fatal Error"
-    static let typeDataCorruption = "Data Corruption"
+    static let typeCrash = "Crash" // TODO: Localize before display in UI
+    static let typeFatalError = "Fatal Error" // TODO: Localize before display in UI
+    static let typeDataCorruption = "Data Corruption" // TODO: Localize before display in UI
 
     // MARK: - Properties
 
@@ -55,6 +63,9 @@ final class CrashReport: Identifiable, ObservableObject {
     // MARK: - Computed Properties
 
     /// A human-readable timestamp for UI display.
+    ///
+    /// NOTE: Any display of this date in the UI must use `AppFonts.caption` and `AppColors.textSecondary`
+    /// to comply with design token standards, rather than system defaults.
     var formattedDate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium

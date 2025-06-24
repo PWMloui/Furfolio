@@ -8,15 +8,16 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - FurfolioApp (Entry Point, Dependency Injection, Adaptive Navigation)
+// MARK: - FurfolioApp (Entry Point, Dependency Injection, Unified Navigation)
 
-/// The main entry point of the Furfolio application.
-/// 
-/// FurfolioApp manages dependency injection, application lifecycle,
-/// onboarding flow, authentication state, and provides adaptive navigation 
-/// across all supported platforms using a unified root view.
-/// This struct ensures consistent environment setup and model context propagation
-/// throughout the app's UI hierarchy.
+// The main entry point of the Furfolio application.
+//
+// FurfolioApp manages dependency injection, application lifecycle,
+// onboarding flow, authentication state, and provides a unified root navigation
+// container across all supported platforms using ContentView as the canonical root view.
+// AdaptiveRootView is deprecated and retained only for legacy reference.
+// This struct ensures consistent environment setup and model context propagation
+// throughout the app's UI hierarchy.
 @main
 struct FurfolioApp: App {
     // Dependency container holds global state, managers, and SwiftData
@@ -39,10 +40,11 @@ struct FurfolioApp: App {
                         .environmentObject(dependencies.appState)
                         .environment(\.modelContext, dependencies.modelContainer.mainContext)
                 } else {
-                    // After authentication, show main content with adaptive root on all platforms
-                    AdaptiveRootView()
+                    // After authentication, show main content with unified root on all platforms
+                    ContentView()
                         .environmentObject(dependencies.appState)
                         .environment(\.modelContext, dependencies.modelContainer.mainContext)
+                    // Future: Add platform-specific root view enhancements here (e.g., iPad/Mac business dashboards)
                 }
             }
         }
