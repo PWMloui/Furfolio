@@ -2,10 +2,53 @@
 //  DashboardFilterBar.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular Filter Bar
 //
 
 import SwiftUI
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct DashboardFilterAuditEvent: Codable {
+    let timestamp: Date
+    let filterType: String
+    let value: String
+    let tags: [String]
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[Filter] \(filterType): \(value) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class DashboardFilterAudit {
+    static private(set) var log: [DashboardFilterAuditEvent] = []
+
+    static func record(
+        filterType: String,
+        value: String,
+        tags: [String] = []
+    ) {
+        let event = DashboardFilterAuditEvent(
+            timestamp: Date(),
+            filterType: filterType,
+            value: value,
+            tags: tags
+        )
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No dashboard filter events recorded."
+    }
+}
+
+// MARK: - DashboardFilterBar
 
 struct DashboardFilterBar: View {
     @Binding var selectedPeriod: TimePeriod
@@ -22,6 +65,11 @@ struct DashboardFilterBar: View {
                 selected: selectedPeriod
             ) { newPeriod in
                 selectedPeriod = newPeriod
+                DashboardFilterAudit.record(
+                    filterType: "TimePeriod",
+                    value: newPeriod.rawValue,
+                    tags: ["period"]
+                )
                 onPeriodChange?(newPeriod)
             }
 
@@ -31,6 +79,11 @@ struct DashboardFilterBar: View {
                 selected: selectedDataType
             ) { newDataType in
                 selectedDataType = newDataType
+                DashboardFilterAudit.record(
+                    filterType: "DataType",
+                    value: newDataType.rawValue,
+                    tags: ["dataType"]
+                )
                 onDataTypeChange?(newDataType)
             }
         }
@@ -58,10 +111,22 @@ struct DashboardFilterBar: View {
                             .clipShape(Capsule())
                     }
                     .accessibilityLabel("Filter by \(option.rawValue)")
+                    .accessibilityIdentifier("DashboardFilterBar-\(title)-\(option.rawValue)")
                 }
             }
             .padding(.horizontal)
         }
+        .accessibilityIdentifier("DashboardFilterBar-Section-\(title)")
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum DashboardFilterAuditAdmin {
+    public static var lastSummary: String { DashboardFilterAudit.accessibilitySummary }
+    public static var lastJSON: String? { DashboardFilterAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        DashboardFilterAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 

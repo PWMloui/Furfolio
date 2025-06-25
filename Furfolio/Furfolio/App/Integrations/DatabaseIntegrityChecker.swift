@@ -3,22 +3,37 @@
 //  Furfolio
 //
 //  Created by mac on 6/19/25.
-//  Enhanced, unified, diagnostics/audit-ready.
+//  Enhanced, auditable, diagnostics/analytics-ready, and future-proof.
 //
 
 import Foundation
 import SwiftData
 import OSLog
 
-/// Responsible for performing comprehensive integrity checks on the database entities.
-/// Designed for extensibility to add new checks and supports detailed logging for diagnostics and audit purposes.
+/// Centralized class for performing comprehensive database integrity checks.
+/// All checks are auditable, extensible, and support business diagnostics and Trust Center compliance.
 final class DatabaseIntegrityChecker {
     static let shared = DatabaseIntegrityChecker()
     private let logger = Logger(subsystem: "com.furfolio.db.integrity", category: "integrity")
-    // TODO: Migrate logger usage to a centralized AppLogger or diagnostics engine if/when one is introduced.
 
-    private init() {}
+    // Dependency injection for audit/analytics engines.
+    private let auditLogger: ((IntegrityIssue) -> Void)?
+    private let analyticsLogger: ((IntegrityIssue) -> Void)?
 
+    /// For production, audit/analytics hooks can be provided here.
+    init(auditLogger: ((IntegrityIssue) -> Void)? = nil,
+         analyticsLogger: ((IntegrityIssue) -> Void)? = nil) {
+        self.auditLogger = auditLogger
+        self.analyticsLogger = analyticsLogger
+    }
+
+    /// Default singleton for app-wide usage.
+    private init() {
+        self.auditLogger = nil
+        self.analyticsLogger = nil
+    }
+
+    /// Runs all integrity checks and returns found issues. All issues are logged/audited.
     func runAllChecks(
         owners: [DogOwner],
         dogs: [Dog],
@@ -39,93 +54,113 @@ final class DatabaseIntegrityChecker {
         issues += checkForDogsWithoutAppointments(dogs)
         issues += checkForOwnersWithoutDogs(owners)
         issues += customBusinessRuleChecks(owners: owners, dogs: dogs, appointments: appointments)
+        processAuditLogging(for: issues)
+        return issues
+    }
+
+    /// Logs/audits all integrity issues and prints diagnostics.
+    private func processAuditLogging(for issues: [IntegrityIssue]) {
         if !issues.isEmpty {
             logger.error("Integrity check: \(issues.count) issue(s).")
             for issue in issues {
                 logger.warning("\(issue.type.rawValue): \(issue.message)")
+                auditLogger?(issue)
+                analyticsLogger?(issue)
+                // TODO: Replace with Trust Center/business audit/analytics integration.
             }
-            // TODO: Call Trust Center / audit / analytics logging here for integrity issues detected.
         } else {
             logger.info("Database passed all integrity checks.")
         }
-        return issues
     }
 
+    /// Finds dogs without an associated owner.
     private func checkForOrphanedDogs(_ dogs: [Dog], _ owners: [DogOwner]) -> [IntegrityIssue] {
         dogs.filter { $0.owner == nil }.map {
             IntegrityIssue(
                 type: .orphanedDog,
-                message: NSLocalizedString(
-                    "Dog \($0.name) (\($0.id)) is not linked to any owner.",
-                    comment: "Integrity issue message indicating a dog without an owner"
+                message: String(
+                    format: NSLocalizedString("Dog %@ (%@) is not linked to any owner.",
+                                              comment: "Integrity issue message for dog without owner"),
+                    $0.name, $0.id.uuidString
                 ),
-                entityID: $0.id.uuidString
+                entityID: $0.id.uuidString,
+                entityType: "Dog"
             )
         }
     }
 
+    /// Finds appointments missing either a dog or an owner.
     private func checkForOrphanedAppointments(_ appointments: [Appointment]) -> [IntegrityIssue] {
-        appointments.compactMap { appt in
+        appointments.flatMap { appt in
+            var issues: [IntegrityIssue] = []
             if appt.owner == nil {
-                return IntegrityIssue(
+                issues.append(IntegrityIssue(
                     type: .orphanedAppointment,
-                    message: NSLocalizedString(
-                        "Appointment (\(appt.id)) has no owner linked.",
-                        comment: "Integrity issue message indicating an appointment without an owner"
+                    message: String(
+                        format: NSLocalizedString("Appointment (%@) has no owner linked.", comment: "Integrity issue for appointment with no owner"),
+                        appt.id.uuidString
                     ),
-                    entityID: appt.id.uuidString
-                )
+                    entityID: appt.id.uuidString,
+                    entityType: "Appointment"
+                ))
             }
             if appt.dog == nil {
-                return IntegrityIssue(
+                issues.append(IntegrityIssue(
                     type: .orphanedAppointment,
-                    message: NSLocalizedString(
-                        "Appointment (\(appt.id)) has no dog linked.",
-                        comment: "Integrity issue message indicating an appointment without a dog"
+                    message: String(
+                        format: NSLocalizedString("Appointment (%@) has no dog linked.", comment: "Integrity issue for appointment with no dog"),
+                        appt.id.uuidString
                     ),
-                    entityID: appt.id.uuidString
-                )
+                    entityID: appt.id.uuidString,
+                    entityType: "Appointment"
+                ))
             }
-            return nil
+            return issues
         }
     }
 
+    /// Finds charges missing a dog, owner, or appointment.
     private func checkForOrphanedCharges(_ charges: [Charge]) -> [IntegrityIssue] {
-        charges.compactMap { charge in
+        charges.flatMap { charge in
+            var issues: [IntegrityIssue] = []
             if charge.owner == nil {
-                return IntegrityIssue(
+                issues.append(IntegrityIssue(
                     type: .orphanedCharge,
-                    message: NSLocalizedString(
-                        "Charge (\(charge.id)) is not linked to any owner.",
-                        comment: "Integrity issue message indicating a charge without an owner"
+                    message: String(
+                        format: NSLocalizedString("Charge (%@) is not linked to any owner.", comment: "Integrity issue for charge with no owner"),
+                        charge.id.uuidString
                     ),
-                    entityID: charge.id.uuidString
-                )
+                    entityID: charge.id.uuidString,
+                    entityType: "Charge"
+                ))
             }
             if charge.dog == nil {
-                return IntegrityIssue(
+                issues.append(IntegrityIssue(
                     type: .orphanedCharge,
-                    message: NSLocalizedString(
-                        "Charge (\(charge.id)) is not linked to any dog.",
-                        comment: "Integrity issue message indicating a charge without a dog"
+                    message: String(
+                        format: NSLocalizedString("Charge (%@) is not linked to any dog.", comment: "Integrity issue for charge with no dog"),
+                        charge.id.uuidString
                     ),
-                    entityID: charge.id.uuidString
-                )
+                    entityID: charge.id.uuidString,
+                    entityType: "Charge"
+                ))
             }
             if charge.appointment == nil {
-                return IntegrityIssue(
+                issues.append(IntegrityIssue(
                     type: .orphanedCharge,
-                    message: NSLocalizedString(
-                        "Charge (\(charge.id)) is not linked to any appointment.",
-                        comment: "Integrity issue message indicating a charge without an appointment"
+                    message: String(
+                        format: NSLocalizedString("Charge (%@) is not linked to any appointment.", comment: "Integrity issue for charge with no appointment"),
+                        charge.id.uuidString
                     ),
-                    entityID: charge.id.uuidString
-                )
+                    entityID: charge.id.uuidString,
+                    entityType: "Charge"
+                ))
             }
-            return nil
+            return issues
         }
     }
 
+    /// Detects duplicate UUIDs across all entities (by type).
     private func checkForDuplicateIDs(
         _ owners: [DogOwner],
         _ dogs: [Dog],
@@ -151,54 +186,79 @@ final class DatabaseIntegrityChecker {
         return allIDs.filter { $0.value.count > 1 }.map { (id, types) in
             IntegrityIssue(
                 type: .duplicateID,
-                message: NSLocalizedString(
-                    "Duplicate ID (\(id)) found in: \(types.sorted().joined(separator: \", \")).",
-                    comment: "Integrity issue message indicating a duplicate UUID found across multiple entity types"
+                message: String(
+                    format: NSLocalizedString("Duplicate ID (%@) found in: %@.", comment: "Integrity issue for duplicate UUID across entity types"),
+                    id.uuidString, types.sorted().joined(separator: ", ")
                 ),
-                entityID: id.uuidString
+                entityID: id.uuidString,
+                entityType: "Multiple"
             )
         }
     }
 
+    /// Flags any dogs without appointments.
     private func checkForDogsWithoutAppointments(_ dogs: [Dog]) -> [IntegrityIssue] {
         dogs.filter { $0.appointments.isEmpty }.map {
             IntegrityIssue(
                 type: .dogNoAppointments,
-                message: NSLocalizedString(
-                    "Dog \($0.name) (\($0.id)) has no appointments.",
-                    comment: "Integrity issue message indicating a dog with no appointments"
+                message: String(
+                    format: NSLocalizedString("Dog %@ (%@) has no appointments.", comment: "Integrity issue for dog with no appointments"),
+                    $0.name, $0.id.uuidString
                 ),
-                entityID: $0.id.uuidString
+                entityID: $0.id.uuidString,
+                entityType: "Dog"
             )
         }
     }
 
+    /// Flags owners without any dogs.
     private func checkForOwnersWithoutDogs(_ owners: [DogOwner]) -> [IntegrityIssue] {
         owners.filter { $0.dogs.isEmpty }.map {
             IntegrityIssue(
                 type: .ownerNoDogs,
-                message: NSLocalizedString(
-                    "Owner \($0.ownerName) (\($0.id)) has no dogs.",
-                    comment: "Integrity issue message indicating an owner with no dogs"
+                message: String(
+                    format: NSLocalizedString("Owner %@ (%@) has no dogs.", comment: "Integrity issue for owner with no dogs"),
+                    $0.ownerName, $0.id.uuidString
                 ),
-                entityID: $0.id.uuidString
+                entityID: $0.id.uuidString,
+                entityType: "DogOwner"
             )
         }
     }
 
+    /// Place to add custom business rules (e.g., VIPs with missing badges, health alert mismatches, etc).
     private func customBusinessRuleChecks(
         owners: [DogOwner],
         dogs: [Dog],
         appointments: [Appointment]
     ) -> [IntegrityIssue] {
-        // Add more business rules as needed.
-        return []
+        var issues: [IntegrityIssue] = []
+
+        // Example: Check for owners marked "VIP" with no dogs tagged as "VIP"
+        for owner in owners where owner.tags.contains("VIP") {
+            let hasVipDog = owner.dogs.contains { $0.tags.contains("VIP") }
+            if !hasVipDog {
+                issues.append(
+                    IntegrityIssue(
+                        type: .businessRuleViolation,
+                        message: String(
+                            format: NSLocalizedString("VIP Owner %@ (%@) has no VIP dogs.", comment: "Custom rule: VIP owner no VIP dogs"),
+                            owner.ownerName, owner.id.uuidString
+                        ),
+                        entityID: owner.id.uuidString,
+                        entityType: "DogOwner"
+                    )
+                )
+            }
+        }
+
+        // Extend as needed...
+        return issues
     }
 }
 
-/// Represents an integrity issue found during database checks.
-/// Includes the type of issue, a localized descriptive message, and the related entity's ID.
-/// Designed to be easily extendable for new issue types and to support consistent logging and diagnostics.
+/// Represents a single integrity issue found during database checks.
+/// Type, message, entityID, and entityType allow for auditing, deep linking, and diagnostics.
 struct IntegrityIssue: Identifiable, Hashable {
     enum IssueType: String, CaseIterable, Codable {
         case orphanedDog
@@ -207,6 +267,7 @@ struct IntegrityIssue: Identifiable, Hashable {
         case duplicateID
         case dogNoAppointments
         case ownerNoDogs
+        case businessRuleViolation
         // Expand as needed.
     }
 
@@ -214,4 +275,5 @@ struct IntegrityIssue: Identifiable, Hashable {
     let type: IssueType
     let message: String
     let entityID: String
+    let entityType: String
 }

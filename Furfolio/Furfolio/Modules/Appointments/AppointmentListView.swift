@@ -13,6 +13,77 @@
 
 import SwiftUI
 
+// MARK: - Audit/Event Logging
+
+fileprivate struct AppointmentListAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String            // "listLoad", "filterChange", "appointmentTap", "reset"
+    let appointmentID: UUID?
+    let service: String?
+    let status: String?
+    let dateRange: ClosedRange<Date>?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let range = dateRange.map { "\($0.lowerBound.shortString) - \($0.upperBound.shortString)" } ?? ""
+        let appt = appointmentID?.uuidString.prefix(8) ?? ""
+        return "[\(operation.capitalized)] appt:\(appt) \(service ?? "Any")/\(status ?? "Any")/\(range) [\(tags.joined(separator: ","))] at \(dateStr)\(detail != nil ? ": \(detail!)" : "")"
+    }
+}
+
+fileprivate final class AppointmentListAudit {
+    static private(set) var log: [AppointmentListAuditEvent] = []
+
+    static func record(
+        operation: String,
+        appointmentID: UUID? = nil,
+        service: String? = nil,
+        status: String? = nil,
+        dateRange: ClosedRange<Date>? = nil,
+        tags: [String] = [],
+        actor: String? = "user",
+        context: String? = "AppointmentListView",
+        detail: String? = nil
+    ) {
+        let event = AppointmentListAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            appointmentID: appointmentID,
+            service: service,
+            status: status,
+            dateRange: dateRange,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No appointment list actions recorded."
+    }
+}
+
+private extension Date {
+    var shortString: String {
+        let fmt = DateFormatter(); fmt.dateStyle = .short; fmt.timeStyle = .none
+        return fmt.string(from: self)
+    }
+}
+
+// MARK: - AppointmentListView
+
 struct AppointmentListView: View {
     // MARK: - Filter State
     @State private var selectedService: String? = nil
@@ -58,21 +129,27 @@ struct AppointmentListView: View {
             List {
                 if filteredAppointments.isEmpty {
                     Text(LocalizedStringKey("No appointments found for selected filters."))
-                        // Use tokenized secondary text color for accessibility and design consistency
                         .foregroundColor(AppColors.secondaryText)
-                        // Use tokenized spacing for padding
                         .padding(AppSpacing.medium)
                 } else {
                     ForEach(filteredAppointments) { appointment in
                         NavigationLink(destination: AppointmentDetailView(appointment: appointment)) {
                             AppointmentRowView(appointment: appointment)
-                                // Accessibility identifier for testing and analytics
                                 .accessibilityIdentifier("AppointmentRow_\(appointment.id.uuidString)")
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            AppointmentListAudit.record(
+                                operation: "appointmentTap",
+                                appointmentID: appointment.id,
+                                service: appointment.serviceType,
+                                status: appointment.status,
+                                tags: ["appointmentTap"],
+                                detail: "Tapped appointment row"
+                            )
+                        })
                     }
                 }
             }
-            // Use localized string key for navigation title to support localization
             .navigationTitle(LocalizedStringKey("Appointments"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -86,54 +163,91 @@ struct AppointmentListView: View {
                             selectedService = nil
                             selectedStatus = nil
                             dateRange = nil
+                            AppointmentListAudit.record(
+                                operation: "reset",
+                                tags: ["reset"],
+                                detail: "Filters reset"
+                            )
                         }
                     )
-                    // Accessibility identifier for filter menu
                     .accessibilityIdentifier("AppointmentFilterMenu")
+                    // Audit filter changes
+                    .onChange(of: selectedService) { newVal in
+                        AppointmentListAudit.record(
+                            operation: "filterChange",
+                            service: newVal,
+                            status: selectedStatus,
+                            dateRange: dateRange,
+                            tags: ["serviceType"],
+                            detail: "Service filter changed"
+                        )
+                    }
+                    .onChange(of: selectedStatus) { newVal in
+                        AppointmentListAudit.record(
+                            operation: "filterChange",
+                            service: selectedService,
+                            status: newVal,
+                            dateRange: dateRange,
+                            tags: ["status"],
+                            detail: "Status filter changed"
+                        )
+                    }
+                    .onChange(of: dateRange) { newVal in
+                        AppointmentListAudit.record(
+                            operation: "filterChange",
+                            service: selectedService,
+                            status: selectedStatus,
+                            dateRange: newVal,
+                            tags: ["dateRange"],
+                            detail: "Date range filter changed"
+                        )
+                    }
                 }
+            }
+            .onAppear {
+                AppointmentListAudit.record(
+                    operation: "listLoad",
+                    tags: ["load"],
+                    detail: "Appointment list loaded"
+                )
             }
         }
     }
 }
 
 // MARK: - AppointmentRowView
+
 struct AppointmentRowView: View {
     let appointment: Appointment
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
             Text(appointment.serviceType)
-                // Tokenized font for headline
                 .font(AppFonts.headline)
             Text(appointment.status)
-                // Tokenized font and secondary text color for subheadline
                 .font(AppFonts.subheadline)
                 .foregroundColor(AppColors.secondaryText)
             Text(appointment.date.formatted(date: .abbreviated, time: .shortened))
-                // Tokenized font and tertiary text color for caption
                 .font(AppFonts.caption)
                 .foregroundColor(AppColors.tertiaryText)
         }
-        // Tokenized vertical padding for consistent spacing
         .padding(.vertical, AppSpacing.small)
     }
 }
 
 // MARK: - AppointmentDetailView
+
 struct AppointmentDetailView: View {
     let appointment: Appointment
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.small) {
             Text(LocalizedStringKey("Service: \(appointment.serviceType)"))
-                // Tokenized font and bold style for title2
                 .font(AppFonts.title2)
                 .bold()
             Text(LocalizedStringKey("Status: \(appointment.status)"))
-                // Tokenized font for headline
                 .font(AppFonts.headline)
             Text(LocalizedStringKey("Date: \(appointment.date.formatted(date: .long, time: .shortened))"))
-                // Tokenized font for subheadline
                 .font(AppFonts.subheadline)
 
             Spacer()
@@ -145,6 +259,7 @@ struct AppointmentDetailView: View {
 }
 
 // MARK: - Appointment Model
+
 struct Appointment: Identifiable {
     let id = UUID()
     let date: Date
@@ -164,10 +279,10 @@ struct Appointment: Identifiable {
 }
 
 // MARK: - Demo / Business / Tokenized Preview
+
 struct AppointmentListView_Previews: PreviewProvider {
     static var previews: some View {
         AppointmentListView()
-            // Example of token usage in preview for consistent design
             .accentColor(AppColors.accent)
     }
 }
@@ -297,5 +412,13 @@ struct DateRangePickerView: View {
         // Only update if startDate is before or equal to endDate
         guard startDate <= endDate else { return }
         dateRange = startDate...endDate
+    }
+}
+
+public enum AppointmentListAuditAdmin {
+    public static var lastSummary: String { AppointmentListAudit.accessibilitySummary }
+    public static var lastJSON: String? { AppointmentListAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        AppointmentListAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }

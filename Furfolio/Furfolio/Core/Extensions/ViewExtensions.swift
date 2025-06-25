@@ -2,23 +2,65 @@
 //  ViewExtensions.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//
-//  Part of Furfolio's design system: modular SwiftUI extensions tailored for a business-owner-focused app.
-//  All view extensions are now tokenized, modular, accessible, and rely only on design system tokens (AppColors, AppFonts, AppSpacing, BorderRadius, AppShadows).
-//  Removed all system color fallbacks, .opacity hacks, and platform-dependent color logic from helpers and the preview.
-//
+//  Enhanced 2025: All SwiftUI extensions are now tokenized, modular, accessible, traceable, and BI/compliance ready.
 
 import SwiftUI
 
-// MARK: - ViewExtensions (Tokenized Modular SwiftUI Helpers, Business Design System)
+// MARK: - ViewExtensions Audit/Event Logging
 
-// MARK: - Public View Extensions for Modular UI Composition
+fileprivate struct ViewExtensionAuditEvent: Codable {
+    let timestamp: Date
+    let extensionName: String
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let additional: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "View extension: \(extensionName) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class ViewExtensionAudit {
+    static private(set) var log: [ViewExtensionAuditEvent] = []
+
+    static func record(_ extensionName: String, tags: [String], actor: String? = nil, context: String? = nil, additional: String? = nil) {
+        let event = ViewExtensionAuditEvent(
+            timestamp: Date(),
+            extensionName: extensionName,
+            tags: tags,
+            actor: actor,
+            context: context,
+            additional: additional
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No extension usage recorded."
+    }
+}
+
+// MARK: - Public View Extensions for Modular UI Composition (Now Auditable)
 
 public extension View {
+
     /// Conditionally applies a modifier when `condition` is true.
     @ViewBuilder
-    func `if`<Content: View>(_ condition: Bool, apply: (Self) -> Content) -> some View {
+    func `if`<Content: View>(
+        _ condition: Bool,
+        apply: (Self) -> Content,
+        actor: String? = nil,
+        context: String? = nil
+    ) -> some View {
+        ViewExtensionAudit.record("if", tags: ["conditional", "composition"], actor: actor, context: context)
         if condition {
             apply(self)
         } else {
@@ -28,7 +70,13 @@ public extension View {
 
     /// Conditionally applies a modifier when optional `value` is non-nil.
     @ViewBuilder
-    func ifLet<T, Content: View>(_ value: T?, apply: (Self, T) -> Content) -> some View {
+    func ifLet<T, Content: View>(
+        _ value: T?,
+        apply: (Self, T) -> Content,
+        actor: String? = nil,
+        context: String? = nil
+    ) -> some View {
+        ViewExtensionAudit.record("ifLet", tags: ["conditional", "optional", "composition"], actor: actor, context: context)
         if let value = value {
             apply(self, value)
         } else {
@@ -37,12 +85,14 @@ public extension View {
     }
 
     /// Applies a platform-specific modifier: iOS vs macOS.
-    /// - Note: The returned view should still use only design tokens for any styling differences.
     @ViewBuilder
     func platformSpecific<Content: View>(
         _ ios: (Self) -> Content,
-        mac: (Self) -> Content
+        mac: (Self) -> Content,
+        actor: String? = nil,
+        context: String? = nil
     ) -> some View {
+        ViewExtensionAudit.record("platformSpecific", tags: ["platform", "tokenized"], actor: actor, context: context)
         #if os(iOS)
         ios(self)
         #elseif os(macOS)
@@ -53,12 +103,15 @@ public extension View {
     }
 
     /// Hides the view conditionally; optionally removes from layout.
-    /// - Parameters:
-    ///   - isHidden: Whether to hide the view.
-    ///   - remove: If true, removes the view from layout entirely.
-    ///   - animated: Whether to animate the hiding transition.
     @ViewBuilder
-    func hidden(_ isHidden: Bool, remove: Bool = true, animated: Bool = false) -> some View {
+    func hidden(
+        _ isHidden: Bool,
+        remove: Bool = true,
+        animated: Bool = false,
+        actor: String? = nil,
+        context: String? = nil
+    ) -> some View {
+        ViewExtensionAudit.record("hidden", tags: ["visibility", "conditional"], actor: actor, context: context, additional: isHidden ? "hidden" : "visible")
         if isHidden {
             if remove {
                 if animated {
@@ -81,31 +134,38 @@ public extension View {
     }
 
     /// Applies corner radius to specific corners.
-    /// - Parameters:
-    ///   - radius: Corner radius in points.
-    ///   - corners: Specific corners to round.
-    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
-        clipShape(RoundedCorner(radius: radius, corners: corners))
+    func cornerRadius(
+        _ radius: CGFloat,
+        corners: UIRectCorner,
+        actor: String? = nil,
+        context: String? = nil
+    ) -> some View {
+        ViewExtensionAudit.record("cornerRadius", tags: ["shape", "tokenized"], actor: actor, context: context, additional: "radius: \(radius), corners: \(corners.rawValue)")
+        return clipShape(RoundedCorner(radius: radius, corners: corners))
     }
 
     /// Applies a default subtle shadow for elevation and depth using design tokens.
-    func defaultShadow() -> some View {
-        self.shadow(color: AppShadows.card.color, radius: AppShadows.card.radius, x: AppShadows.card.x, y: AppShadows.card.y)
+    func defaultShadow(actor: String? = nil, context: String? = nil) -> some View {
+        ViewExtensionAudit.record("defaultShadow", tags: ["shadow", "elevation", "tokenized"], actor: actor, context: context)
+        return self.shadow(
+            color: AppShadows.card.color,
+            radius: AppShadows.card.radius,
+            x: AppShadows.card.x,
+            y: AppShadows.card.y
+        )
     }
 
     /// Adds a customizable shimmer overlay for loading placeholders.
-    /// - Parameters:
-    ///   - isActive: Whether shimmer is active.
-    ///   - cornerRadius: Optional corner radius for shimmer shape.
-    ///   - shape: Optional shape to clip shimmer overlay.
-    ///   - animated: Whether to animate shimmer appearance.
     func shimmer(
         isActive: Bool = true,
         cornerRadius: CGFloat? = 7,
         shape: AnyShape? = nil,
-        animated: Bool = true
+        animated: Bool = true,
+        actor: String? = nil,
+        context: String? = nil
     ) -> some View {
-        self.overlay(
+        ViewExtensionAudit.record("shimmer", tags: ["loading", "placeholder", "animation"], actor: actor, context: context, additional: isActive ? "active" : "inactive")
+        return self.overlay(
             Group {
                 if isActive {
                     AnimationUtils.ShimmerView()
@@ -121,12 +181,15 @@ public extension View {
     }
 
     /// Adds a badge overlay at top trailing corner with customizable animation.
-    /// - Parameters:
-    ///   - count: Optional badge count to display.
-    ///   - color: Badge background color (default is AppColors.accent).
-    ///   - animated: Whether to animate badge appearance.
-    func badge(_ count: Int?, color: Color = AppColors.accent, animated: Bool = true) -> some View {
-        ZStack(alignment: .topTrailing) {
+    func badge(
+        _ count: Int?,
+        color: Color = AppColors.accent,
+        animated: Bool = true,
+        actor: String? = nil,
+        context: String? = nil
+    ) -> some View {
+        ViewExtensionAudit.record("badge", tags: ["badge", "notification", "tokenized"], actor: actor, context: context, additional: "count: \(count ?? 0)")
+        return ZStack(alignment: .topTrailing) {
             self
             if let count = count, count > 0 {
                 Text("\(count)")
@@ -144,9 +207,9 @@ public extension View {
     }
 
     /// Adds tap gesture to dismiss keyboard on iOS safely.
-    /// Use in views with text inputs to improve UX.
-    func dismissKeyboardOnTap() -> some View {
-        self.onTapGesture {
+    func dismissKeyboardOnTap(actor: String? = nil, context: String? = nil) -> some View {
+        ViewExtensionAudit.record("dismissKeyboardOnTap", tags: ["input", "keyboard", "accessibility"], actor: actor, context: context)
+        return self.onTapGesture {
             #if canImport(UIKit)
             if UIDevice.current.userInterfaceIdiom == .phone || UIDevice.current.userInterfaceIdiom == .pad {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -156,9 +219,9 @@ public extension View {
     }
 
     /// Helper for demo dashboard card styling using design tokens.
-    /// Use in previews or demo widgets to maintain consistent style.
-    func demoDashboardCard() -> some View {
-        self
+    func demoDashboardCard(actor: String? = nil, context: String? = nil) -> some View {
+        ViewExtensionAudit.record("demoDashboardCard", tags: ["demo", "dashboard", "tokenized"], actor: actor, context: context)
+        return self
             .padding(AppSpacing.medium)
             .background(AppColors.card)
             .cornerRadius(BorderRadius.medium)
@@ -167,8 +230,7 @@ public extension View {
     }
 }
 
-// MARK: - RoundedCorner Shape for Selective Corner Rounding
-
+// MARK: - RoundedCorner Shape for Selective Corner Rounding (Unchanged)
 public struct RoundedCorner: Shape {
     public var radius: CGFloat = .infinity
     public var corners: UIRectCorner = .allCorners
@@ -188,6 +250,17 @@ public struct RoundedCorner: Shape {
     }
 }
 
+// MARK: - Extension Audit: Static Accessors for Debug/Admin
+
+public enum ViewExtensionAuditAdmin {
+    public static var lastSummary: String { ViewExtensionAudit.accessibilitySummary }
+    public static var lastJSON: String? { ViewExtensionAudit.exportLastJSON() }
+    public static var logCount: Int { ViewExtensionAudit.log.count }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        ViewExtensionAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+}
+
 // MARK: - Example Usage and Preview for Extensions
 
 #if DEBUG
@@ -203,11 +276,11 @@ struct ViewExtensionsPreview: View {
                     Text("Rounded only top corners")
                         .padding()
                         .background(AppColors.accentBackground)
-                        .cornerRadius(BorderRadius.large, corners: [.topLeft, .topRight])
+                        .cornerRadius(BorderRadius.large, corners: [.topLeft, .topRight], actor: "preview")
 
                     Text("Shimmer loading")
                         .padding()
-                        .shimmer(isActive: isLoading, cornerRadius: BorderRadius.medium, animated: true)
+                        .shimmer(isActive: isLoading, cornerRadius: BorderRadius.medium, animated: true, actor: "preview")
                         .cornerRadius(BorderRadius.medium)
                         .frame(width: 140, height: 34)
                         .background(AppColors.surfaceBackground)
@@ -216,16 +289,16 @@ struct ViewExtensionsPreview: View {
                     Image(systemName: "bell.fill")
                         .resizable()
                         .frame(width: 36, height: 36)
-                        .badge(showBadge ? 2 : nil, color: AppColors.accent, animated: true)
+                        .badge(showBadge ? 2 : nil, color: AppColors.accent, animated: true, actor: "preview")
 
                     Text("Hide me!")
-                        .hidden(isLoading, remove: true, animated: true)
+                        .hidden(isLoading, remove: true, animated: true, actor: "preview")
 
                     TextField("Type here", text: .constant(""))
                         .padding()
                         .background(AppColors.inputBackground)
                         .cornerRadius(BorderRadius.medium)
-                        .dismissKeyboardOnTap()
+                        .dismissKeyboardOnTap(actor: "preview")
                 }
 
                 Group {
@@ -233,9 +306,9 @@ struct ViewExtensionsPreview: View {
                         .fontWeight(.semibold)
 
                     Image(systemName: "star.fill")
-                        .ifLet(optionalCount) { view, count in
-                            view.badge(count, color: AppColors.accent)
-                        }
+                        .ifLet(optionalCount, apply: { view, count in
+                            view.badge(count, color: AppColors.accent, actor: "preview")
+                        }, actor: "preview")
 
                     Text("Platform-specific styling:")
                         .fontWeight(.semibold)
@@ -243,11 +316,12 @@ struct ViewExtensionsPreview: View {
                     Text("Hello Platform!")
                         .platformSpecific(
                             { $0.foregroundColor(AppColors.primary) },
-                            mac: { $0.foregroundColor(AppColors.secondary) }
+                            mac: { $0.foregroundColor(AppColors.secondary) },
+                            actor: "preview"
                         )
 
                     Text("Demo Dashboard Card Example")
-                        .demoDashboardCard()
+                        .demoDashboardCard(actor: "preview")
                 }
             }
             .padding()

@@ -2,157 +2,187 @@
 //  CustomerRetentionAnalyzer.swift
 //  Furfolio
 //
-//  Created by Your Name on 6/22/25.
-//
-//  This file centralizes all business logic for analyzing customer retention.
-//  It provides a single source of truth for determining whether a client is
-//  new, active, at risk, or inactive, based on their appointment history.
-//  This engine is used by the RetentionAlertEngine, MarketingEngine, and various
-//  UI components to ensure consistent analysis.
+//  Enhanced: analytics/audit–ready, Trust Center–compliant, preview/test–injectable, token-compliant, BI-ready.
 //
 
 import Foundation
 
-/// A data model to hold the result of a retention analysis, combining the tag with relevant metadata.
+// MARK: - Audit/Analytics Protocol
+
+public protocol RetentionAnalyticsLogger {
+    func log(event: String, info: [String: Any]?)
+}
+public struct NullRetentionAnalyticsLogger: RetentionAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: [String: Any]?) {}
+}
+
+// MARK: - RetentionResult
+
 public struct RetentionResult {
     public let tag: RetentionTag
     public let daysSinceLastVisit: Int?
 }
 
-/// Errors that can be thrown by the CustomerRetentionAnalyzer.
+// MARK: - RetentionError
+
 public enum RetentionError: Error {
     case remoteFetchNotImplemented
+    case permissionDenied
 }
 
-/// A centralized engine for analyzing customer retention data.
-/// It encapsulates the business rules for determining if a client is new, active, at risk, or inactive.
-/// Designed as a thread-safe singleton to be used across the application.
+// MARK: - CustomerRetentionAnalyzer
+
 @MainActor
 public final class CustomerRetentionAnalyzer {
 
     // MARK: - Singleton Instance
-    
-    /// Shared singleton instance of the analyzer.
+
     public static let shared = CustomerRetentionAnalyzer()
-    
-    /// Private initializer to enforce the singleton pattern.
+
     private init() {}
 
-    // MARK: - Constants
-    
-    /// Defines the thresholds (in days) for different retention statuses.
-    /// These values can be adjusted to match business strategy.
-    private struct Thresholds {
-        static let newClientDays = 14
-        static let retentionRiskDays = 60
-        static let inactiveDays = 180
-        static let activeDays = 30
+    // MARK: - Analytics Logger
+
+    public static var analyticsLogger: RetentionAnalyticsLogger = NullRetentionAnalyticsLogger()
+
+    // MARK: - Thresholds (tokenized, single source)
+
+    public struct Thresholds {
+        public static var newClientDays: Int = 14
+        public static var retentionRiskDays: Int = 60
+        public static var inactiveDays: Int = 180
+        public static var activeDays: Int = 30
     }
-    
-    /// Optional hook for logging or analytics when an analysis is performed.
+
+    // MARK: - Trust Center Permission Hook (audit/role/permission)
+
+    public var trustCenterPermissionCheck: ((_ action: String, _ context: [String: Any]?) -> Bool)? = nil
+
+    // MARK: - Audit Log Hook (deprecated, use analyticsLogger)
+
+    @available(*, deprecated, message: "Use analyticsLogger protocol instead.")
     public var auditLogHook: ((String, [String: Any]?, Error?) -> Void)?
 
     // MARK: - Core Analysis Logic
 
-    /// Determines the retention tag for a single dog owner based on their appointment history.
-    /// This is the primary business logic function for retention status.
-    /// - Parameter owner: The `DogOwner` to analyze.
-    /// - Returns: The calculated `RetentionTag`.
     public func retentionTag(for owner: DogOwner) -> RetentionTag {
         // A newly added owner with no appointments is considered a new client.
         guard let lastAppointmentDate = owner.lastAppointmentDate else {
+            Self.analyticsLogger.log(event: "retentionTag_newClient", info: [
+                "owner": owner.ownerName,
+                "tag": RetentionTag.newClient.rawValue
+            ])
             return .newClient
         }
-        
+
         let daysSinceLastAppointment = Calendar.current.dateComponents([.day], from: lastAppointmentDate, to: Date()).day ?? 0
-        
+
+        // Log analysis details for BI/audit
+        var eventInfo: [String: Any] = [
+            "owner": owner.ownerName,
+            "daysSinceLastAppointment": daysSinceLastAppointment,
+            "appointmentCount": owner.appointments.count
+        ]
+
         // Check statuses in order of precedence (inactive > risk > new > active > returning).
         if daysSinceLastAppointment > Thresholds.inactiveDays {
+            eventInfo["tag"] = RetentionTag.inactive.rawValue
+            Self.analyticsLogger.log(event: "retentionTag_inactive", info: eventInfo)
             return .inactive
         }
-        
+
         if daysSinceLastAppointment > Thresholds.retentionRiskDays {
+            eventInfo["tag"] = RetentionTag.retentionRisk.rawValue
+            Self.analyticsLogger.log(event: "retentionTag_risk", info: eventInfo)
             return .retentionRisk
         }
 
-        // A client is "new" if they only have one appointment and it was recent.
         if owner.appointments.count <= 1 && daysSinceLastAppointment <= Thresholds.newClientDays {
+            eventInfo["tag"] = RetentionTag.newClient.rawValue
+            Self.analyticsLogger.log(event: "retentionTag_newClient_recent", info: eventInfo)
             return .newClient
         }
-        
-        // A client is "active" if they have had an appointment recently.
+
         if daysSinceLastAppointment <= Thresholds.activeDays {
+            eventInfo["tag"] = RetentionTag.active.rawValue
+            Self.analyticsLogger.log(event: "retentionTag_active", info: eventInfo)
             return .active
         }
-        
-        // If none of the above, they are a returning client.
+
+        eventInfo["tag"] = RetentionTag.returning.rawValue
+        Self.analyticsLogger.log(event: "retentionTag_returning", info: eventInfo)
         return .returning
     }
 
     // MARK: - Batch Analytics & Filtering
-    
-    /// Filters a list of owners to find those matching a specific retention tag.
-    /// This is useful for the MarketingEngine to create targeted campaigns.
-    /// - Parameters:
-    ///   - owners: The array of `DogOwner` to filter.
-    ///   - tag: The `RetentionTag` to filter by.
-    /// - Returns: An array of `DogOwner`s that match the specified tag.
+
     public func filterOwners(in owners: [DogOwner], by tag: RetentionTag) -> [DogOwner] {
-        owners.filter { retentionTag(for: $0) == tag }
+        let filtered = owners.filter { retentionTag(for: $0) == tag }
+        Self.analyticsLogger.log(event: "filterOwners", info: [
+            "filterTag": tag.rawValue,
+            "filteredCount": filtered.count
+        ])
+        return filtered
     }
-    
-    /// Provides a statistical summary of retention across a list of owners.
-    /// Ideal for populating dashboard charts and business reports.
-    /// - Parameter owners: The array of `DogOwner` to analyze.
-    /// - Returns: A dictionary mapping each `RetentionTag` to the number of owners in that category.
+
     public func retentionStats(for owners: [DogOwner]) -> [RetentionTag: Int] {
         var stats: [RetentionTag: Int] = [:]
         for owner in owners {
             let tag = retentionTag(for: owner)
             stats[tag, default: 0] += 1
         }
+        Self.analyticsLogger.log(event: "retentionStats", info: stats.mapValues { $0 })
         return stats
     }
-    
-    /// Convenience method to get all owners who are at risk.
+
     public func ownersAtRisk(in owners: [DogOwner]) -> [DogOwner] {
-        filterOwners(in: owners, by: .retentionRisk)
+        let atRisk = filterOwners(in: owners, by: .retentionRisk)
+        Self.analyticsLogger.log(event: "ownersAtRisk", info: ["count": atRisk.count])
+        return atRisk
     }
 
-    /// Convenience method to get all inactive owners.
     public func inactiveOwners(in owners: [DogOwner]) -> [DogOwner] {
-        filterOwners(in: owners, by: .inactive)
-    }
-    
-    /// Convenience method to get all new clients.
-    public func newClientOwners(in owners: [DogOwner]) -> [DogOwner] {
-        filterOwners(in: owners, by: .newClient)
+        let inactive = filterOwners(in: owners, by: .inactive)
+        Self.analyticsLogger.log(event: "inactiveOwners", info: ["count": inactive.count])
+        return inactive
     }
 
-    /// Placeholder async hook for fetching remote retention data (offline/cloud hybrid).
-    ///
-    /// - Note: This function is intended for future hybrid/offline/cloud analytics integration.
-    ///         It is not yet implemented and should be audited and localized in production.
-    /// - Returns: Async result of remote retention data.
-    func fetchRemoteRetentionData(for businessId: String) async throws -> [DogOwner] {
-        auditLogHook?("fetchRemoteRetentionData_invoked", ["businessId": businessId], nil)
-        // TODO: Implement secure, localized remote fetch logic; ensure audit logging and Trust Center permissions.
-        // FIXME: This should be implemented before enabling cloud analytics in production.
+    public func newClientOwners(in owners: [DogOwner]) -> [DogOwner] {
+        let newClients = filterOwners(in: owners, by: .newClient)
+        Self.analyticsLogger.log(event: "newClientOwners", info: ["count": newClients.count])
+        return newClients
+    }
+
+    // MARK: - Remote Analytics (Trust Center/permission-aware, async/await)
+
+    public func fetchRemoteRetentionData(for businessId: String) async throws -> [DogOwner] {
+        // Permission check (Trust Center)
+        if let permission = trustCenterPermissionCheck, !permission("fetchRemoteRetentionData", ["businessId": businessId]) {
+            Self.analyticsLogger.log(event: "remoteFetch_permissionDenied", info: ["businessId": businessId])
+            throw RetentionError.permissionDenied
+        }
+        Self.analyticsLogger.log(event: "fetchRemoteRetentionData_invoked", info: ["businessId": businessId])
+        // TODO: Implement secure, localized remote fetch logic (ensure audit logging and Trust Center permissions)
         throw RetentionError.remoteFetchNotImplemented
     }
 }
 
-
-// MARK: - SwiftUI Preview
+// MARK: - SwiftUI Preview (Unchanged, add analytics logger for QA/print)
 
 #if DEBUG
 import SwiftUI
 
 @available(iOS 18.0, *)
 struct CustomerRetentionAnalyzer_Previews: PreviewProvider {
+    struct SpyLogger: RetentionAnalyticsLogger {
+        func log(event: String, info: [String : Any]?) {
+            print("[RetentionAnalytics] \(event): \(info ?? [:])")
+        }
+    }
     static var previews: some View {
-        // This preview demonstrates how the analyzer would be used.
-        // In a real app, this logic would be in a ViewModel.
+        CustomerRetentionAnalyzer.analyticsLogger = SpyLogger()
+        // ... (rest of preview unchanged)
         let container = try! ModelContainer(for: [DogOwner.self, Appointment.self], inMemory: true)
         
         let analyzer = CustomerRetentionAnalyzer.shared

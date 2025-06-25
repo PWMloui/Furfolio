@@ -2,12 +2,72 @@
 //  ChargeListView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//
-//  ENHANCED: Refactored to use a ViewModel and be the single source of truth.
+//  Enhanced 2025: Auditable, Tokenized, Modular Charge History List
 //
 
 import SwiftUI
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct ChargeListAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String    // "search", "add", "delete", "tap"
+    let chargeID: UUID?
+    let type: String?
+    let amount: Double?
+    let notes: String?
+    let searchText: String?
+    let tags: [String]
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        var parts = [operation.capitalized]
+        if let t = type { parts.append("Type: \(t)") }
+        if let a = amount { parts.append("Amount: $\(String(format: "%.2f", a))") }
+        if let s = searchText, !s.isEmpty { parts.append("Search: \(s)") }
+        if let n = notes, !n.isEmpty { parts.append("Notes: \(n)") }
+        if let id = chargeID { parts.append("ID: \(id.uuidString.prefix(8))") }
+        if !tags.isEmpty { parts.append("[\(tags.joined(separator: ","))]") }
+        parts.append("at \(dateStr)")
+        if let d = detail, !d.isEmpty { parts.append(": \(d)") }
+        return parts.joined(separator: " ")
+    }
+}
+
+fileprivate final class ChargeListAudit {
+    static private(set) var log: [ChargeListAuditEvent] = []
+
+    static func record(
+        operation: String,
+        charge: Charge? = nil,
+        searchText: String? = nil,
+        tags: [String] = [],
+        detail: String? = nil
+    ) {
+        let event = ChargeListAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            chargeID: charge?.id,
+            type: charge?.type,
+            amount: charge?.amount,
+            notes: charge?.notes,
+            searchText: searchText,
+            tags: tags,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 150 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No charge list events recorded."
+    }
+}
 
 // MARK: - ChargeListView (Tokenized, Modular, Auditable Charge History List)
 
@@ -27,55 +87,76 @@ struct ChargeListView: View {
                 } else {
                     ForEach(viewModel.filteredCharges) { charge in
                         NavigationLink(destination: ChargeDetailView(charge: charge)) {
-                            ChargeRowView(charge: charge) // Reusable row view
-                                .accessibilityIdentifier("chargeRow_\(charge.id.uuidString)") // Accessibility ID for each row
+                            ChargeRowView(charge: charge)
+                                .accessibilityIdentifier("chargeRow_\(charge.id.uuidString)")
+                                .onTapGesture {
+                                    ChargeListAudit.record(
+                                        operation: "tap",
+                                        charge: charge,
+                                        tags: ["rowTap"]
+                                    )
+                                }
                         }
                     }
-                    .onDelete(perform: viewModel.deleteCharge)
+                    .onDelete { offsets in
+                        let deleted = offsets.map { viewModel.filteredCharges[$0] }
+                        viewModel.deleteCharge(at: offsets)
+                        for charge in deleted {
+                            ChargeListAudit.record(
+                                operation: "delete",
+                                charge: charge,
+                                tags: ["delete"],
+                                detail: "Charge deleted"
+                            )
+                        }
+                    }
                 }
             }
-            .navigationTitle(LocalizedStringKey("Charge History")) // Localized title
+            .navigationTitle(LocalizedStringKey("Charge History"))
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showingAddCharge = true }) {
                         Image(systemName: "plus.circle.fill")
                     }
-                    .accessibilityIdentifier("addChargeButton") // Accessibility ID for Add Charge button
+                    .accessibilityIdentifier("addChargeButton")
                 }
             }
             .searchable(text: $viewModel.searchText, prompt: LocalizedStringKey("Search charge types"))
-            .accessibilityIdentifier("chargeSearchBar") // Accessibility ID for search bar
+            .onChange(of: viewModel.searchText) { val in
+                ChargeListAudit.record(
+                    operation: "search",
+                    searchText: val,
+                    tags: ["search"],
+                    detail: "User searched"
+                )
+            }
+            .accessibilityIdentifier("chargeSearchBar")
             .sheet(isPresented: $showingAddCharge) {
                 AddChargeView(viewModel: AddChargeViewModel()) {
-                    Task { await viewModel.fetchCharges() } // Refresh on save
+                    Task { await viewModel.fetchCharges() }
+                    ChargeListAudit.record(
+                        operation: "add",
+                        tags: ["add"],
+                        detail: "Charge added"
+                    )
                 }
             }
-            .task { // Use .task for async onAppear
+            .task {
                 await viewModel.fetchCharges()
             }
         }
     }
 }
 
-    // MARK: - Data handling
+// MARK: - Audit/Admin Accessors
 
-    private func loadCharges() {
-        // TODO: Replace with real data loading from persistence layer
-        charges = sampleCharges
+public enum ChargeListAuditAdmin {
+    public static var lastSummary: String { ChargeListAudit.accessibilitySummary }
+    public static var lastJSON: String? { ChargeListAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        ChargeListAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
-
-    private func addCharge(_ charge: Charge) {
-        charges.append(charge)
-        charges.sort { $0.date > $1.date }
-        showingAddCharge = false
-        // TODO: Save to persistence layer
-    }
-
-    private func deleteCharge(at offsets: IndexSet) {
-        charges.remove(atOffsets: offsets)
-        // TODO: Delete from persistence layer
-    }
-
+}
 
 // MARK: - Charge Row View
 
@@ -83,29 +164,28 @@ struct ChargeRowView: View {
     let charge: Charge
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.small) { // Tokenized spacing
+        VStack(alignment: .leading, spacing: AppSpacing.small) {
             HStack {
                 Text(charge.type)
-                    .font(AppFonts.headline) // Replaced .font(.headline) with design token
+                    .font(AppFonts.headline)
                 Spacer()
                 Text("$\(String(format: "%.2f", charge.amount))")
-                    .font(AppFonts.headline) // Tokenized font
-                    .foregroundColor(AppColors.success) // Replaced .foregroundColor(.green) with design token for success color
+                    .font(AppFonts.headline)
+                    .foregroundColor(AppColors.success)
             }
             Text(charge.date, style: .date)
-                .font(AppFonts.caption) // Replaced .font(.caption) with design token
-                .foregroundColor(AppColors.secondaryText) // Replaced .foregroundColor(.secondary) with design token
+                .font(AppFonts.caption)
+                .foregroundColor(AppColors.secondaryText)
             if let notes = charge.notes, !notes.isEmpty {
                 Text(notes)
-                    .font(AppFonts.caption2) // Replaced .font(.caption2) with design token
+                    .font(AppFonts.caption2)
                     .italic()
-                    .foregroundColor(AppColors.secondaryText) // Tokenized secondary text color
+                    .foregroundColor(AppColors.secondaryText)
             }
         }
-        .padding(.vertical, AppSpacing.small) // Replaced fixed padding 6 with tokenized spacing
+        .padding(.vertical, AppSpacing.small)
     }
 }
-
 
 // MARK: - Sample Data for Preview & Testing
 
@@ -120,7 +200,6 @@ let sampleCharges: [Charge] = [
 #if DEBUG
 struct ChargeListView_Previews: PreviewProvider {
     static var previews: some View {
-        // Demo/business/tokenized preview with usage of design tokens for colors and fonts
         ChargeListView()
             .environment(\.colorScheme, .light)
     }

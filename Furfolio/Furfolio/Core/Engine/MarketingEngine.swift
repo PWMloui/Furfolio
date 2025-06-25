@@ -2,24 +2,46 @@
 //  MarketingEngine.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
-//
-//  ENHANCED: A business logic engine for client segmentation and marketing outreach.
+//  Enhanced: Audit, campaign tagging, analytics, accessibility, retry, and export.
+//  Author: mac + ChatGPT
 //
 
 import Foundation
 
-/// A model representing a marketing campaign.
-struct MarketingCampaign {
+// MARK: - Campaign Model, Tags, and Analytics
+
+struct MarketingCampaign: Identifiable, Codable {
     let id: UUID
     let name: String
     let subject: String
-    /// A template for the message body. Can include placeholders like {clientName} or {petName}.
     let bodyTemplate: String
+    var tags: [String] = []
+    var sentAt: Date? = nil
+    var riskScore: Int = 0
+    var badgeTokens: [String] = []
+
+    enum CampaignBadge: String, Codable, CaseIterable {
+        case reengagement, promo, risk, compliance, automation, custom
+    }
+    var badges: [CampaignBadge] { badgeTokens.compactMap { CampaignBadge(rawValue: $0) } }
+    mutating func addBadge(_ badge: CampaignBadge) {
+        if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) }
+    }
+    mutating func removeBadge(_ badge: CampaignBadge) {
+        badgeTokens.removeAll { $0 == badge.rawValue }
+    }
+    var accessibilityLabel: String {
+        "\(name). \(subject). \(badges.map { $0.rawValue.capitalized }.joined(separator: \", \"))."
+    }
+    func exportJSON() -> String? {
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return try? encoder.encode(self).flatMap { String(data: $0, encoding: .utf8) }
+    }
 }
 
-/// Defines different "smart" segments of clients for targeted marketing.
-enum ClientSegment: Hashable, Identifiable {
+// MARK: - Enhanced ClientSegment
+
+enum ClientSegment: Hashable, Identifiable, Codable {
     case allClients
     case newClients
     case atRiskClients
@@ -48,18 +70,35 @@ enum ClientSegment: Hashable, Identifiable {
     }
 }
 
-/// A protocol for a service that can send messages, allowing for easy mocking.
+// MARK: - Messaging Service Protocol
+
 protocol MessagingService {
     func send(message: String, to contact: String) async throws
 }
 
-/// The main engine for handling marketing logic.
+// MARK: - Main Enhanced Engine
+
 @MainActor
-final class MarketingEngine {
+final class MarketingEngine: ObservableObject {
     private let retentionAnalyzer: CustomerRetentionAnalyzer
     private let revenueAnalyzer: RevenueAnalyzer
     private let dataStore: DataStoreService
-    private let messagingService: MessagingService // Injected dependency
+    private let messagingService: MessagingService
+
+    // Audit and analytics
+    @Published var lastAuditLog: [String] = []
+    @Published var lastCampaignResult: CampaignResult?
+    @Published var isSending: Bool = false
+
+    struct CampaignResult: Codable {
+        let campaignID: UUID
+        let sentCount: Int
+        let failedCount: Int
+        let targetCount: Int
+        let failedRecipients: [String]
+        let sentAt: Date
+        let segment: ClientSegment
+    }
 
     init(
         retentionAnalyzer: CustomerRetentionAnalyzer = .shared,
@@ -73,12 +112,10 @@ final class MarketingEngine {
         self.messagingService = messagingService
     }
 
-    /// Fetches a list of `DogOwner`s based on a specific segment.
-    /// - Parameter segment: The `ClientSegment` to filter by.
-    /// - Returns: An array of `DogOwner`s belonging to that segment.
+    // MARK: - Fetch by Segment
+
     func fetchClients(for segment: ClientSegment) async -> [DogOwner] {
         let allOwners = await dataStore.fetchAll(DogOwner.self)
-        
         switch segment {
         case .allClients:
             return allOwners
@@ -91,7 +128,6 @@ final class MarketingEngine {
         case .topSpenders(let count):
             return revenueAnalyzer.topClients(owners: allOwners, topN: count).map { $0.owner }
         case .loyaltyStars:
-            // Assumes a 'loyaltyStar' tag is added by the BadgeEngine
             return allOwners.filter { $0.badgeTypes.contains("loyaltyStar") }
         case .ownersOfBreed(let breed):
             return allOwners.filter { owner in
@@ -100,48 +136,98 @@ final class MarketingEngine {
         }
     }
 
-    /// Sends a marketing campaign to a list of clients.
-    /// - Parameters:
-    ///   - campaign: The `MarketingCampaign` to send.
-    ///   - clients: The list of `DogOwner` recipients.
-    /// - Returns: The number of messages successfully sent.
-    func send(campaign: MarketingCampaign, to clients: [DogOwner]) async -> Int {
+    // MARK: - Send Campaign (Batch, Audit, Retry)
+
+    /// Sends a marketing campaign to a list of clients, with audit, retry, and analytics.
+    @discardableResult
+    func send(
+        campaign: MarketingCampaign,
+        to clients: [DogOwner],
+        segment: ClientSegment,
+        maxRetry: Int = 1,
+        throttleMilliseconds: UInt64 = 0
+    ) async -> CampaignResult {
         var sentCount = 0
+        var failedCount = 0
+        var failedRecipients: [String] = []
+        isSending = true
+        let total = clients.count
+
+        addAudit("Begin campaign '\(campaign.name)' (\(campaign.subject)) to \(total) clients (\(segment.displayName)).")
+
         for client in clients {
             guard let contactEmail = client.email, !contactEmail.isEmpty else {
-                continue // Skip clients with no email
+                failedCount += 1
+                failedRecipients.append(client.ownerName)
+                addAudit("Skipped client \(client.ownerName): no email.")
+                continue
             }
-            
-            // Personalize the message
+
             let petName = client.dogs.first?.name ?? "your pet"
             let personalizedBody = campaign.bodyTemplate
                 .replacingOccurrences(of: "{clientName}", with: client.ownerName)
                 .replacingOccurrences(of: "{petName}", with: petName)
-            
-            do {
-                try await messagingService.send(message: personalizedBody, to: contactEmail)
-                sentCount += 1
-            } catch {
-                print("Failed to send message to \(contactEmail): \(error)")
+
+            var delivered = false
+            var attempts = 0
+            while !delivered && attempts <= maxRetry {
+                attempts += 1
+                do {
+                    try await messagingService.send(message: personalizedBody, to: contactEmail)
+                    sentCount += 1
+                    delivered = true
+                } catch {
+                    addAudit("Failed to send to \(contactEmail) (attempt \(attempts)): \(error)")
+                    if attempts > maxRetry {
+                        failedCount += 1
+                        failedRecipients.append(contactEmail)
+                    } else {
+                        try? await Task.sleep(nanoseconds: throttleMilliseconds * 1_000_000)
+                    }
+                }
             }
         }
-        return sentCount
+        isSending = false
+        let result = CampaignResult(
+            campaignID: campaign.id, sentCount: sentCount, failedCount: failedCount, targetCount: total,
+            failedRecipients: failedRecipients, sentAt: Date(), segment: segment)
+        lastCampaignResult = result
+        addAudit("Campaign '\(campaign.name)' complete. \(sentCount) sent, \(failedCount) failed.")
+        return result
+    }
+
+    // MARK: - Audit, Analytics, Export
+
+    func addAudit(_ entry: String) {
+        let ts = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        lastAuditLog.append("[\(ts)] \(entry)")
+        if lastAuditLog.count > 1000 { lastAuditLog.removeFirst() }
+    }
+
+    /// Export the most recent campaign result as JSON.
+    func exportLastCampaignResult() -> String? {
+        guard let last = lastCampaignResult else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return try? encoder.encode(last).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// Accessibility summary for latest campaign (for dashboards, VoiceOver)
+    var accessibilitySummary: String {
+        guard let last = lastCampaignResult else { return "No campaign sent yet." }
+        return "Campaign sent to \(last.sentCount) of \(last.targetCount) clients. \(last.failedCount) failed. Segment: \(last.segment.displayName)."
     }
 }
-
 
 // MARK: - Preview
 
 #if DEBUG
 import SwiftUI
 
-/// A mock messaging service that just prints to the console for previews.
 struct MockMessagingService: MessagingService {
     func send(message: String, to contact: String) async throws {
-        print("--- Sending Message ---")
-        print("To: \(contact)")
-        print("Body: \(message)")
-        print("-----------------------")
+        // Randomly throw to simulate error
+        if Bool.random() { throw NSError(domain: "SendError", code: 1) }
+        print("--- Sending Message ---\nTo: \(contact)\nBody: \(message)\n-----------------------")
     }
 }
 
@@ -150,8 +236,9 @@ struct MarketingEngine_Preview: View {
     @State private var messageBody: String = "Hi {clientName}! We've missed you and {petName}. Come back for your next groom and get 15% off!"
     @State private var targetedClientCount: Int = 0
     @State private var isSending = false
-    
-    // Create an instance of the engine with mock services for the preview
+    @State private var sendResult: MarketingEngine.CampaignResult?
+    @State private var auditLog: [String] = []
+
     private var marketingEngine = MarketingEngine(messagingService: MockMessagingService())
 
     var body: some View {
@@ -162,15 +249,13 @@ struct MarketingEngine_Preview: View {
                     Text("New Clients").tag(ClientSegment.newClients)
                     Text("Top 3 Spenders").tag(ClientSegment.topSpenders(count: 3))
                 }
-                
                 TextEditor(text: $messageBody)
                     .frame(height: 100)
             }
-            
+
             Section("Preview & Send") {
-                Text("Targets \(targetedClientCount) clients.")
-                    .font(.caption)
-                
+                Text("Targets \(targetedClientCount) clients.").font(.caption)
+
                 Button(action: sendCampaign) {
                     HStack {
                         if isSending { ProgressView() }
@@ -178,25 +263,36 @@ struct MarketingEngine_Preview: View {
                     }
                 }
                 .disabled(isSending)
+                if let result = sendResult {
+                    Text("Sent: \(result.sentCount), Failed: \(result.failedCount)")
+                        .font(.caption)
+                }
+            }
+            Section("Audit Trail") {
+                ForEach(auditLog, id: \.self) { log in
+                    Text(log).font(.caption2).foregroundColor(.secondary)
+                }
             }
         }
-        .onChange(of: segment, initial: true) { _, newSegment in
-            Task {
-                // In a real app, you'd fetch real owners. Here we use a mock count.
-                let clients = await marketingEngine.fetchClients(for: newSegment)
-                targetedClientCount = clients.count > 0 ? clients.count : Int.random(in: 2...5) // Mock count
-            }
-        }
+        .onAppear { fetchTargetCount() }
+        .onChange(of: segment, initial: true) { _, _ in fetchTargetCount() }
         .navigationTitle("Marketing")
     }
-    
+
+    func fetchTargetCount() {
+        Task {
+            let clients = await marketingEngine.fetchClients(for: segment)
+            targetedClientCount = clients.count > 0 ? clients.count : Int.random(in: 2...5)
+        }
+    }
     func sendCampaign() {
         isSending = true
         let campaign = MarketingCampaign(id: UUID(), name: "Re-engagement", subject: "We miss you!", bodyTemplate: messageBody)
         Task {
-            // In a real app, you'd fetch and pass real clients.
-            let _ = await marketingEngine.send(campaign: campaign, to: []) // Pass empty for demo
-            try? await Task.sleep(for: .seconds(1))
+            let clients = await marketingEngine.fetchClients(for: segment)
+            let result = await marketingEngine.send(campaign: campaign, to: clients, segment: segment)
+            sendResult = result
+            auditLog = marketingEngine.lastAuditLog
             isSending = false
         }
     }

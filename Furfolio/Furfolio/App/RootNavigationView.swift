@@ -1,101 +1,88 @@
 import SwiftUI
 
-/// RootNavigationView.swift
-///
-/// This file defines the canonical root navigation container for the Furfolio app.
-/// All sidebar navigation and adaptive split view routing should be defined here,
-/// ensuring a consistent and modular navigation experience across the app.
+// MARK: - Analytics/Audit Protocol
 
-/// The `RootNavigationView` provides a unified sidebar navigation experience across the app,
-/// leveraging SwiftUI's `NavigationSplitView` to display a sidebar with navigation options and a detail view.
-/// This component uses modular design tokens for colors, fonts, spacing, and corner radius to ensure consistent styling.
-/// It adapts intent by conditionally showing navigation items based on the user role, promoting a tailored user experience.
+public protocol RootNavigationAnalyticsLogger {
+    func log(event: String, info: String?)
+}
+public struct NullRootNavigationAnalyticsLogger: RootNavigationAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: String?) {}
+}
+
+// MARK: - RootNavigationView (Audit, Token, Accessible, Trust Center–Ready)
+
 struct RootNavigationView: View {
     @EnvironmentObject var appState: AppState
     @State private var selection: NavigationItem? = .dashboard
-    
+
+    // Analytics logger (swap for QA/Trust Center/print as needed)
+    static var analyticsLogger: RootNavigationAnalyticsLogger = NullRootNavigationAnalyticsLogger()
+
     var body: some View {
         NavigationSplitView(selection: $selection) {
             SidebarView(selection: $selection)
+                .onAppear {
+                    Self.analyticsLogger.log(event: "sidebar_appear", info: appState.currentUserRole.description)
+                }
         } detail: {
             switch selection {
             case .dashboard:
                 DashboardView()
+                    .onAppear { Self.analyticsLogger.log(event: "dashboard_view_appear", info: nil) }
             case .owners:
-                OwnersView() // Placeholder for OwnersView
+                OwnersView()
+                    .onAppear { Self.analyticsLogger.log(event: "owners_view_appear", info: nil) }
             case .appointments:
-                AppointmentsView() // Placeholder for AppointmentsView
+                AppointmentsView()
+                    .onAppear { Self.analyticsLogger.log(event: "appointments_view_appear", info: nil) }
             case .charges:
-                ChargesView() // Placeholder for ChargesView
+                ChargesView()
+                    .onAppear { Self.analyticsLogger.log(event: "charges_view_appear", info: nil) }
             case .admin:
-                AdminView() // Placeholder for AdminView
+                AdminView()
+                    .onAppear { Self.analyticsLogger.log(event: "admin_view_appear", info: nil) }
             case .none:
-                Text("Select an item") // Placeholder when no selection
+                Text("Select an item")
                     .font(AppFonts.body)
                     .foregroundColor(AppColors.accent)
                     .background(AppColors.background)
+                    .accessibilityLabel("No item selected")
+                    .onAppear { Self.analyticsLogger.log(event: "no_selection", info: nil) }
             }
         }
+        .accessibilityElement(children: .contain)
+        .navigationTitle("Furfolio Navigation Root")
     }
 }
+
+// MARK: - SidebarView (Audit, Accessible, Trust Center–Ready)
 
 struct SidebarView: View {
     @EnvironmentObject var appState: AppState
     @Binding var selection: NavigationItem?
-    
+
     var body: some View {
         List(selection: $selection) {
             Section(header: Text("Main")
                         .font(AppFonts.body)
                         .accessibilityAddTraits(.isHeader)) {
-                NavigationLink(value: NavigationItem.dashboard) {
-                    Text("Dashboard")
-                        .font(AppFonts.body)
-                        .foregroundColor(AppColors.accent)
-                }
-                .accessibilityLabel("Dashboard")
-                .accessibilityHint("Navigate to the dashboard overview")
+                navLink(.dashboard, label: "Dashboard", hint: "Navigate to the dashboard overview")
             }
-            
+
             Section(header: Text("Business")
                         .font(AppFonts.body)
                         .accessibilityAddTraits(.isHeader)) {
-                NavigationLink(value: NavigationItem.owners) {
-                    Text("Dog Owners")
-                        .font(AppFonts.body)
-                        .foregroundColor(AppColors.accent)
-                }
-                .accessibilityLabel("Dog Owners")
-                .accessibilityHint("Navigate to dog owners list")
-                
-                NavigationLink(value: NavigationItem.appointments) {
-                    Text("Appointments")
-                        .font(AppFonts.body)
-                        .foregroundColor(AppColors.accent)
-                }
-                .accessibilityLabel("Appointments")
-                .accessibilityHint("Navigate to appointments schedule")
-                
-                NavigationLink(value: NavigationItem.charges) {
-                    Text("Charges")
-                        .font(AppFonts.body)
-                        .foregroundColor(AppColors.accent)
-                }
-                .accessibilityLabel("Charges")
-                .accessibilityHint("Navigate to charges and billing")
+                navLink(.owners, label: "Dog Owners", hint: "Navigate to dog owners list")
+                navLink(.appointments, label: "Appointments", hint: "Navigate to appointments schedule")
+                navLink(.charges, label: "Charges", hint: "Navigate to charges and billing")
             }
-            
+
             if appState.currentUserRole == .owner {
                 Section(header: Text("Admin")
                             .font(AppFonts.body)
                             .accessibilityAddTraits(.isHeader)) {
-                    NavigationLink(value: NavigationItem.admin) {
-                        Text("Admin")
-                            .font(AppFonts.body)
-                            .foregroundColor(AppColors.accent)
-                    }
-                    .accessibilityLabel("Admin")
-                    .accessibilityHint("Navigate to administrative tools")
+                    navLink(.admin, label: "Admin", hint: "Navigate to administrative tools", isSensitive: true)
                 }
             }
         }
@@ -104,10 +91,35 @@ struct SidebarView: View {
         .cornerRadius(BorderRadius.medium)
         .navigationTitle("Furfolio")
         .font(AppFonts.body)
-        .accessibilityLabel("Furfolio Navigation")
+        .accessibilityLabel("Furfolio Navigation Sidebar")
         .accessibilityElement(children: .contain)
     }
+
+    /// Generates a standardized, audit-logged NavigationLink for a sidebar item.
+    private func navLink(
+        _ item: NavigationItem,
+        label: String,
+        hint: String,
+        isSensitive: Bool = false
+    ) -> some View {
+        NavigationLink(value: item) {
+            Text(label)
+                .font(AppFonts.body)
+                .foregroundColor(AppColors.accent)
+        }
+        .accessibilityLabel(label)
+        .accessibilityHint(hint)
+        .onTapGesture {
+            RootNavigationView.analyticsLogger.log(
+                event: isSensitive ? "admin_nav_tap" : "\(item)_nav_tap",
+                info: appState.currentUserRole.description
+            )
+            // Trust Center/Audit: Here you can add more permission/audit checks as needed.
+        }
+    }
 }
+
+// MARK: - NavigationItem Enum (Audit, Role Expandable)
 
 enum NavigationItem: Hashable {
     case dashboard, owners, appointments, charges, admin
@@ -121,6 +133,7 @@ struct OwnersView: View {
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
+            .accessibilityLabel("Owners View Placeholder")
     }
 }
 
@@ -130,6 +143,7 @@ struct AppointmentsView: View {
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
+            .accessibilityLabel("Appointments View Placeholder")
     }
 }
 
@@ -139,6 +153,7 @@ struct ChargesView: View {
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
+            .accessibilityLabel("Charges View Placeholder")
     }
 }
 
@@ -148,21 +163,33 @@ struct AdminView: View {
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
+            .accessibilityLabel("Admin View Placeholder")
     }
 }
 
-// MARK: - Previews
+// MARK: - Previews (Analytics-Injected, Multi-Role)
 
 struct RootNavigationView_Previews: PreviewProvider {
+    struct SpyLogger: RootNavigationAnalyticsLogger {
+        func log(event: String, info: String?) {
+            print("[RootNavAnalytics] \(event): \(info ?? "")")
+        }
+    }
     static var previews: some View {
-        Group {
+        RootNavigationView.analyticsLogger = SpyLogger()
+        return Group {
             RootNavigationView()
                 .environmentObject(AppState())
                 .preferredColorScheme(.light)
-            
+                .previewDisplayName("Light Mode")
             RootNavigationView()
-                .environmentObject(AppState())
+                .environmentObject({
+                    let s = AppState()
+                    s.currentUserRole = .owner
+                    return s
+                }())
                 .preferredColorScheme(.dark)
+                .previewDisplayName("Dark Mode (Owner)")
         }
     }
 }

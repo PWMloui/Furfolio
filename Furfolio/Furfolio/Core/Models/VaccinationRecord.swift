@@ -15,86 +15,154 @@ import SwiftData
 /// Designed to integrate seamlessly with dashboards, owner workflows, and advanced querying capabilities for comprehensive business management.
 @Model
 public final class VaccinationRecord: Identifiable, ObservableObject {
-    /// Unique identifier for the vaccination record, supporting audit trails and event logging.
     @Attribute(.unique)
     public var id: UUID
-
-    /// The vaccine type administered (e.g., Rabies, Bordetella, Parvo, etc.), enabling detailed analytics, compliance categorization, and UI tokenization.
     public var vaccineType: VaccineType
-
-    /// The date the vaccine was administered, critical for compliance audits, scheduling, and historical analytics.
     public var dateAdministered: Date
-
-    /// The expiration or next due date for the vaccine, used for compliance monitoring, reminder workflows, and reporting of upcoming needs.
     public var expirationDate: Date
-
-    /// Optional lot number for traceability, recall management, and quality control analytics.
     public var lotNumber: String?
-
-    /// Manufacturer of the vaccine, supporting vendor tracking, quality assurance, and business analytics.
     public var manufacturer: String?
-
-    /// Clinic where the vaccine was administered, important for business records, compliance verification, and reporting.
     public var clinic: String?
-
-    /// Veterinarian who administered the vaccine, supporting accountability, audit trails, and trust reporting.
     public var veterinarian: String?
-
-    /// Indicates if the clinic or veterinarian is verified, used for compliance validation, trust badges, and UI status indicators.
     public var isVerified: Bool?
-
-    /// Notes or reactions related to the vaccination, stored externally for scalability and detailed audit or clinical observations.
     @Attribute(.externalStorage)
     public var notes: String?
-
-    /// Reminder date for upcoming vaccinations or follow-ups, enabling proactive workflows and notification scheduling.
     public var reminderDate: Date?
-
-    /// Tags for advanced querying, categorization, and UI badge display (e.g., ["Booster", "Annual"]).
     public var tags: [String]
-
-    /// The dog this vaccination record belongs to, enabling relationship management for business analytics, owner workflows, and UI contextualization.
     @Relationship(deleteRule: .nullify, inverse: \Dog.vaccinationRecords)
     public var dog: Dog?
-
-    /// The user who created this record, supporting audit trails, accountability, and UI attribution.
     @Relationship(deleteRule: .nullify)
     public var createdBy: User?
 
-    // MARK: - Computed Properties
+    // --- ENHANCEMENTS ---
 
-    /// Indicates if the vaccination is expired based on the current date.
-    /// Used for dashboard status indicators, compliance alerts, analytics on vaccination currency, and reporting overdue vaccines.
+    /// Status/badge tokens for UI and analytics
+    public var badgeTokens: [String] = []
+
+    public enum VaccinationBadge: String, CaseIterable, Codable {
+        case overdue, expiringSoon, annual, core, compliance, adverseReaction, imported, verified
+    }
+
+    public var badges: [VaccinationBadge] {
+        badgeTokens.compactMap { VaccinationBadge(rawValue: $0) }
+    }
+    public func addBadge(_ badge: VaccinationBadge) {
+        if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) }
+    }
+    public func removeBadge(_ badge: VaccinationBadge) {
+        badgeTokens.removeAll { $0 == badge.rawValue }
+    }
+    public func hasBadge(_ badge: VaccinationBadge) -> Bool {
+        badgeTokens.contains(badge.rawValue)
+    }
+
+    /// Audit log for compliance and record history
+    public var auditLog: [String] = []
+    public func addAudit(_ entry: String) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(stamp)] \(entry)")
+    }
+    public func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+
+    // --- COMPUTED PROPERTIES ---
+
+    /// Expired if today is past expiration.
     public var isExpired: Bool {
         Date() > expirationDate
     }
 
-    /// Indicates if the vaccination is due soon (within 30 days).
-    /// Supports proactive alerting in dashboards, reminder workflows, compliance monitoring, and reporting upcoming vaccine renewals.
+    /// Due soon if within 30 days.
     public var isDueSoon: Bool {
-        let thirtyDaysFromNow = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
-        return expirationDate <= thirtyDaysFromNow && !isExpired
+        let thirtyDays = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
+        return expirationDate <= thirtyDays && !isExpired
     }
 
-    // MARK: - Init
+    /// Days until expiration (negative if overdue).
+    public var daysUntilExpiration: Int? {
+        Calendar.current.dateComponents([.day], from: Date(), to: expirationDate).day
+    }
 
-    /// Initializes a new VaccinationRecord with all relevant details for comprehensive business management.
-    /// This initializer supports audit/event logging, analytics tracking, business logic integration, and compliance adherence.
-    /// - Parameters:
-    ///   - id: Unique identifier, defaults to a new UUID to ensure traceability.
-    ///   - vaccineType: Type of vaccine administered, essential for categorization and compliance.
-    ///   - dateAdministered: Date when the vaccine was given, critical for audit and scheduling.
-    ///   - expirationDate: Date when the vaccine expires or is due next, used for compliance and reminders.
-    ///   - lotNumber: Optional lot number for traceability and recall management.
-    ///   - manufacturer: Optional manufacturer name, supporting vendor analytics.
-    ///   - clinic: Optional clinic name for compliance and business records.
-    ///   - veterinarian: Optional veterinarian name for accountability.
-    ///   - isVerified: Optional flag indicating clinic/vet verification status for trust and compliance.
-    ///   - notes: Optional notes or reactions, stored externally for scalability and detailed audit.
-    ///   - reminderDate: Optional date for reminders, enabling proactive workflows.
-    ///   - tags: Tags for categorization, advanced querying, and UI badge display.
-    ///   - dog: Optional associated Dog entity for relationship management and analytics.
-    ///   - createdBy: Optional User who created the record, supporting audit trails and accountability.
+    /// Days since administered (for adverse event tracking, etc.).
+    public var daysSinceAdministered: Int? {
+        Calendar.current.dateComponents([.day], from: dateAdministered, to: Date()).day
+    }
+
+    /// Is this a core vaccine (for compliance dashboards)?
+    public var isCoreVaccine: Bool {
+        switch vaccineType {
+        case .rabies, .parvo, .distemper, .hepatitis: true
+        default: false
+        }
+    }
+
+    /// Was an adverse reaction recorded?
+    public var isAdverseReaction: Bool {
+        notes?.localizedCaseInsensitiveContains("reaction") == true || hasBadge(.adverseReaction)
+    }
+
+    /// Was this record imported? (badge or tag)
+    public var isImported: Bool {
+        hasBadge(.imported) || tags.contains(where: { $0.lowercased().contains("import") })
+    }
+
+    /// Computed compliance/risk score (demo logic: overdue=3, not verified=1, core=1, adverse=2, expiringSoon=1)
+    public var riskScore: Int {
+        var score = 0
+        if isExpired { score += 3 }
+        if isDueSoon { score += 1 }
+        if isCoreVaccine { score += 1 }
+        if isAdverseReaction { score += 2 }
+        if isVerified != true { score += 1 }
+        if hasBadge(.imported) { score += 1 }
+        return score
+    }
+
+    /// Accessibility label for VoiceOver or UI display.
+    public var accessibilityLabel: String {
+        "\(vaccineType.label) vaccine. \(isExpired ? "Expired." : (isDueSoon ? "Due soon." : "Up to date.")) \(isVerified == true ? "Verified." : "") \(isCoreVaccine ? "Core vaccine." : "")"
+    }
+
+    // --- FILTERS (for UI/analytics) ---
+
+    public static func filterOverdue(_ records: [VaccinationRecord]) -> [VaccinationRecord] {
+        records.filter { $0.isExpired || $0.hasBadge(.overdue) }
+    }
+    public static func filterExpiringSoon(_ records: [VaccinationRecord]) -> [VaccinationRecord] {
+        records.filter { $0.isDueSoon || $0.hasBadge(.expiringSoon) }
+    }
+    public static func filterAdverseReactions(_ records: [VaccinationRecord]) -> [VaccinationRecord] {
+        records.filter { $0.isAdverseReaction }
+    }
+
+    // --- EXPORT ---
+
+    public func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID
+            let vaccineType: String
+            let dateAdministered: Date
+            let expirationDate: Date
+            let lotNumber: String?
+            let manufacturer: String?
+            let clinic: String?
+            let veterinarian: String?
+            let isVerified: Bool?
+            let tags: [String]
+            let badgeTokens: [String]
+            let dogID: UUID?
+            let createdBy: UUID?
+        }
+        let export = Export(
+            id: id, vaccineType: vaccineType.rawValue, dateAdministered: dateAdministered, expirationDate: expirationDate,
+            lotNumber: lotNumber, manufacturer: manufacturer, clinic: clinic, veterinarian: veterinarian,
+            isVerified: isVerified, tags: tags, badgeTokens: badgeTokens, dogID: dog?.id, createdBy: createdBy?.id
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // --- INIT ---
+
     public init(
         id: UUID = UUID(),
         vaccineType: VaccineType,
@@ -109,7 +177,9 @@ public final class VaccinationRecord: Identifiable, ObservableObject {
         reminderDate: Date? = nil,
         tags: [String] = [],
         dog: Dog? = nil,
-        createdBy: User? = nil
+        createdBy: User? = nil,
+        badgeTokens: [String] = [],
+        auditLog: [String] = []
     ) {
         self.id = id
         self.vaccineType = vaccineType
@@ -125,71 +195,25 @@ public final class VaccinationRecord: Identifiable, ObservableObject {
         self.tags = tags
         self.dog = dog
         self.createdBy = createdBy
+        self.badgeTokens = badgeTokens
+        self.auditLog = auditLog
     }
 
-    /// Sample vaccination record for SwiftUI previews, onboarding, and demo purposes.
-    /// Demonstrates business logic, tokenized UI elements, and provides realistic data for preview and testing.
-    public static let sample = VaccinationRecord(
+    // --- PREVIEW/DEMO ---
+
+    public static let demo = VaccinationRecord(
         vaccineType: .rabies,
-        dateAdministered: Date(timeIntervalSinceNow: -31536000), // 1 year ago
-        expirationDate: Date(timeIntervalSinceNow: 31536000), // 1 year ahead
-        lotNumber: "ABC123",
-        manufacturer: "VetPharma",
-        clinic: "Happy Paws Clinic",
-        veterinarian: "Dr. Smith",
-        isVerified: true,
-        notes: "No adverse reactions observed.",
-        reminderDate: Calendar.current.date(byAdding: .day, value: 350, to: Date()),
-        tags: ["Annual", "Booster"]
+        dateAdministered: Date(timeIntervalSinceNow: -31536000),
+        expirationDate: Date(timeIntervalSinceNow: -5 * 24 * 3600), // Expired 5 days ago
+        lotNumber: "DEF999",
+        manufacturer: "PetHealth Labs",
+        clinic: "Good Dog Vets",
+        veterinarian: "Dr. Lee",
+        isVerified: false,
+        notes: "Mild reaction: swelling at injection site.",
+        reminderDate: nil,
+        tags: ["Annual", "Imported"],
+        badgeTokens: [VaccinationBadge.overdue.rawValue, VaccinationBadge.core.rawValue, VaccinationBadge.adverseReaction.rawValue],
+        auditLog: ["[05/01/2024, 09:00 AM] Created", "[06/01/2024, 10:00 AM] Marked as imported"]
     )
-}
-
-/// Enum for common vaccine types used in Furfolio's business management.
-/// Conforms to Codable, CaseIterable, Identifiable, and Equatable to support multi-module access, audit, analytics, compliance, UI badge/token integration, and business logic workflows.
-public enum VaccineType: String, Codable, CaseIterable, Identifiable, Equatable {
-    case rabies
-    case bordetella
-    case parvo
-    case distemper
-    case hepatitis
-    case parainfluenza
-    case leptospirosis
-    case influenza
-    case coronavirus
-    case custom
-
-    /// Unique identifier for each vaccine type, supporting audit, analytics, and UI tokenization.
-    public var id: String { rawValue }
-
-    /// User-friendly label for display purposes in UI, supporting localization, analytics categorization, and reporting.
-    public var label: String {
-        switch self {
-        case .rabies: return "Rabies"
-        case .bordetella: return "Bordetella"
-        case .parvo: return "Parvo"
-        case .distemper: return "Distemper"
-        case .hepatitis: return "Hepatitis"
-        case .parainfluenza: return "Parainfluenza"
-        case .leptospirosis: return "Leptospirosis"
-        case .influenza: return "Influenza"
-        case .coronavirus: return "Coronavirus"
-        case .custom: return "Custom"
-        }
-    }
-
-    /// System icon name representing the vaccine type for consistent UI tokenization, badge display, and analytics visualization.
-    public var icon: String {
-        switch self {
-        case .rabies: return "bandage"
-        case .bordetella: return "lungs.fill"
-        case .parvo: return "cross.case.fill"
-        case .distemper: return "cross.case"
-        case .hepatitis: return "heart.fill"
-        case .parainfluenza: return "wind"
-        case .leptospirosis: return "drop"
-        case .influenza: return "thermometer"
-        case .coronavirus: return "shield.lefthalf.filled"
-        case .custom: return "star"
-        }
-    }
 }

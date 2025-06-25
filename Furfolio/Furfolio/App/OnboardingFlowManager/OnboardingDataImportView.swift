@@ -2,77 +2,126 @@
 //  OnboardingDataImportView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: tokenized, analytics/audit–ready, modular, previewable, accessible.
 //
 
 import SwiftUI
 
-/// Onboarding step for importing demo/sample data or user files.
-/// 
-/// This view provides users with an accessible interface to import sample data or their own files,
-/// facilitating a faster start with the app. All user-facing strings are localized to support multiple languages.
-/// Accessibility traits and labels are added to improve usability for assistive technologies.
-/// Design tokens are used for consistent styling, with TODOs indicating where tokens should be applied.
-/// 
-/// Future enhancements include audit logging for user actions and expanded file import capabilities.
-struct OnboardingDataImportView: View {
-    enum ImportState {
-        case idle
-        case loading
-        case success
-        case failed(String)
-    }
+// MARK: - Analytics/Audit Logger Protocol
 
+public protocol OnboardingImportAnalyticsLogger {
+    func log(event: String, detail: String?)
+}
+public struct NullOnboardingImportAnalyticsLogger: OnboardingImportAnalyticsLogger {
+    public init() {}
+    public func log(event: String, detail: String?) {}
+}
+
+// MARK: - View
+
+struct OnboardingDataImportView: View {
+    // MARK: - Analytics / Audit (DI-ready)
+    let analyticsLogger: OnboardingImportAnalyticsLogger
+    let demoDataManager: DemoDataManagerProtocol
+    // MARK: - Tokens
+    let accent: Color
+    let secondary: Color
+    let success: Color
+    let error: Color
+    let background: Color
+    let titleFont: Font
+    let bodyFont: Font
+    let buttonFont: Font
+    let spacingL: CGFloat
+    let spacingM: CGFloat
+    let spacingS: CGFloat
+    let spacingXL: CGFloat
+
+    // MARK: - State
+    enum ImportState {
+        case idle, loading, success, failed(String)
+    }
     @State private var importState: ImportState = .idle
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    // MARK: - DI/Token init (prod, preview, or test)
+    init(
+        analyticsLogger: OnboardingImportAnalyticsLogger = NullOnboardingImportAnalyticsLogger(),
+        demoDataManager: DemoDataManagerProtocol = DemoDataManager.shared,
+        accent: Color = AppColors.accent ?? .accentColor,
+        secondary: Color = AppColors.secondary ?? .secondary,
+        success: Color = AppColors.success ?? .green,
+        error: Color = AppColors.error ?? .red,
+        background: Color = AppColors.background ?? Color(.systemBackground),
+        titleFont: Font = AppFonts.title.bold() ?? .title.bold(),
+        bodyFont: Font = AppFonts.body ?? .body,
+        buttonFont: Font = AppFonts.headline ?? .headline,
+        spacingL: CGFloat = AppSpacing.large ?? 24,
+        spacingM: CGFloat = AppSpacing.medium ?? 16,
+        spacingS: CGFloat = AppSpacing.small ?? 8,
+        spacingXL: CGFloat = AppSpacing.extraLarge ?? 36
+    ) {
+        self.analyticsLogger = analyticsLogger
+        self.demoDataManager = demoDataManager
+        self.accent = accent
+        self.secondary = secondary
+        self.success = success
+        self.error = error
+        self.background = background
+        self.titleFont = titleFont
+        self.bodyFont = bodyFont
+        self.buttonFont = buttonFont
+        self.spacingL = spacingL
+        self.spacingM = spacingM
+        self.spacingS = spacingS
+        self.spacingXL = spacingXL
+    }
+
     var body: some View {
-        VStack(spacing: AppSpacing.large) { // TODO: Confirm AppSpacing.large value
+        VStack(spacing: spacingL) {
             header
-
             description
-
             statusIndicator
-
             importButtons
         }
-        .padding()
+        .padding(spacingM)
+        .background(background.ignoresSafeArea())
         .accessibilityElement(children: .contain)
     }
 
     // MARK: - Subviews
 
     private var header: some View {
-        VStack(spacing: AppSpacing.medium) { // TODO: Confirm AppSpacing.medium value
+        VStack(spacing: spacingM) {
             Image(systemName: "tray.and.arrow.down.fill")
                 .resizable()
                 .scaledToFit()
                 .frame(height: 64)
-                .foregroundColor(AppColors.accent) // TODO: Replace with AppColors.accent
+                .foregroundColor(accent)
                 .accessibilityLabel(Text(NSLocalizedString("Import Icon", comment: "Accessibility label for import icon")))
 
             Text(LocalizedStringKey("Import Sample Data"))
-                .font(AppFonts.title.bold()) // TODO: Replace with AppFonts.title
+                .font(titleFont)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
 
             Text(LocalizedStringKey("Get started faster by importing demo clients, appointments, and charge history. Or skip and add your own data later!"))
-                .font(AppFonts.body) // TODO: Replace with AppFonts.body
+                .font(bodyFont)
                 .multilineTextAlignment(.center)
-                .foregroundColor(AppColors.secondary) // TODO: Replace with AppColors.secondary
+                .foregroundColor(secondary)
         }
-        .padding(.top, AppSpacing.extraLarge) // TODO: Replace with AppSpacing.extraLarge
+        .padding(.top, spacingXL)
         .padding(.horizontal)
     }
 
     private var description: some View {
-        // Placeholder for future description or additional text if needed.
+        // Placeholder for future description/additional text.
         EmptyView()
     }
 
     private var statusIndicator: some View {
-        VStack(spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small value
+        VStack(spacing: spacingS) {
             switch importState {
             case .loading:
                 ProgressView(Text(NSLocalizedString("Importing…", comment: "Progress view label while importing")))
@@ -80,15 +129,17 @@ struct OnboardingDataImportView: View {
             case .success:
                 Label {
                     Text(LocalizedStringKey("Demo data imported!"))
-                        .font(AppFonts.headline) // TODO: Replace with AppFonts.headline
+                        .font(buttonFont)
                 } icon: {
                     Image(systemName: "checkmark.seal.fill")
                 }
-                .foregroundColor(AppColors.success) // TODO: Replace with AppColors.success
+                .foregroundColor(success)
+                .accessibilityLabel(Text(NSLocalizedString("Demo data successfully imported", comment: "Success state accessibility label")))
             case .failed(let message):
                 Text(message)
-                    .foregroundColor(AppColors.error) // TODO: Replace with AppColors.error
+                    .foregroundColor(error)
                     .multilineTextAlignment(.center)
+                    .accessibilityLabel(Text(NSLocalizedString("Import failed", comment: "Import failed accessibility label")))
             default:
                 EmptyView()
             }
@@ -97,7 +148,7 @@ struct OnboardingDataImportView: View {
     }
 
     private var importButtons: some View {
-        VStack(spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small value
+        VStack(spacing: spacingS) {
             Button {
                 importDemoData()
             } label: {
@@ -108,12 +159,15 @@ struct OnboardingDataImportView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+            .font(buttonFont)
+            .tint(accent)
             .disabled(importState == .loading || importState == .success)
             .accessibilityLabel(Text(NSLocalizedString("Import Demo Data", comment: "Button label for importing demo data")))
             .accessibilityHint(Text(NSLocalizedString("Starts importing demo data into the app", comment: "Accessibility hint for import demo data button")))
 
             Button {
                 // Future: File picker logic
+                analyticsLogger.log(event: "import_file_tap", detail: nil)
             } label: {
                 Label {
                     Text(LocalizedStringKey("Import from File (CSV, JSON)"))
@@ -122,18 +176,21 @@ struct OnboardingDataImportView: View {
                 }
             }
             .buttonStyle(.bordered)
+            .font(buttonFont)
+            .tint(secondary)
             .disabled(true) // Coming soon
             .accessibilityLabel(Text(NSLocalizedString("Import from File", comment: "Button label for importing from file")))
             .accessibilityHint(Text(NSLocalizedString("Coming soon: import data from CSV or JSON files", comment: "Accessibility hint for import from file button")))
 
             Button {
-                // TODO: Add audit logging/business analytics for skip action
+                analyticsLogger.log(event: "import_skip_tap", detail: nil)
                 dismiss()
             } label: {
                 Text(LocalizedStringKey("Skip"))
             }
-            .foregroundColor(AppColors.accent) // TODO: Replace with AppColors.accent
-            .padding(.top, AppSpacing.medium) // TODO: Replace with AppSpacing.medium
+            .font(buttonFont)
+            .foregroundColor(accent)
+            .padding(.top, spacingM)
             .accessibilityLabel(Text(NSLocalizedString("Skip", comment: "Button label to skip importing data")))
             .accessibilityHint(Text(NSLocalizedString("Skips data import and continues to the app", comment: "Accessibility hint for skip button")))
         }
@@ -143,32 +200,61 @@ struct OnboardingDataImportView: View {
 
     private func importDemoData() {
         importState = .loading
+        analyticsLogger.log(event: "import_demo_data_start", detail: nil)
         Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000) // Simulate loading
 
             do {
-                // TODO: Add audit logging/business analytics for import demo data action
-                await DemoDataManager.shared.populateDemoData(in: modelContext)
+                try await demoDataManager.populateDemoDataAsync(in: modelContext)
                 importState = .success
+                analyticsLogger.log(event: "import_demo_data_success", detail: nil)
             } catch {
                 importState = .failed(NSLocalizedString("Could not import demo data. Please try again.", comment: "Error message when demo data import fails"))
+                analyticsLogger.log(event: "import_demo_data_failed", detail: error.localizedDescription)
             }
         }
     }
 }
 
-#Preview {
-    Group {
-        OnboardingDataImportView()
-            .environment(\.modelContext, .init(DemoDataManager.shared))
-            .preferredColorScheme(.light)
-            .environment(\.sizeCategory, .large)
-            .previewDisplayName("Light Mode - Large Text")
+// MARK: - DemoDataManager Protocol for test/preview
 
-        OnboardingDataImportView()
-            .environment(\.modelContext, .init(DemoDataManager.shared))
-            .preferredColorScheme(.dark)
-            .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
-            .previewDisplayName("Dark Mode - Accessibility XXXL Text")
+public protocol DemoDataManagerProtocol {
+    func populateDemoDataAsync(in context: ModelContext) async throws
+}
+extension DemoDataManager: DemoDataManagerProtocol {
+    public func populateDemoDataAsync(in context: ModelContext) async throws {
+        await populateDemoData(in: context)
+    }
+}
+
+// MARK: - Previews
+
+#Preview {
+    struct PreviewLogger: OnboardingImportAnalyticsLogger {
+        func log(event: String, detail: String?) {
+            print("Analytics: \(event) (\(detail ?? ""))")
+        }
+    }
+    struct MockDemoDataManager: DemoDataManagerProtocol {
+        func populateDemoDataAsync(in context: ModelContext) async throws {}
+    }
+    return Group {
+        OnboardingDataImportView(
+            analyticsLogger: PreviewLogger(),
+            demoDataManager: MockDemoDataManager()
+        )
+        .environment(\.modelContext, .init(DemoDataManager.shared))
+        .preferredColorScheme(.light)
+        .environment(\.sizeCategory, .large)
+        .previewDisplayName("Light Mode - Large Text")
+
+        OnboardingDataImportView(
+            analyticsLogger: PreviewLogger(),
+            demoDataManager: MockDemoDataManager()
+        )
+        .environment(\.modelContext, .init(DemoDataManager.shared))
+        .preferredColorScheme(.dark)
+        .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+        .previewDisplayName("Dark Mode - Accessibility XXXL Text")
     }
 }

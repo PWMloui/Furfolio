@@ -104,6 +104,128 @@ public extension Badge {
         ]
     }
 }
+// ... Existing imports, enums, BadgeType and Badge structs remain ...
+// MARK: - ENHANCED: BadgeType Analytics, Criticality, Accessibility
+
+public extension BadgeType {
+    /// Tokenized tag for analytics, automation, and segmentation.
+    var badgeTag: String { rawValue }
+
+    /// Priority score for analytics/alerts (higher = more important)
+    var priorityScore: Int {
+        switch self {
+        case .retentionRisk: return 3
+        case .needsVaccine: return 2
+        case .behaviorChallenging: return 2
+        case .topSpender, .loyaltyStar: return 1
+        case .birthday, .newClient, .behaviorGood: return 0
+        case .custom: return -1
+        }
+    }
+
+    /// Whether this badge signals risk or critical attention (for Trust Center/alerts)
+    var isCritical: Bool {
+        self == .retentionRisk || self == .needsVaccine || self == .behaviorChallenging
+    }
+
+    /// Accessibility/VoiceOver summary for each badge
+    var accessibilityLabel: String {
+        switch self {
+        case .retentionRisk: return "Retention risk: client hasn't booked in a while."
+        case .needsVaccine: return "Pet needs vaccination."
+        case .behaviorChallenging: return "Challenging behavior recorded."
+        case .behaviorGood: return "Good behavior."
+        case .birthday: return "Birthday this month."
+        case .loyaltyStar: return "Loyalty star client."
+        case .topSpender: return "Top spender."
+        case .newClient: return "Recently added client."
+        case .custom: return "Custom badge."
+        }
+    }
+}
+
+public extension Badge {
+    /// All tags (BadgeType, plus user/app tokens if desired)
+    var tags: [String] { [type.badgeTag] }
+
+    /// Analytics: Is this badge "critical"?
+    var isCritical: Bool { type.isCritical }
+
+    /// Score for analytics/prioritization.
+    var priorityScore: Int { type.priorityScore }
+
+    /// Accessibility label for UI and VoiceOver.
+    var accessibilityLabel: String {
+        "\(type.label). \(type.accessibilityLabel)"
+    }
+
+    /// JSON export for audit/integration/reporting.
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID, type: String, dateAwarded: Date, notes: String?
+        }
+        let export = Export(id: id, type: type.rawValue, dateAwarded: dateAwarded, notes: notes)
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+}
+
+// MARK: - ENHANCED: BadgeEngine Analytics, Audit, Quick Filters
+
+public extension BadgeEngine {
+    /// Returns only "critical" badges (risk, needs vaccine, etc.)
+    func filterCritical(_ badges: [Badge]) -> [Badge] {
+        badges.filter { $0.isCritical }
+    }
+    /// Returns badges awarded in the last X days.
+    func filterRecent(_ badges: [Badge], withinDays days: Int = 30) -> [Badge] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date.distantPast
+        return badges.filter { $0.dateAwarded >= cutoff }
+    }
+    /// Returns badges of a specific type.
+    func filter(byType type: BadgeType, in badges: [Badge]) -> [Badge] {
+        badges.filter { $0.type == type }
+    }
+
+    /// Quick badge analytics: badge counts by type.
+    func badgeCounts(_ badges: [Badge]) -> [BadgeType: Int] {
+        Dictionary(grouping: badges, by: { $0.type }).mapValues(\.count)
+    }
+}
+
+// MARK: - ENHANCED: Auditing trail for badge awards/revocations
+
+public extension BadgeEngine {
+    private static let badgeAuditLogKey = "BadgeEngine_AuditLog"
+    /// Simple audit: record a badge event in UserDefaults (replace with database as needed)
+    func recordAuditEvent(_ action: String, badge: Badge, recipient: Any) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        let desc = "[\(stamp)] \(action): \(badge.type.label) to \(String(describing: recipient))"
+        var log = UserDefaults.standard.stringArray(forKey: Self.badgeAuditLogKey) ?? []
+        log.append(desc)
+        UserDefaults.standard.set(log, forKey: Self.badgeAuditLogKey)
+    }
+
+    /// Retrieve audit log (for reporting or trust center)
+    func getAuditLog() -> [String] {
+        UserDefaults.standard.stringArray(forKey: Self.badgeAuditLogKey) ?? []
+    }
+}
+
+// MARK: - ENHANCED: Override audit() and auditRevocation() to also record audit trail
+
+extension BadgeEngine {
+    private func audit(badge: Badge, for model: Any) {
+        badgeAwardedHandler?(badge, model)
+        NotificationCenter.default.post(name: .badgeAwarded, object: self, userInfo: ["badge": badge, "model": model])
+        recordAuditEvent("Awarded", badge: badge, recipient: model)
+    }
+    private func auditRevocation(badge: Badge, for model: Any) {
+        badgeRevokedHandler?(badge, model)
+        NotificationCenter.default.post(name: .badgeRevoked, object: self, userInfo: ["badge": badge, "model": model])
+        recordAuditEvent("Revoked", badge: badge, recipient: model)
+    }
+}
 
 // MARK: - BadgeEngine
 

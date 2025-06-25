@@ -2,7 +2,7 @@
 //  SpotlightIndexManager.swift
 //  Furfolio
 //
-//  Enhanced & Unified for Grooming Business Management
+//  Enhanced & Unified for Grooming Business Management (Auditable, Tagged, Accessible)
 //
 
 import Foundation
@@ -11,18 +11,69 @@ import MobileCoreServices
 
 // MARK: - SpotlightIndexManager (Unified, Modular, Tokenized, Auditable Spotlight Search Integration)
 
-/// Handles robust, async Spotlight indexing for all Furfolio entities.
-/// This manager is modular, tokenized, auditable, and extensible.
-/// All Spotlight indexing and removal operations are logged and support audit/event logging.
-/// Future enhancements include localized search fields and integration with the Trust Center for permissions and compliance.
 @MainActor
 enum SpotlightIndexManager {
+    // MARK: - Audit/Event Log
+
+    struct SpotlightAuditEvent: Codable {
+        let timestamp: Date
+        let operation: String          // "index" | "remove" | "bulkIndex" | "bulkRemove" | "error"
+        let entityType: String
+        let entityId: String?
+        let count: Int
+        let tags: [String]
+        let actor: String?
+        let context: String?
+        let status: String             // "success" | "error"
+        let errorDescription: String?
+        var accessibilityLabel: String {
+            let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+            let idStr = entityId != nil ? " (\(entityId!))" : ""
+            return "\(operation.capitalized) \(entityType)\(idStr) (\(status)) at \(dateStr)\(errorDescription == nil ? "" : ": \(errorDescription!)")"
+        }
+    }
+    private(set) static var auditLog: [SpotlightAuditEvent] = []
+
+    private static func logEvent(
+        operation: String,
+        entityType: String,
+        entityId: String? = nil,
+        count: Int = 1,
+        tags: [String] = [],
+        actor: String? = nil,
+        context: String? = nil,
+        status: String = "success",
+        error: Error? = nil
+    ) {
+        let event = SpotlightAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            entityType: entityType,
+            entityId: entityId,
+            count: count,
+            tags: tags,
+            actor: actor,
+            context: context,
+            status: status,
+            errorDescription: error?.localizedDescription
+        )
+        auditLog.append(event)
+        if auditLog.count > 1000 { auditLog.removeFirst() }
+    }
+
+    static func exportLastAuditEventJSON() -> String? {
+        guard let last = auditLog.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        auditLog.last?.accessibilityLabel ?? "No Spotlight events recorded."
+    }
+
     // MARK: - Indexing (Async-Ready)
 
-    /// Indexes a DogOwner for Spotlight search.
-    /// All Spotlight search changes should be logged for audit/compliance.
-    /// TODO: Integrate audit/event logging before indexing/removal for compliance.
-    static func indexOwner(_ owner: DogOwner) {
+    static func indexOwner(_ owner: DogOwner, actor: String? = nil, context: String? = nil) {
         guard FeatureFlags.spotlightIndexing else { return }
         let attr = CSSearchableItemAttributeSet(itemContentType: kUTTypeContact as String)
         attr.title = owner.ownerName
@@ -37,13 +88,10 @@ enum SpotlightIndexManager {
             attributeSet: attr
         )
 
-        indexItems([item], logContext: "owner: \(owner.ownerName)")
+        indexItems([item], logContext: "owner: \(owner.ownerName)", entityType: "DogOwner", ids: [owner.id.uuidString], actor: actor, context: context)
     }
 
-    /// Indexes a Dog for Spotlight search.
-    /// All Spotlight search changes should be logged for audit/compliance.
-    /// TODO: Integrate audit/event logging before indexing/removal for compliance.
-    static func indexDog(_ dog: Dog) {
+    static func indexDog(_ dog: Dog, actor: String? = nil, context: String? = nil) {
         guard FeatureFlags.spotlightIndexing else { return }
         let attr = CSSearchableItemAttributeSet(itemContentType: kUTTypeText as String)
         attr.title = dog.name
@@ -57,13 +105,10 @@ enum SpotlightIndexManager {
             attributeSet: attr
         )
 
-        indexItems([item], logContext: "dog: \(dog.name)")
+        indexItems([item], logContext: "dog: \(dog.name)", entityType: "Dog", ids: [dog.id.uuidString], actor: actor, context: context)
     }
 
-    /// Indexes an Appointment for Spotlight search.
-    /// All Spotlight search changes should be logged for audit/compliance.
-    /// TODO: Integrate audit/event logging before indexing/removal for compliance.
-    static func indexAppointment(_ appt: Appointment) {
+    static func indexAppointment(_ appt: Appointment, actor: String? = nil, context: String? = nil) {
         guard FeatureFlags.spotlightIndexing else { return }
         let attr = CSSearchableItemAttributeSet(itemContentType: kUTTypeCalendarEvent as String)
         attr.title = "\(appt.dog?.name ?? "Dog") Appointment"
@@ -86,17 +131,15 @@ enum SpotlightIndexManager {
             attributeSet: attr
         )
 
-        indexItems([item], logContext: "appointment: \(appt.dog?.name ?? "Dog")")
+        indexItems([item], logContext: "appointment: \(appt.dog?.name ?? "Dog")", entityType: "Appointment", ids: [appt.id.uuidString], actor: actor, context: context)
     }
 
-    // MARK: - Async Batch Indexing (New)
-    /// Bulk indexes owners, dogs, and appointments for Spotlight search.
-    /// All Spotlight search changes should be logged for audit/compliance.
-    /// This method should support batch event logging and Trust Center controls in the future.
-    /// TODO: Integrate audit/event logging before indexing/removal for compliance.
-    static func bulkIndex(owners: [DogOwner], dogs: [Dog], appointments: [Appointment]) {
+    // MARK: - Async Batch Indexing
+
+    static func bulkIndex(owners: [DogOwner], dogs: [Dog], appointments: [Appointment], actor: String? = nil, context: String? = nil) {
         guard FeatureFlags.spotlightIndexing else { return }
         var items: [CSSearchableItem] = []
+        var ids: [String] = []
         for owner in owners {
             let attr = CSSearchableItemAttributeSet(itemContentType: kUTTypeContact as String)
             attr.title = owner.ownerName
@@ -111,6 +154,7 @@ enum SpotlightIndexManager {
                 attributeSet: attr
             )
             items.append(item)
+            ids.append(owner.id.uuidString)
         }
         for dog in dogs {
             let attr = CSSearchableItemAttributeSet(itemContentType: kUTTypeText as String)
@@ -125,6 +169,7 @@ enum SpotlightIndexManager {
                 attributeSet: attr
             )
             items.append(item)
+            ids.append(dog.id.uuidString)
         }
         for appt in appointments {
             let attr = CSSearchableItemAttributeSet(itemContentType: kUTTypeCalendarEvent as String)
@@ -145,17 +190,46 @@ enum SpotlightIndexManager {
                 attributeSet: attr
             )
             items.append(item)
+            ids.append(appt.id.uuidString)
         }
 
-        indexItems(items, logContext: "bulkIndex: \(items.count) items")
+        indexItems(items, logContext: "bulkIndex: \(items.count) items", entityType: "Bulk", ids: ids, actor: actor, context: context)
     }
 
     // MARK: - Core Indexing Helper
-    private static func indexItems(_ items: [CSSearchableItem], logContext: String) {
+    private static func indexItems(
+        _ items: [CSSearchableItem],
+        logContext: String,
+        entityType: String,
+        ids: [String],
+        actor: String?,
+        context: String?
+    ) {
         CSSearchableIndex.default().indexSearchableItems(items) { error in
             if let error = error {
+                logEvent(
+                    operation: "index",
+                    entityType: entityType,
+                    entityId: ids.count == 1 ? ids.first : nil,
+                    count: items.count,
+                    tags: [entityType.lowercased(), "spotlight"],
+                    actor: actor,
+                    context: context,
+                    status: "error",
+                    error: error
+                )
                 print("Spotlight index error (\(logContext)): \(error.localizedDescription)")
             } else {
+                logEvent(
+                    operation: "index",
+                    entityType: entityType,
+                    entityId: ids.count == 1 ? ids.first : nil,
+                    count: items.count,
+                    tags: [entityType.lowercased(), "spotlight"],
+                    actor: actor,
+                    context: context,
+                    status: "success"
+                )
                 #if DEBUG
                 print("Spotlight index success (\(logContext)): \(items.count) items.")
                 #endif
@@ -165,40 +239,74 @@ enum SpotlightIndexManager {
 
     // MARK: - Removal
 
-    /// Removes an indexed item from Spotlight by unique ID.
-    /// All Spotlight search changes should be logged for audit/compliance.
-    /// TODO: Integrate audit/event logging before indexing/removal for compliance.
-    static func removeFromIndex(_ id: UUID) {
+    static func removeFromIndex(_ id: UUID, actor: String? = nil, context: String? = nil) {
         CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: [id.uuidString]) { error in
             if let error = error {
+                logEvent(
+                    operation: "remove",
+                    entityType: "Unknown",
+                    entityId: id.uuidString,
+                    count: 1,
+                    tags: ["remove", "spotlight"],
+                    actor: actor,
+                    context: context,
+                    status: "error",
+                    error: error
+                )
                 print("Spotlight removal error: \(error.localizedDescription)")
+            } else {
+                logEvent(
+                    operation: "remove",
+                    entityType: "Unknown",
+                    entityId: id.uuidString,
+                    count: 1,
+                    tags: ["remove", "spotlight"],
+                    actor: actor,
+                    context: context,
+                    status: "success"
+                )
             }
         }
     }
 
-    /// Removes all indexed Furfolio items (useful for app reset or business ownership transfer).
-    /// All Spotlight search changes should be logged for audit/compliance.
-    /// TODO: Integrate audit/event logging before indexing/removal for compliance.
-    static func removeAllFromIndex() {
+    static func removeAllFromIndex(actor: String? = nil, context: String? = nil) {
         CSSearchableIndex.default().deleteAllSearchableItems { error in
             if let error = error {
+                logEvent(
+                    operation: "bulkRemove",
+                    entityType: "All",
+                    entityId: nil,
+                    count: 0,
+                    tags: ["remove", "bulk", "spotlight"],
+                    actor: actor,
+                    context: context,
+                    status: "error",
+                    error: error
+                )
                 print("Spotlight bulk removal error: \(error.localizedDescription)")
+            } else {
+                logEvent(
+                    operation: "bulkRemove",
+                    entityType: "All",
+                    entityId: nil,
+                    count: 0,
+                    tags: ["remove", "bulk", "spotlight"],
+                    actor: actor,
+                    context: context,
+                    status: "success"
+                )
             }
         }
     }
 
     // MARK: - TSP Route Index (Stub for Expansion)
-    /// Indexes route points or stops for mobile grooming optimization.
-    /// This is a stub for future mobile route optimization.
-    /// All indexing must be auditable.
-    static func indexTSPRouteStops(_ stops: [GroomingStop]) {
-        // For future: Integrate with routing/optimization, index each stop for quick search.
+    static func indexTSPRouteStops(_ stops: [GroomingStop], actor: String? = nil, context: String? = nil) {
         // Not yet implemented.
+        // When implemented: logEvent for every stop, with "tspRoute" tag.
     }
 }
 
 // MARK: - Developer Feature Flags (Ready for expansion)
-/// All developer feature flags must be documented and changes audited for compliance and diagnostics.
 enum FeatureFlags {
     static let spotlightIndexing: Bool = true
 }

@@ -2,18 +2,71 @@
 //  AppointmentLiveActivity.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular Live Activity with Compliance Logging
 //
 
 import Foundation
 import ActivityKit
 import SwiftUI
 
-// MARK: - AppointmentLiveActivityAttributes (Tokenized, Modular, Auditable Live Activity Attributes)
+// MARK: - Audit/Event Logging
 
-/// Defines the appointment live activity for lock screen and Dynamic Island.
-/// This struct represents tokenized, modular, and auditable live activity attributes for appointment tracking.
-/// Supports audit trails, business analytics, localization, accessibility, and UI token integration.
+fileprivate struct AppointmentLiveActivityAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String         // "start", "update", "end", "fail"
+    let appointmentID: UUID
+    let status: String?
+    let minutesRemaining: Int?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[\(operation.capitalized)] \(appointmentID) \(status ?? "") \(minutesRemaining ?? -1)min [\(tags.joined(separator: ","))] at \(dateStr)\(detail != nil ? ": \(detail!)" : "")"
+    }
+}
+
+fileprivate final class AppointmentLiveActivityAudit {
+    static private(set) var log: [AppointmentLiveActivityAuditEvent] = []
+
+    static func record(
+        operation: String,
+        appointmentID: UUID,
+        status: String? = nil,
+        minutesRemaining: Int? = nil,
+        tags: [String] = [],
+        actor: String? = "system",
+        context: String? = "AppointmentLiveActivity",
+        detail: String? = nil
+    ) {
+        let event = AppointmentLiveActivityAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            appointmentID: appointmentID,
+            status: status,
+            minutesRemaining: minutesRemaining,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 300 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No live activity events recorded."
+    }
+}
+
+// MARK: - AppointmentLiveActivityAttributes
+
 struct AppointmentLiveActivityAttributes: ActivityAttributes {
     // Dynamic state of the live activity.
     public struct ContentState: Codable, Hashable {
@@ -28,24 +81,8 @@ struct AppointmentLiveActivityAttributes: ActivityAttributes {
         }
     }
 
-    /// Appointment status enumeration with UI properties.
     enum Status: String, Codable, CaseIterable {
-        /// The appointment is scheduled and upcoming.
-        /// Used in business logic to trigger reminders and audit logs for upcoming events.
-        /// UI displays a clock icon and info color to indicate pending status.
-        case upcoming
-        /// The appointment is currently in progress.
-        /// Important for audit trails to track active sessions and business analytics on service duration.
-        /// UI shows a scissors icon and success color to indicate active service.
-        case inProgress
-        /// The appointment has been completed successfully.
-        /// Critical for business reporting and audit confirmation of service fulfillment.
-        /// UI uses a checkmark icon and secondaryText color for completed state.
-        case completed
-        /// The appointment has been cancelled.
-        /// Essential for audit logs and business analytics on cancellations.
-        /// UI displays an xmark icon and critical color to highlight cancellation.
-        case cancelled
+        case upcoming, inProgress, completed, cancelled
 
         var label: String {
             switch self {
@@ -57,7 +94,6 @@ struct AppointmentLiveActivityAttributes: ActivityAttributes {
         }
 
         var color: Color {
-            // Replaced hardcoded colors with AppColors tokens for consistency, theming, and accessibility.
             switch self {
             case .upcoming: return AppColors.info
             case .inProgress: return AppColors.success
@@ -67,12 +103,11 @@ struct AppointmentLiveActivityAttributes: ActivityAttributes {
         }
 
         var iconName: String {
-            // TODO: Replace with tokenized icon names when available.
             switch self {
-            case .upcoming: return "clock"          // Tokenize icon name for audit/UI consistency
-            case .inProgress: return "scissors"     // Tokenize icon name for audit/UI consistency
-            case .completed: return "checkmark.circle" // Tokenize icon name for audit/UI consistency
-            case .cancelled: return "xmark.circle"  // Tokenize icon name for audit/UI consistency
+            case .upcoming: return "clock"
+            case .inProgress: return "scissors"
+            case .completed: return "checkmark.circle"
+            case .cancelled: return "xmark.circle"
             }
         }
     }
@@ -88,13 +123,6 @@ struct AppointmentLiveActivityAttributes: ActivityAttributes {
 // MARK: - AppointmentLiveActivityManager (Auditable Live Activity Management)
 
 enum AppointmentLiveActivityManager {
-    /// Start or update the live activity for an appointment.
-    /// - Parameters:
-    ///   - appointment: The static attributes representing the appointment.
-    ///   - status: The current status of the appointment for dynamic updates.
-    ///   - minutesRemaining: Optional minutes remaining until appointment start.
-    /// This method supports audit by ensuring consistent state updates and business logic triggers.
-    /// Errors during activity start are logged for debugging and operational monitoring.
     static func startOrUpdateActivity(
         for appointment: AppointmentLiveActivityAttributes,
         status: AppointmentLiveActivityAttributes.Status,
@@ -109,27 +137,51 @@ enum AppointmentLiveActivityManager {
         Task {
             if let existingActivity = Activity<AppointmentLiveActivityAttributes>.activities.first(where: { $0.attributes.appointmentID == appointment.appointmentID }) {
                 await existingActivity.update(content)
+                AppointmentLiveActivityAudit.record(
+                    operation: "update",
+                    appointmentID: appointment.appointmentID,
+                    status: status.rawValue,
+                    minutesRemaining: minutesRemaining,
+                    tags: ["update", status.rawValue]
+                )
             } else {
                 do {
                     try await Activity<AppointmentLiveActivityAttributes>.request(
                         attributes: appointment,
                         content: content
                     )
+                    AppointmentLiveActivityAudit.record(
+                        operation: "start",
+                        appointmentID: appointment.appointmentID,
+                        status: status.rawValue,
+                        minutesRemaining: minutesRemaining,
+                        tags: ["start", status.rawValue]
+                    )
                 } catch {
-                    // Log error for audit and operational awareness.
+                    // Log error for audit/compliance
+                    AppointmentLiveActivityAudit.record(
+                        operation: "fail",
+                        appointmentID: appointment.appointmentID,
+                        status: status.rawValue,
+                        minutesRemaining: minutesRemaining,
+                        tags: ["fail", status.rawValue],
+                        detail: error.localizedDescription
+                    )
                     print("Failed to start live activity: \(error.localizedDescription)")
                 }
             }
         }
     }
 
-    /// Ends the live activity for a specific appointment.
-    /// - Parameter appointmentID: The unique identifier of the appointment to end.
-    /// Ensures proper audit trail by explicitly ending live activities, supporting business logic cleanup.
     static func endActivity(for appointmentID: UUID) {
         Task {
             if let activity = Activity<AppointmentLiveActivityAttributes>.activities.first(where: { $0.attributes.appointmentID == appointmentID }) {
                 await activity.end(dismissalPolicy: .immediate)
+                AppointmentLiveActivityAudit.record(
+                    operation: "end",
+                    appointmentID: appointmentID,
+                    tags: ["end"]
+                )
             }
         }
     }
@@ -145,46 +197,55 @@ struct AppointmentLiveActivityView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: context.state.status.iconName)
-                    .font(AppFonts.title2) // Tokenized font for consistency and accessibility
-                    .foregroundColor(context.state.status.color) // Tokenized color for theming and audit
+                    .font(AppFonts.title2)
+                    .foregroundColor(context.state.status.color)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.attributes.dogName)
-                        .font(AppFonts.headline) // Tokenized font for UI consistency
+                        .font(AppFonts.headline)
                         .lineLimit(1)
-
                     Text(context.attributes.serviceType)
-                        .font(AppFonts.caption) // Tokenized font for UI consistency
-                        .foregroundColor(AppColors.secondaryText) // Tokenized secondary text color for accessibility
+                        .font(AppFonts.caption)
+                        .foregroundColor(AppColors.secondaryText)
                         .lineLimit(1)
                 }
 
                 Spacer()
 
                 Text(context.state.status.label)
-                    .font(AppFonts.subheadline) // Tokenized font for UI consistency
-                    .foregroundColor(context.state.status.color) // Tokenized color for theming
+                    .font(AppFonts.subheadline)
+                    .foregroundColor(context.state.status.color)
             }
 
             if let minutes = context.state.minutesRemaining, context.state.status == .upcoming {
                 HStack(spacing: 5) {
                     Image(systemName: "timer")
-                        .foregroundColor(AppColors.info) // Tokenized info color replacing .blue for consistency
+                        .foregroundColor(AppColors.info)
                     Text("Starts in \(minutes) min")
                         .fontWeight(minutes <= 10 ? .bold : .regular)
-                        .foregroundColor(minutes <= 10 ? AppColors.warning : AppColors.textPrimary) // Tokenized warning and primary text colors
+                        .foregroundColor(minutes <= 10 ? AppColors.warning : AppColors.textPrimary)
                 }
                 .padding(.vertical, 2)
             }
 
             if context.state.status == .inProgress {
                 Text("Appointment in progress...")
-                    .font(AppFonts.callout) // Tokenized font for UI consistency
-                    .foregroundColor(AppColors.success) // Tokenized success color replacing .green
+                    .font(AppFonts.callout)
+                    .foregroundColor(AppColors.success)
             }
         }
-        .padding(AppSpacing.medium) // Tokenized spacing for layout consistency
-        .activityBackgroundTint(AppColors.background) // Tokenized background color for theming
-        .activitySystemActionForegroundColor(context.state.status.color) // Tokenized color for system action foreground
+        .padding(AppSpacing.medium)
+        .activityBackgroundTint(AppColors.background)
+        .activitySystemActionForegroundColor(context.state.status.color)
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum AppointmentLiveActivityAuditAdmin {
+    public static var lastSummary: String { AppointmentLiveActivityAudit.accessibilitySummary }
+    public static var lastJSON: String? { AppointmentLiveActivityAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        AppointmentLiveActivityAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }

@@ -2,140 +2,57 @@
 //  Task.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: Audit, BI, tokenization, accessibility, analytics, export, escalation, and compliance.
 //
-
 import Foundation
 import SwiftData
+import SwiftUI
 
-// MARK: - Task (Modular, Tokenized, Auditable Task/To-Do Model)
-
-/// Defines the Task model used in the new architecture for managing business operations, reminders, and to-do items.
-/// This class supports relationships with owners, dogs, appointments, businesses, and staff members,
-/// and includes properties for recurrence, priority, tagging, reminders, and archival status.
-/// 
-/// This model represents a modular, tokenized, and auditable business task entity designed for owner, staff, and automation scenarios.
-/// It supports detailed audit trails for compliance and event logging, integrates with analytics for reporting and insights,
-/// and is built to work seamlessly with UI design systems through badges, colors, and priority/status logic.
-/// The Task entity is designed for scalable, owner-focused dashboards, comprehensive business reporting,
-/// and full workflow coverage ensuring operational efficiency and compliance.
 @available(iOS 18.0, *)
 @Model
 final class Task: Identifiable, ObservableObject {
     // MARK: - Properties
 
-    /// Unique identifier for the task.
-    /// Used for audit tracking, event correlation, and unique tokenization across systems.
-    @Attribute(.unique)
-    var id: UUID
-
-    /// Title or name of the task.
-    /// Serves as the primary descriptor for UI display, reporting, and workflow identification.
+    @Attribute(.unique) var id: UUID
     var title: String
-
-    /// Optional detailed description of the task.
-    /// Provides context for compliance, audit clarity, and detailed business notes.
     var details: String?
-
-    /// Optional due date for the task.
-    /// Critical for business scheduling, workflow deadlines, analytics on task timeliness, and UI calendar integration.
     var dueDate: Date?
-
-    /// Optional specific reminder time for alerts and notifications.
-    /// Supports compliance with reminder policies, user notifications, and event-driven analytics.
     var reminderTime: Date?
-
-    /// Indicates whether the task has been completed.
-    /// Used for audit trail status, workflow progression, and business reporting on task closure.
     var completed: Bool
-
-    /// Timestamp when the task was marked completed.
-    /// Essential for audit logging, compliance verification, and performance analytics.
     var completedAt: Date?
-
-    /// Timestamp when the task was created.
-    /// Used for audit history, lifecycle tracking, and business analytics on task creation trends.
     var createdAt: Date
-
-    /// Timestamp for the last modification of the task.
-    /// Supports audit trails, versioning, and UI indicators for recent activity.
     var lastModified: Date
-
-    /// Indicates if the task is recurring.
-    /// Supports business logic for automation, scheduling, and compliance with repeatable task policies.
     var isRecurring: Bool
-
-    /// Recurrence rule defining the pattern of recurrence.
-    /// Used in analytics for recurring task trends, business scheduling logic, and UI recurrence labeling.
     var recurrenceRule: RecurrenceRule?
-
-    /// Priority level of the task.
-    /// Drives audit importance, analytics on task criticality, business urgency workflows,
-    /// compliance prioritization, and UI badge/token display.
     var priority: Priority
-
-    /// Tags assigned to the task for categorization and filtering.
-    /// Enables business segmentation, analytics filtering, audit categorization, and UI workflow grouping.
     var tags: [String]
-
-    /// Flag indicating if the task is archived (soft deleted).
-    /// Supports compliance with data retention policies, audit archiving, and UI visibility toggling.
     var isArchived: Bool
+
+    // MARK: - Audit
+    var createdBy: String?
+    var lastModifiedBy: String?
+    var auditLog: [String] = []
+
+    // MARK: - Tokenized Badges (Business Segmentation/Analytics)
+    enum TaskBadge: String, CaseIterable, Codable {
+        case urgent, overdue, recurring, compliance, automation, client, escalation
+    }
+    var badgeTokens: [String] = []
+    var badges: [TaskBadge] { badgeTokens.compactMap { TaskBadge(rawValue: $0) } }
+    func addBadge(_ badge: TaskBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
+    func removeBadge(_ badge: TaskBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func hasBadge(_ badge: TaskBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
 
     // MARK: - Relationships
 
-    /// Owner associated with the task (e.g., dog owner).
-    /// Links business client context for analytics, audit ownership, and UI workflow personalization.
-    @Relationship(deleteRule: .nullify)
-    var owner: DogOwner?
-
-    /// Dog associated with the task.
-    /// Provides business context for pet-related workflows, analytics on pet-specific tasks,
-    /// audit traceability, and UI detail views.
-    @Relationship(deleteRule: .nullify)
-    var dog: Dog?
-
-    /// Appointment associated with the task.
-    /// Connects scheduling workflows, audit event correlation, business appointment analytics,
-    /// and UI calendar/task integration.
-    @Relationship(deleteRule: .nullify)
-    var appointment: Appointment?
-
-    /// Business entity associated with the task.
-    /// Essential for multi-business analytics, audit segregation, compliance boundaries,
-    /// and UI dashboard filtering.
-    @Relationship(deleteRule: .nullify)
-    var business: Business?
-
-    /// Staff member assigned to the task.
-    /// Supports workflow assignment tracking, audit accountability, business resource analytics,
-    /// and UI task delegation displays.
-    @Relationship(deleteRule: .nullify)
-    var assignedTo: Staff?
+    @Relationship(deleteRule: .nullify) var owner: DogOwner?
+    @Relationship(deleteRule: .nullify) var dog: Dog?
+    @Relationship(deleteRule: .nullify) var appointment: Appointment?
+    @Relationship(deleteRule: .nullify) var business: Business?
+    @Relationship(deleteRule: .nullify) var assignedTo: Staff?
 
     // MARK: - Initializer
 
-    /// Creates a new Task instance.
-    /// - Parameters:
-    ///   - id: Unique identifier, defaults to a new UUID.
-    ///   - title: Title of the task.
-    ///   - details: Optional detailed description.
-    ///   - dueDate: Optional due date.
-    ///   - reminderTime: Optional reminder time.
-    ///   - completed: Completion status, defaults to false.
-    ///   - completedAt: Completion timestamp.
-    ///   - createdAt: Creation timestamp, defaults to current date.
-    ///   - lastModified: Last modification timestamp, defaults to current date.
-    ///   - isRecurring: Flag for recurrence, defaults to false.
-    ///   - recurrenceRule: Recurrence pattern.
-    ///   - priority: Priority level, defaults to .none.
-    ///   - tags: Tags for categorization, defaults to empty array.
-    ///   - isArchived: Archival status, defaults to false.
-    ///   - owner: Associated dog owner.
-    ///   - dog: Associated dog.
-    ///   - appointment: Associated appointment.
-    ///   - business: Associated business.
-    ///   - assignedTo: Assigned staff member.
     init(
         id: UUID = UUID(),
         title: String,
@@ -151,6 +68,10 @@ final class Task: Identifiable, ObservableObject {
         priority: Priority = .none,
         tags: [String] = [],
         isArchived: Bool = false,
+        createdBy: String? = nil,
+        lastModifiedBy: String? = nil,
+        auditLog: [String] = [],
+        badgeTokens: [String] = [],
         owner: DogOwner? = nil,
         dog: Dog? = nil,
         appointment: Appointment? = nil,
@@ -171,6 +92,10 @@ final class Task: Identifiable, ObservableObject {
         self.priority = priority
         self.tags = tags
         self.isArchived = isArchived
+        self.createdBy = createdBy
+        self.lastModifiedBy = lastModifiedBy
+        self.auditLog = auditLog
+        self.badgeTokens = badgeTokens
         self.owner = owner
         self.dog = dog
         self.appointment = appointment
@@ -178,80 +103,178 @@ final class Task: Identifiable, ObservableObject {
         self.assignedTo = assignedTo
     }
 
-    // MARK: - Helpers
+    // MARK: - Audit Helpers
 
-    /// Marks the task as completed, updates completion timestamp and last modified date.
-    /// This method supports audit/event logging for compliance, triggers analytics event for task completion,
-    /// and updates workflow status to reflect current state in UI and business logic.
-    func markCompleted() {
+    func addAudit(_ entry: String, by user: String? = nil) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(stamp)] \(entry)\(user != nil ? " (\(user!))" : "")")
+        lastModified = Date()
+        if let user { lastModifiedBy = user }
+    }
+    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+
+    // MARK: - Business Intelligence / Analytics
+
+    var isOverdue: Bool {
+        guard let dueDate else { return false }
+        return !completed && dueDate < Date()
+    }
+    var daysOpen: Int? {
+        Calendar.current.dateComponents([.day], from: createdAt, to: completedAt ?? Date()).day
+    }
+    var daysUntilDue: Int? {
+        guard let dueDate else { return nil }
+        return Calendar.current.dateComponents([.day], from: Date(), to: dueDate).day
+    }
+    var isDueSoon: Bool {
+        guard let days = daysUntilDue else { return false }
+        return !completed && days >= 0 && days <= 2
+    }
+    var escalationScore: Int {
+        var score = priority.criticalityScore
+        if isOverdue { score += 2 }
+        if hasBadge(.escalation) { score += 1 }
+        if isDueSoon { score += 1 }
+        return score
+    }
+    /// Returns the next recurrence date for recurring tasks.
+    var nextRecurrence: Date? {
+        guard isRecurring, let rule = recurrenceRule, let last = completedAt ?? createdAt else { return nil }
+        switch rule {
+        case .daily: return Calendar.current.date(byAdding: .day, value: 1, to: last)
+        case .weekly: return Calendar.current.date(byAdding: .weekOfYear, value: 1, to: last)
+        case .monthly: return Calendar.current.date(byAdding: .month, value: 1, to: last)
+        case .yearly: return Calendar.current.date(byAdding: .year, value: 1, to: last)
+        case .custom: return nil
+        }
+    }
+
+    // MARK: - Core Task Actions
+
+    func markCompleted(by user: String? = nil) {
         completed = true
         completedAt = Date()
         lastModified = Date()
+        addAudit("Task completed", by: user)
+        removeBadge(.overdue)
     }
-
-    /// Marks the task as incomplete, clears completion timestamp and updates last modified date.
-    /// Supports audit reversal events, analytics tracking for task reactivation,
-    /// and workflow state updates for UI and compliance monitoring.
-    func markIncomplete() {
+    func markIncomplete(by user: String? = nil) {
         completed = false
         completedAt = nil
         lastModified = Date()
+        addAudit("Task re-opened", by: user)
+    }
+    func archive(by user: String? = nil) {
+        isArchived = true
+        lastModified = Date()
+        addAudit("Task archived", by: user)
+    }
+    func unarchive(by user: String? = nil) {
+        isArchived = false
+        lastModified = Date()
+        addAudit("Task unarchived", by: user)
+    }
+    func escalate(by user: String? = nil) {
+        addBadge(.escalation)
+        lastModified = Date()
+        addAudit("Task escalated", by: user)
+    }
+
+    // MARK: - Accessibility
+
+    var accessibilityLabel: String {
+        "\(title). \(priority.displayName) priority. \(completed ? "Completed." : (isOverdue ? "Overdue." : ""))"
+    }
+
+    // MARK: - Export
+
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID
+            let title: String
+            let details: String?
+            let dueDate: Date?
+            let reminderTime: Date?
+            let completed: Bool
+            let completedAt: Date?
+            let createdAt: Date
+            let lastModified: Date
+            let isRecurring: Bool
+            let recurrenceRule: String?
+            let priority: String
+            let tags: [String]
+            let isArchived: Bool
+            let createdBy: String?
+            let lastModifiedBy: String?
+            let badgeTokens: [String]
+        }
+        let export = Export(
+            id: id, title: title, details: details, dueDate: dueDate, reminderTime: reminderTime,
+            completed: completed, completedAt: completedAt, createdAt: createdAt, lastModified: lastModified,
+            isRecurring: isRecurring, recurrenceRule: recurrenceRule?.rawValue, priority: priority.displayName,
+            tags: tags, isArchived: isArchived, createdBy: createdBy, lastModifiedBy: lastModifiedBy, badgeTokens: badgeTokens
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
     }
 }
 
-// MARK: - RecurrenceRule Enum
+// MARK: - RecurrenceRule
 
-/// Enum representing recurrence patterns for tasks.
-/// Used in analytics to track recurrence trends and frequency,
-/// drives business logic for scheduling and automation,
-/// supports compliance with recurring task policies,
-/// and integrates with UI components for scheduling displays and recurrence labeling.
 enum RecurrenceRule: String, Codable, CaseIterable, Identifiable {
-    case daily
-    case weekly
-    case monthly
-    case yearly
-    case custom
-
+    case daily, weekly, monthly, yearly, custom
     var id: String { rawValue }
-
-    /// User-friendly display name for the recurrence rule.
     var displayName: String {
         switch self {
-        case .daily: return "Daily"
-        case .weekly: return "Weekly"
-        case .monthly: return "Monthly"
-        case .yearly: return "Yearly"
-        case .custom: return "Custom"
+        case .daily: "Daily"
+        case .weekly: "Weekly"
+        case .monthly: "Monthly"
+        case .yearly: "Yearly"
+        case .custom: "Custom"
         }
     }
 }
 
-// MARK: - Priority Enum
+// MARK: - Priority (Enhanced)
 
-/// Enum representing priority levels for tasks.
-/// Used for audit importance tagging, analytics on task criticality distribution,
-/// business urgency workflows and escalation policies,
-/// compliance prioritization for sensitive tasks,
-/// UI badge and token integration to visually communicate urgency,
-/// and dashboard filtering and reporting.
 enum Priority: Int, Codable, CaseIterable, Identifiable {
-    case none = 0
-    case low
-    case medium
-    case high
-    case critical
+    case none = 0, low, medium, high, critical
 
     var id: Int { rawValue }
-
-    /// User-friendly display name for the priority.
     var displayName: String {
         switch self {
-        case .none: return "None"
-        case .low: return "Low"
-        case .medium: return "Medium"
-        case .high: return "High"
-        case .critical: return "Critical"
+        case .none: "None"
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        case .critical: "Critical"
+        }
+    }
+    var criticalityScore: Int {
+        switch self {
+        case .critical: 4
+        case .high: 3
+        case .medium: 2
+        case .low: 1
+        case .none: 0
+        }
+    }
+    var color: Color {
+        switch self {
+        case .critical: .red
+        case .high: .orange
+        case .medium: .yellow
+        case .low: .blue
+        case .none: .gray
+        }
+    }
+    var icon: String {
+        switch self {
+        case .critical: "exclamationmark.triangle.fill"
+        case .high: "exclamationmark.circle.fill"
+        case .medium: "arrowtriangle.up.circle.fill"
+        case .low: "arrowtriangle.down.circle.fill"
+        case .none: "circle"
         }
     }
 }
@@ -260,22 +283,37 @@ enum Priority: Int, Codable, CaseIterable, Identifiable {
 
 @available(iOS 18.0, *)
 extension Task {
-    /// Provides sample Task data for previews and testing.
-    /// This sample is designed with demo, business, and preview logic in mind,
-    /// illustrating tokenized design intent for priority, recurrence, tagging, and workflow status.
-    /// Useful for UI development, business scenario demonstration, and analytics validation.
     static var sample: Task {
         Task(
-            title: "Sample Task",
-            details: "This is a sample task for testing and preview purposes.",
-            dueDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()),
-            reminderTime: Calendar.current.date(byAdding: .hour, value: 1, to: Date()),
+            title: "Order Grooming Supplies",
+            details: "Ensure all low-stock items are ordered for next week.",
+            dueDate: Calendar.current.date(byAdding: .day, value: 2, to: Date()),
+            reminderTime: Calendar.current.date(byAdding: .hour, value: 5, to: Date()),
             completed: false,
             isRecurring: true,
             recurrenceRule: .weekly,
+            priority: .high,
+            tags: ["inventory", "urgent"],
+            badgeTokens: [TaskBadge.urgent.rawValue, TaskBadge.recurring.rawValue]
+        )
+    }
+    static var overdue: Task {
+        Task(
+            title: "Follow up with client",
+            dueDate: Calendar.current.date(byAdding: .day, value: -3, to: Date()),
             priority: .medium,
-            tags: ["urgent", "client"],
-            isArchived: false
+            tags: ["client", "followup"],
+            badgeTokens: [TaskBadge.client.rawValue, TaskBadge.overdue.rawValue]
+        )
+    }
+    static var compliance: Task {
+        Task(
+            title: "Upload safety certificates",
+            details: "All groomers must have current safety certs on file.",
+            dueDate: Calendar.current.date(byAdding: .day, value: 7, to: Date()),
+            priority: .critical,
+            tags: ["compliance", "staff"],
+            badgeTokens: [TaskBadge.compliance.rawValue]
         )
     }
 }

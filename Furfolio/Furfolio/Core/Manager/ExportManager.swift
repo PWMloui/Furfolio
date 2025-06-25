@@ -11,22 +11,72 @@ import SwiftUI
 
 // MARK: - ExportManager (Modular, Tokenized, Auditable Business Data Export)
 
-/// Centralized export manager for all Furfolio business data.
-/// Designed to be modular, tokenized, auditable, and extensible.
-/// All export/import actions support privacy, audit/event logging, and future localization.
-/// This ensures compliance with business standards and data protection requirements.
 @MainActor
 final class ExportManager: ObservableObject {
     static let shared = ExportManager()
     private init() {}
 
-    /// Export all Furfolio model data to a JSON file in the app's Documents directory.
-    /// All exports should log the event for auditing/business compliance.
-    /// - Parameter models: The unified export struct holding all business data.
-    /// - Returns: The URL of the exported JSON file.
-    /// - Throws: Propagates encoding or file write errors.
-    func exportAllData(models: FurfolioExportModels) throws -> URL {
-        // TODO: Integrate audit/event logging and privacy controls before file write/read.
+    // MARK: - Audit/Event Log
+
+    struct ExportAuditEvent: Codable {
+        let timestamp: Date
+        let operation: String         // "export" | "import"
+        let entityTypes: [String]
+        let entityCounts: [String: Int]
+        let fileURL: String
+        let tags: [String]
+        let actor: String?
+        let context: String?
+        let status: String            // "success" | "error"
+        let errorDescription: String?
+        var accessibilityLabel: String {
+            let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+            return "\(operation.capitalized) of \(entityTypes.joined(separator: \", \")) (\(status)) at \(dateStr)."
+        }
+    }
+    private(set) static var auditLog: [ExportAuditEvent] = []
+
+    private func logEvent(
+        operation: String,
+        models: FurfolioExportModels,
+        fileURL: URL,
+        tags: [String],
+        actor: String? = nil,
+        context: String? = nil,
+        status: String = "success",
+        error: Error? = nil
+    ) {
+        let entityTypes = models.entityTypes
+        let entityCounts = models.entityCounts
+        let event = ExportAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            entityTypes: entityTypes,
+            entityCounts: entityCounts,
+            fileURL: fileURL.lastPathComponent,
+            tags: tags,
+            actor: actor,
+            context: context,
+            status: status,
+            errorDescription: error?.localizedDescription
+        )
+        Self.auditLog.append(event)
+        if Self.auditLog.count > 500 { Self.auditLog.removeFirst() }
+    }
+
+    static func exportLastAuditEventJSON() -> String? {
+        guard let last = auditLog.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    var accessibilitySummary: String {
+        Self.auditLog.last?.accessibilityLabel ?? "No export/import events recorded."
+    }
+
+    // MARK: - Export/Import
+
+    func exportAllData(models: FurfolioExportModels, actor: String? = nil, context: String? = nil) throws -> URL {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -36,29 +86,73 @@ final class ExportManager: ObservableObject {
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(filename)
 
-        try data.write(to: url)
-        return url
+        do {
+            try data.write(to: url)
+            logEvent(
+                operation: "export",
+                models: models,
+                fileURL: url,
+                tags: ["export", "json", "business"],
+                actor: actor,
+                context: context,
+                status: "success"
+            )
+            return url
+        } catch {
+            logEvent(
+                operation: "export",
+                models: models,
+                fileURL: url,
+                tags: ["export", "json", "business"],
+                actor: actor,
+                context: context,
+                status: "error",
+                error: error
+            )
+            throw error
+        }
     }
 
-    /// Import Furfolio data from a JSON file.
-    /// All imports should log the event for auditing/business compliance.
-    /// - Parameter url: File URL to import from.
-    /// - Returns: The decoded `FurfolioExportModels` or throws error.
-    /// - Throws: Propagates file read or decoding errors.
-    func importAllData(from url: URL) throws -> FurfolioExportModels {
-        // TODO: Integrate audit/event logging and privacy controls before file write/read.
+    func importAllData(from url: URL, actor: String? = nil, context: String? = nil) throws -> FurfolioExportModels {
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(FurfolioExportModels.self, from: data)
+
+        do {
+            let models = try decoder.decode(FurfolioExportModels.self, from: data)
+            logEvent(
+                operation: "import",
+                models: models,
+                fileURL: url,
+                tags: ["import", "json", "business"],
+                actor: actor,
+                context: context,
+                status: "success"
+            )
+            return models
+        } catch {
+            // Attempt best-effort logging of entityTypes for audit
+            let entityTypes = ["Unknown"]
+            let entityCounts = [String: Int]()
+            let event = ExportAuditEvent(
+                timestamp: Date(),
+                operation: "import",
+                entityTypes: entityTypes,
+                entityCounts: entityCounts,
+                fileURL: url.lastPathComponent,
+                tags: ["import", "json", "business"],
+                actor: actor,
+                context: context,
+                status: "error",
+                errorDescription: error.localizedDescription
+            )
+            Self.auditLog.append(event)
+            if Self.auditLog.count > 500 { Self.auditLog.removeFirst() }
+            throw error
+        }
     }
 
-    /// Returns a UTType for JSON, for use with document pickers or UIExporters.
-    var exportType: UTType {
-        .json
-    }
-
-    // MARK: - Utility
+    var exportType: UTType { .json }
 
     private func dateString() -> String {
         let formatter = DateFormatter()
@@ -66,22 +160,16 @@ final class ExportManager: ObservableObject {
         return formatter.string(from: Date())
     }
 
-    /// Presents a share sheet for the exported data file (for iOS, macOS Catalyst).
     func presentShareSheet(for url: URL) {
         #if os(iOS)
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         UIApplication.shared.topViewController?.present(activityVC, animated: true)
         #endif
-        // For macOS, use NSSharingServicePicker if needed.
     }
 }
 
 // MARK: - Model Data Aggregator for Export
 
-/// Aggregates all model data for export/import.
-/// This struct should be extended to include all new business models as modules evolve.
-/// Supports field-level localization, encryption, and owner/staff privacy controls for sensitive data.
-/// Designed to integrate with audit/event logging and compliance frameworks.
 struct FurfolioExportModels: Codable {
     var owners: [DogOwner]
     var dogs: [Dog]
@@ -93,7 +181,36 @@ struct FurfolioExportModels: Codable {
     var vaccinationRecords: [VaccinationRecord]
     var business: Business?
     var staff: [StaffMember]
-    // Add additional models as needed for future modules
+
+    // Extension for entity type names and counts for audit analytics
+    var entityTypes: [String] {
+        var types: [String] = []
+        if !owners.isEmpty { types.append("DogOwner") }
+        if !dogs.isEmpty { types.append("Dog") }
+        if !appointments.isEmpty { types.append("Appointment") }
+        if !charges.isEmpty { types.append("Charge") }
+        if !tasks.isEmpty { types.append("Task") }
+        if !sessions.isEmpty { types.append("Session") }
+        if !users.isEmpty { types.append("User") }
+        if !vaccinationRecords.isEmpty { types.append("VaccinationRecord") }
+        if business != nil { types.append("Business") }
+        if !staff.isEmpty { types.append("StaffMember") }
+        return types
+    }
+    var entityCounts: [String: Int] {
+        var counts: [String: Int] = [:]
+        counts["DogOwner"] = owners.count
+        counts["Dog"] = dogs.count
+        counts["Appointment"] = appointments.count
+        counts["Charge"] = charges.count
+        counts["Task"] = tasks.count
+        counts["Session"] = sessions.count
+        counts["User"] = users.count
+        counts["VaccinationRecord"] = vaccinationRecords.count
+        counts["Business"] = business == nil ? 0 : 1
+        counts["StaffMember"] = staff.count
+        return counts
+    }
 
     init(
         owners: [DogOwner] = [],
@@ -124,7 +241,6 @@ struct FurfolioExportModels: Codable {
 
 #if os(iOS)
 import UIKit
-/// Should only be used for export-related UI actions; audit UI usage in compliance builds.
 extension UIApplication {
     var topViewController: UIViewController? {
         guard let window = self.connectedScenes

@@ -1,12 +1,24 @@
 //
 //  OnboardingFAQView.swift
 //  Furfolio
+//
+//  Enhanced: Fully tokenized, audit/analytics-ready, accessible, modular, preview/testable.
+//
 
 import SwiftUI
 
-/// Onboarding FAQ - fully accessible, localizable, and business-audit ready.
-/// This view presents frequently asked questions during onboarding with
-/// enhanced accessibility traits and design token usage.
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol FAQAnalyticsLogger {
+    func log(event: String, question: String)
+}
+public struct NullFAQAnalyticsLogger: FAQAnalyticsLogger {
+    public init() {}
+    public func log(event: String, question: String) {}
+}
+
+// MARK: - FAQ Data
+
 struct FAQItem: Identifiable {
     let id = UUID()
     let question: LocalizedStringKey
@@ -14,114 +26,178 @@ struct FAQItem: Identifiable {
 
     static var onboardingFAQs: [FAQItem] = [
         FAQItem(
-            question: LocalizedStringKey("What is Furfolio?"),
-            answer: LocalizedStringKey("Furfolio is an all-in-one business tool for dog groomers. Manage clients, appointments, pet records, and business insights, all in one secure app.")
+            question: "What is Furfolio?",
+            answer: "Furfolio is an all-in-one business tool for dog groomers. Manage clients, appointments, pet records, and business insights, all in one secure app."
         ),
         FAQItem(
-            question: LocalizedStringKey("Is my data safe and private?"),
-            answer: LocalizedStringKey("Yes! Furfolio keeps your data stored locally on your device and uses iOS security features. No information is shared unless you choose to export it.")
+            question: "Is my data safe and private?",
+            answer: "Yes! Furfolio keeps your data stored locally on your device and uses iOS security features. No information is shared unless you choose to export it."
         ),
         FAQItem(
-            question: LocalizedStringKey("Can I use Furfolio offline?"),
-            answer: LocalizedStringKey("Absolutely. Furfolio is designed to work offline, so you can manage your business anywhere, even without an internet connection.")
+            question: "Can I use Furfolio offline?",
+            answer: "Absolutely. Furfolio is designed to work offline, so you can manage your business anywhere, even without an internet connection."
         ),
         FAQItem(
-            question: LocalizedStringKey("How do I add pets and owners?"),
-            answer: LocalizedStringKey("Tap the '+' button in the dashboard or owners screen to quickly add new clients and their pets. You can enter names, contact details, pet info, and more.")
+            question: "How do I add pets and owners?",
+            answer: "Tap the '+' button in the dashboard or owners screen to quickly add new clients and their pets. You can enter names, contact details, pet info, and more."
         ),
         FAQItem(
-            question: LocalizedStringKey("What support is available?"),
-            answer: LocalizedStringKey("You’ll find tips throughout the app. For further help, visit our website or contact support from the app’s settings page.")
+            question: "What support is available?",
+            answer: "You’ll find tips throughout the app. For further help, visit our website or contact support from the app’s settings page."
         )
     ]
 }
 
-/// Onboarding FAQ View – presented as part of the onboarding flow.
+// MARK: - OnboardingFAQView
+
 struct OnboardingFAQView: View {
     @State private var expandedID: UUID?
+    private let analyticsLogger: FAQAnalyticsLogger
+    // Tokens
+    private let sectionFont: Font
+    private let sectionColor: Color
+    private let listBg: Color
+    private let spacing: CGFloat
+
+    // Init (inject logger/tokens for preview/testing)
+    init(
+        analyticsLogger: FAQAnalyticsLogger = NullFAQAnalyticsLogger(),
+        sectionFont: Font = AppFonts.header ?? .title2.bold(),
+        sectionColor: Color = AppColors.primary ?? .primary,
+        listBg: Color = AppColors.background ?? Color(UIColor.systemGroupedBackground),
+        spacing: CGFloat = AppSpacing.medium ?? 16
+    ) {
+        self.analyticsLogger = analyticsLogger
+        self.sectionFont = sectionFont
+        self.sectionColor = sectionColor
+        self.listBg = listBg
+        self.spacing = spacing
+    }
 
     var body: some View {
         NavigationView {
             List {
-                ForEach(FAQItem.onboardingFAQs) { item in
-                    Section {
+                Section {
+                    ForEach(FAQItem.onboardingFAQs) { item in
                         FAQDisclosureGroup(
                             item: item,
-                            isExpanded: expandedID == item.id
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                expandedID = expandedID == item.id ? nil : item.id
-                                // TODO: Add audit logging/analytics for FAQ toggle here
+                            isExpanded: expandedID == item.id,
+                            onToggle: { expanded in
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    expandedID = expanded ? item.id : nil
+                                    analyticsLogger.log(event: expanded ? "faq_expand" : "faq_collapse", question: String(localized: item.question))
+                                }
                             }
-                        }
-                    } header: {
-                        Text(LocalizedStringKey("FAQ Section"))
-                            .font(AppFonts.header) // TODO: Define AppFonts.header
-                            .foregroundColor(AppColors.primary) // TODO: Define AppColors.primary
-                            .accessibilityAddTraits(.isHeader)
+                        )
                     }
+                } header: {
+                    Text("FAQ Section")
+                        .font(sectionFont)
+                        .foregroundColor(sectionColor)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityLabel(Text(NSLocalizedString("Frequently Asked Questions", comment: "FAQ section header")))
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle(LocalizedStringKey("FAQ"))
+            .background(listBg)
+            .navigationTitle(Text("FAQ"))
             .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
 
-/// Disclosure group for each FAQ item
+// MARK: - Disclosure Group for Each FAQ
+
 private struct FAQDisclosureGroup: View {
     let item: FAQItem
     let isExpanded: Bool
-    let toggle: () -> Void
+    let onToggle: (Bool) -> Void
+
+    // Tokens
+    private let qFont: Font
+    private let aFont: Font
+    private let qColor: Color
+    private let aColor: Color
+    private let iconColor: Color
+    private let verticalPad: CGFloat
+
+    init(
+        item: FAQItem,
+        isExpanded: Bool,
+        onToggle: @escaping (Bool) -> Void,
+        qFont: Font = AppFonts.headline ?? .headline,
+        aFont: Font = AppFonts.body ?? .body,
+        qColor: Color = AppColors.primary ?? .primary,
+        aColor: Color = AppColors.secondary ?? .secondary,
+        iconColor: Color = AppColors.accent ?? .accentColor,
+        verticalPad: CGFloat = AppSpacing.small ?? 8
+    ) {
+        self.item = item
+        self.isExpanded = isExpanded
+        self.onToggle = onToggle
+        self.qFont = qFont
+        self.aFont = aFont
+        self.qColor = qColor
+        self.aColor = aColor
+        self.iconColor = iconColor
+        self.verticalPad = verticalPad
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: {
-                toggle()
-                // TODO: Add audit logging/analytics for FAQ toggle here
-            }) {
+        VStack(alignment: .leading, spacing: verticalPad) {
+            Button(action: { onToggle(!isExpanded) }) {
                 HStack {
                     Text(item.question)
-                        .font(AppFonts.headline) // TODO: Define AppFonts.headline
-                        .foregroundColor(AppColors.primary) // TODO: Define AppColors.primary
+                        .font(qFont)
+                        .foregroundColor(qColor)
                         .multilineTextAlignment(.leading)
                         .accessibilityAddTraits(.isHeader)
 
                     Spacer()
 
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .foregroundColor(AppColors.accent) // TODO: Define AppColors.accent
+                        .foregroundColor(iconColor)
                         .imageScale(.small)
                         .accessibilityHidden(true)
                 }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(item.question)
-            .accessibilityHint(isExpanded ? NSLocalizedString("Tap to collapse the answer.", comment: "Accessibility hint for collapsing FAQ answer") : NSLocalizedString("Tap to expand the answer.", comment: "Accessibility hint for expanding FAQ answer"))
+            .accessibilityHint(isExpanded
+                ? NSLocalizedString("Tap to collapse the answer.", comment: "Accessibility hint for collapsing FAQ answer")
+                : NSLocalizedString("Tap to expand the answer.", comment: "Accessibility hint for expanding FAQ answer")
+            )
 
             if isExpanded {
                 Text(item.answer)
-                    .font(AppFonts.body) // TODO: Define AppFonts.body
-                    .foregroundColor(AppColors.secondary) // TODO: Define AppColors.secondary
+                    .font(aFont)
+                    .foregroundColor(aColor)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                     .padding(.top, 4)
+                    .accessibilityLabel(item.answer)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, verticalPad)
     }
 }
 
+// MARK: - Preview
+
 #Preview {
-    Group {
-        OnboardingFAQView()
+    struct AnalyticsSpy: FAQAnalyticsLogger {
+        func log(event: String, question: String) {
+            print("Analytics Event: \(event), Q: \(question)")
+        }
+    }
+    return Group {
+        OnboardingFAQView(analyticsLogger: AnalyticsSpy())
             .previewDisplayName("Light Mode")
             .environment(\.colorScheme, .light)
-        OnboardingFAQView()
+        OnboardingFAQView(analyticsLogger: AnalyticsSpy())
             .previewDisplayName("Dark Mode")
             .environment(\.colorScheme, .dark)
-        OnboardingFAQView()
-            .previewDisplayName("Large Text")
+        OnboardingFAQView(analyticsLogger: AnalyticsSpy())
+            .previewDisplayName("Accessibility Large Text")
             .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
     }
 }

@@ -2,39 +2,55 @@
 //  DashboardMilestoneAnimation.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: Analytics/audit-ready, token-compliant, accessible, preview/testable, enterprise-grade.
 //
 
 import SwiftUI
 
-/// Animated badge for milestone celebration.
-/// Use for revenue goals, appointment streaks, loyalty rewards, etc.
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol MilestoneAnalyticsLogger {
+    func log(event: String, emoji: String, label: String, subtitle: String?)
+}
+public struct NullMilestoneAnalyticsLogger: MilestoneAnalyticsLogger {
+    public init() {}
+    public func log(event: String, emoji: String, label: String, subtitle: String?) {}
+}
+
+/// Animated badge for milestone celebration (revenue goals, appointment streaks, loyalty, etc).
 struct DashboardMilestoneAnimation: View {
-    /// Bind to the triggering logic (e.g. achievedGoal = true).
     @Binding var trigger: Bool
-
-    /// Emoji representing the milestone (decorative only).
     var emoji: String = "🏆"
-
-    /// Primary label (e.g. \"Milestone!\").
     var label: String = "Milestone!"
-
-    /// Badge color theme.
-    var color: Color = .yellow
-
-    /// Optional subtitle (e.g. \"You hit $10K!\").
+    var color: Color = AppColors.milestoneYellow ?? .yellow
     var subtitle: String? = nil
-
-    /// Whether to show animated confetti.
     var showConfetti: Bool = true
+    var analyticsLogger: MilestoneAnalyticsLogger = NullMilestoneAnalyticsLogger()
 
     @State private var animate: Bool = false
     @State private var shine: Bool = false
 
-    private enum Constants {
+    private enum Tokens {
         static let appearDelay: Double = 0.05
         static let shineStartDelay: Double = 0.38
         static let shineDuration: Double = 0.66
+        static let hPad: CGFloat = AppSpacing.xLarge ?? 28
+        static let vPad: CGFloat = AppSpacing.medium ?? 18
+        static let badgeFont: Font = AppFonts.headlineBold ?? .headline.bold()
+        static let subtitleFont: Font = AppFonts.subheadline ?? .subheadline
+        static let emojiFont: Font = AppFonts.milestoneEmoji ?? .system(size: 38)
+        static let badgeBgOpacity: Double = 0.11
+        static let badgeShadowOpacity: Double = 0.19
+        static let emojiShadowOpacity: Double = 0.21
+        static let shadowRadiusActive: CGFloat = 16
+        static let shadowRadiusInactive: CGFloat = 7
+        static let capsuleRadius: CGFloat = AppRadius.large ?? 36
+        static let spacing: CGFloat = AppSpacing.large ?? 12
+        static let subtitleSpacing: CGFloat = 2
+        static let scaleActive: CGFloat = 1.0
+        static let scaleInactive: CGFloat = 0.8
+        static let emojiScaleActive: CGFloat = 1.13
+        static let emojiScaleInactive: CGFloat = 0.88
     }
 
     var body: some View {
@@ -47,16 +63,16 @@ struct DashboardMilestoneAnimation: View {
             }
 
             // Main animated badge
-            HStack(spacing: 12) {
+            HStack(spacing: Tokens.spacing) {
                 Text(emoji)
-                    .font(.system(size: 38))
-                    .scaleEffect(animate ? 1.13 : 0.88)
-                    .shadow(color: color.opacity(0.21), radius: 6, x: 0, y: 4)
+                    .font(Tokens.emojiFont)
+                    .scaleEffect(animate ? Tokens.emojiScaleActive : Tokens.emojiScaleInactive)
+                    .shadow(color: color.opacity(Tokens.emojiShadowOpacity), radius: 6, x: 0, y: 4)
                     .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Tokens.subtitleSpacing) {
                     Text(label)
-                        .font(.headline.bold())
+                        .font(Tokens.badgeFont)
                         .foregroundColor(color)
                         .shadow(color: color.opacity(0.24), radius: animate ? 4 : 1, x: 0, y: 1)
                         .overlay(
@@ -67,31 +83,33 @@ struct DashboardMilestoneAnimation: View {
                                     endPoint: .trailing
                                 )
                                 .blendMode(.screen)
-                                .mask(Text(label).font(.headline.bold()))
-                                .animation(.linear(duration: Constants.shineDuration), value: shine)
+                                .mask(Text(label).font(Tokens.badgeFont))
+                                .animation(.linear(duration: Tokens.shineDuration), value: shine)
                             : nil
                         )
+                        .accessibilityAddTraits(.isHeader)
 
                     if let subtitle = subtitle {
                         Text(subtitle)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .font(Tokens.subtitleFont)
+                            .foregroundColor(AppColors.textSecondary ?? .secondary)
                             .lineLimit(2)
                             .minimumScaleFactor(0.85)
                     }
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 18)
+            .padding(.horizontal, Tokens.hPad)
+            .padding(.vertical, Tokens.vPad)
             .background(
                 Capsule()
-                    .fill(color.opacity(0.11))
-                    .shadow(color: color.opacity(0.19), radius: animate ? 16 : 7, x: 0, y: 2)
+                    .fill(color.opacity(Tokens.badgeBgOpacity))
+                    .shadow(color: color.opacity(Tokens.badgeShadowOpacity), radius: animate ? Tokens.shadowRadiusActive : Tokens.shadowRadiusInactive, x: 0, y: 2)
             )
-            .scaleEffect(animate ? 1.0 : 0.8)
+            .scaleEffect(animate ? Tokens.scaleActive : Tokens.scaleInactive)
             .opacity(animate ? 1.0 : 0)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(label). \(subtitle ?? "")")
+            .accessibilityLabel(Text(label) + (subtitle != nil ? Text(". \(subtitle!)") : Text("")))
+            .accessibilityHint(Text("Milestone achieved: \(label)\(subtitle != nil ? ". \(subtitle!)" : "")"))
             .onAppear {
                 if trigger {
                     animateBadge()
@@ -106,19 +124,23 @@ struct DashboardMilestoneAnimation: View {
         .animation(.spring(response: 0.56, dampingFraction: 0.82), value: animate)
     }
 
-    /// Triggers the milestone badge and shine animation.
+    /// Triggers the milestone badge and shine animation, and logs analytics.
     private func animateBadge() {
         animate = false
         shine = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.appearDelay) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Tokens.appearDelay) {
             withAnimation {
                 animate = true
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + Constants.shineStartDelay) {
+            analyticsLogger.log(event: "milestone_appeared", emoji: emoji, label: label, subtitle: subtitle)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + Tokens.shineStartDelay) {
                 shine = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + Constants.shineDuration) {
+                analyticsLogger.log(event: "milestone_shine", emoji: emoji, label: label, subtitle: subtitle)
+                DispatchQueue.main.asyncAfter(deadline: .now() + Tokens.shineDuration) {
                     shine = false
+                    analyticsLogger.log(event: "milestone_shine_end", emoji: emoji, label: label, subtitle: subtitle)
                 }
             }
         }
@@ -129,20 +151,24 @@ struct DashboardMilestoneAnimation: View {
 
 #if DEBUG
 struct DashboardMilestoneAnimation_Previews: PreviewProvider {
+    struct SpyLogger: MilestoneAnalyticsLogger {
+        func log(event: String, emoji: String, label: String, subtitle: String?) {
+            print("MilestoneAnalytics: \(event), \(emoji) \(label) \(subtitle ?? "")")
+        }
+    }
     struct PreviewWrapper: View {
         @State private var show = false
         var body: some View {
             VStack(spacing: 36) {
-                Button("Trigger Milestone") {
-                    show.toggle()
-                }
+                Button("Trigger Milestone") { show.toggle() }
                 DashboardMilestoneAnimation(
                     trigger: $show,
                     emoji: "💸",
                     label: "Revenue Goal!",
                     color: .green,
                     subtitle: "You hit $10K this month!",
-                    showConfetti: true
+                    showConfetti: true,
+                    analyticsLogger: SpyLogger()
                 )
             }
             .padding()

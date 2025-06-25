@@ -3,121 +3,157 @@
 //  Furfolio
 //
 //  Enhanced, unified, and ready for multi-user/offline-first/analytics.
-//  Created by mac on 6/19/25.
 //
-
 import Foundation
 import SwiftData
 import SwiftUI
 
-// MARK: - DogOwner (Modular, Tokenized, Auditable, Multi-Role Client/Owner Model)
-
-/// Represents a modular, auditable, tokenized multi-role client/owner entity within the Furfolio system.
-/// This class supports comprehensive business analytics, compliance adherence, detailed audit trails,
-/// loyalty and retention logic, badge integration, and UI design system compatibility.
-/// It is designed for scalable, owner-focused dashboards and multi-user scenarios, enabling robust
-/// client management, role-based access control, and offline-first capabilities.
 @Model
 final class DogOwner: Identifiable, ObservableObject {
     @Attribute(.unique)
     var id: UUID
 
-    /// The primary name of the owner/client.
-    /// Used for display in UI, search, and audit logs.
-    /// Essential for business workflows and client identification.
-    @Published
-    var ownerName: String
+    @Published var ownerName: String
+    @Published var email: String?
+    @Published var address: String?
+    @Published var phone: String?
+    @Published var emergencyContact: String?
+    @Published var notes: String?
+    @Published var isActive: Bool
+    @Published var role: String
+    @Published var preferredContact: String?
+    @Published var preferredLanguage: String?
+    @Published var dateAdded: Date
+    @Published var lastModified: Date
+    @Published var lastModifiedBy: String?
+    @Published var auditLog: [String]
 
-    /// Contact email address.
-    /// Used for communication, notifications, and audit trail contact points.
-    @Published
-    var email: String?
-
-    /// Physical address of the owner.
-    /// Supports compliance requirements for location-based regulations and mailing.
-    @Published
-    var address: String?
-
-    /// Primary phone number.
-    /// Critical for direct client contact, emergency workflows, and multi-channel communication.
-    @Published
-    var phone: String?
-
-    /// Backup or emergency contact information.
-    /// Ensures compliance and safety workflows by providing alternate contact options.
-    @Published
-    var emergencyContact: String?
-
-    /// Additional notes or comments about the owner.
-    /// Supports workflow customization, audit context, and client-specific instructions.
-    @Published
-    var notes: String?
-
-    /// Indicates if the owner is currently active.
-    /// Drives business logic for active client filtering, analytics segmentation, and UI visibility.
-    @Published
-    var isActive: Bool
-
-    /// Role of the user for access control purposes. Defaults to "Owner".
-    /// Enables multi-role support, RBAC compliance, and tailored UI/feature access.
-    @Published
-    var role: String
-
-    /// Preferred contact method, e.g., "phone", "email", "sms".
-    /// Guides communication workflows and analytics on contact preferences.
-    @Published
-    var preferredContact: String?
-
-    /// Preferred language of the owner for multi-language support.
-    /// Supports UI localization, compliance with language laws, and better client experience.
-    @Published
-    var preferredLanguage: String?
-
-    /// Date when this owner record was added.
-    /// Critical for audit trails, compliance timelines, and business analytics.
-    @Published
-    var dateAdded: Date
-
-    /// Date when this owner record was last modified.
-    /// Used for audit logs, data freshness indicators, and compliance reporting.
-    @Published
-    var lastModified: Date
-
-    /// Identifier for the user who last modified this record (for audit trail).
-    /// Supports multi-user audit trails, accountability, and compliance.
-    @Published
-    var lastModifiedBy: String?
-
-    /// Simple audit log capturing change descriptions and timestamps.
-    /// Enables detailed event history for compliance, troubleshooting, and analytics.
-    @Published
-    var auditLog: [String]
-
-    // MARK: - Relationships
-
-    /// All dogs belonging to this owner.
-    /// Supports business logic for pet management, analytics on pet demographics,
-    /// and UI display of owner-pet relationships.
     @Relationship(deleteRule: .cascade, inverse: \Dog.owner)
-    @Published
-    var dogs: [Dog]
+    @Published var dogs: [Dog]
 
-    /// All appointments linked to this owner.
-    /// Enables scheduling workflows, retention analytics, and UI calendar integration.
     @Relationship(deleteRule: .cascade, inverse: \Appointment.owner)
-    @Published
-    var appointments: [Appointment]
+    @Published var appointments: [Appointment]
 
-    /// All charges billed to this owner.
-    /// Supports financial analytics, billing workflows, and compliance with payment records.
     @Relationship(deleteRule: .cascade, inverse: \Charge.owner)
-    @Published
-    var charges: [Charge]
+    @Published var charges: [Charge]
 
-    /// List of badges/tags for loyalty, retention, behavior, etc.
-    /// Drives loyalty program logic, client segmentation, and UI badge displays.
-    @Published
-    var badgeTypes: [String]
+    @Published var badgeTypes: [String]
+
+    // MARK: - Tag/Badge Tokenization
+
+    enum OwnerBadgeType: String, CaseIterable, Codable {
+        case loyal, friendly, atRisk, bigSpender, newClient, multiPet, feedbackChampion, platinum
+    }
+
+    var ownerBadges: [OwnerBadgeType] {
+        badgeTypes.compactMap { OwnerBadgeType(rawValue: $0) }
+    }
+    func addBadge(_ badge: OwnerBadgeType) {
+        if !badgeTypes.contains(badge.rawValue) { badgeTypes.append(badge.rawValue) }
+    }
+    func removeBadge(_ badge: OwnerBadgeType) {
+        badgeTypes.removeAll { $0 == badge.rawValue }
+    }
+    func hasBadge(_ badge: OwnerBadgeType) -> Bool {
+        badgeTypes.contains(badge.rawValue)
+    }
+
+    // MARK: - Analytics/Computed
+
+    /// Total amount spent by this owner
+    var totalSpent: Double {
+        charges.reduce(0) { $0 + $1.amount }
+    }
+    /// Number of dogs
+    var dogCount: Int { dogs.count }
+    /// Average spend per appointment
+    var averageSpendPerAppointment: Double {
+        let completed = completedAppointments
+        guard !completed.isEmpty else { return 0 }
+        let relevantCharges = completed.flatMap { appt in
+            charges.filter { $0.appointmentID == appt.id }
+        }
+        let total = relevantCharges.reduce(0) { $0 + $1.amount }
+        return total / Double(completed.count)
+    }
+    /// Spend by year
+    func spend(forYear year: Int) -> Double {
+        charges.filter {
+            Calendar.current.component(.year, from: $0.date) == year
+        }.reduce(0) { $0 + $1.amount }
+    }
+    /// Appointments completed
+    var completedAppointments: [Appointment] {
+        appointments.filter { $0.status == .completed }
+    }
+    /// Most recent appointment date
+    var lastAppointmentDate: Date? {
+        appointments.sorted(by: { $0.date > $1.date }).first?.date
+    }
+    /// True if last appointment > 60 days ago
+    var isRetentionRisk: Bool {
+        guard let last = lastAppointmentDate else { return true }
+        return Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? 0 > 60
+    }
+    /// Loyalty tier
+    var loyaltyTier: String {
+        switch totalSpent {
+        case 0..<500: "Bronze"
+        case 500..<2000: "Silver"
+        case 2000..<5000: "Gold"
+        default: "Platinum"
+        }
+    }
+    /// Average interval between appointments (in days)
+    var averageAppointmentInterval: Double? {
+        let dates = appointments.map { $0.date }.sorted()
+        guard dates.count > 1 else { return nil }
+        let intervals = zip(dates, dates.dropFirst()).map { $1.timeIntervalSince($0) / 86400 }
+        return intervals.reduce(0, +) / Double(intervals.count)
+    }
+    /// True if any active dogs
+    var hasActiveDogs: Bool {
+        dogs.contains(where: { $0.isActive })
+    }
+    /// Display name for UI
+    var displayName: String {
+        ownerName.isEmpty ? "Unnamed Owner" : ownerName
+    }
+
+    // MARK: - Audit/Export
+
+    /// Show most recent N audit log entries
+    func recentAuditLog(_ count: Int = 3) -> [String] {
+        Array(auditLog.suffix(count))
+    }
+    /// Export audit log as plain text
+    var auditLogText: String {
+        auditLog.joined(separator: "\n")
+    }
+    /// Export as JSON for compliance/integration
+    func exportJSON() -> String? {
+        struct OwnerExport: Codable {
+            let id: UUID, ownerName: String, email: String?, phone: String?, address: String?
+            let badgeTypes: [String], isActive: Bool, loyaltyTier: String, totalSpent: Double
+        }
+        let export = OwnerExport(
+            id: id, ownerName: ownerName, email: email, phone: phone, address: address,
+            badgeTypes: badgeTypes, isActive: isActive, loyaltyTier: loyaltyTier, totalSpent: totalSpent
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // MARK: - Accessibility
+
+    var accessibilityLabel: String {
+        """
+        Owner profile for \(displayName).
+        Loyalty tier: \(loyaltyTier).
+        Total spent: $\(String(format: "%.0f", totalSpent)).
+        Active dogs: \(dogCount).
+        """
+    }
 
     // MARK: - Initializer
 
@@ -163,82 +199,20 @@ final class DogOwner: Identifiable, ObservableObject {
         self.badgeTypes = badgeTypes
     }
 
-    // MARK: - Computed Properties & Helpers
+    // MARK: - Utility
 
-    /// Returns the total amount spent by this owner across all charges.
-    /// Used for business analytics, loyalty tier calculations, and financial reporting dashboards.
-    var totalSpent: Double {
-        charges.reduce(0) { $0 + $1.amount }
-    }
-
-    /// Returns all appointments with a completed status.
-    /// Supports retention analytics, compliance tracking, and UI filtering of appointment history.
-    var completedAppointments: [Appointment] {
-        appointments.filter { $0.status == .completed }
-    }
-
-    /// Returns the date of the most recent appointment, if any.
-    /// Critical for retention risk analysis, compliance follow-ups, and dashboard recency indicators.
-    var lastAppointmentDate: Date? {
-        appointments.sorted(by: { $0.date > $1.date }).first?.date
-    }
-
-    /// Indicates if the owner has any dogs currently marked as active.
-    /// Used for business segmentation, active client filtering, and UI status displays.
-    var hasActiveDogs: Bool {
-        dogs.contains(where: { $0.isActive })
-    }
-
-    /// Returns the display name for UI, falling back to "Unnamed Owner" if empty.
-    /// Improves UI consistency and user experience in client lists and dashboards.
-    var displayName: String {
-        ownerName.isEmpty ? "Unnamed Owner" : ownerName
-    }
-
-    /// Returns true if the last appointment was more than 60 days ago, indicating retention risk.
-    /// Supports proactive client retention workflows, risk analytics, and targeted marketing.
-    var isRetentionRisk: Bool {
-        guard let lastDate = lastAppointmentDate else { return true }
-        return Calendar.current.dateComponents([.day], from: lastDate, to: Date()).day ?? 0 > 60
-    }
-
-    /// Returns a loyalty tier string based on total amount spent.
-    /// Drives loyalty program logic, UI badge assignments, and business segmentation.
-    var loyaltyTier: String {
-        switch totalSpent {
-        case 0..<500:
-            return "Bronze"
-        case 500..<2000:
-            return "Silver"
-        case 2000..<5000:
-            return "Gold"
-        default:
-            return "Platinum"
-        }
-    }
-
-    // MARK: - Utility Methods
-
-    /// Adds an audit log entry with a timestamp.
-    /// Essential for detailed audit/event logging, compliance records, and analytics on data changes.
-    /// Also impacts workflow transparency and troubleshooting.
     func addAuditLogEntry(_ entry: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
         auditLog.append("[\(timestamp)] \(entry)")
         lastModified = Date()
     }
-
-    /// Updates the last modified date and user.
-    /// Supports multi-user audit trails, accountability, and compliance with modification tracking.
     func updateModification(user: String?) {
         lastModified = Date()
         lastModifiedBy = user
     }
 
-    // MARK: - Static Properties
+    // MARK: - Previews
 
-    /// A preview instance for SwiftUI previews and development/testing.
-    /// Demonstrates demo/business logic, tokenized design intent, and typical data usage scenarios.
     static let preview = DogOwner(
         ownerName: "Jane Doe",
         email: "jane.doe@example.com",
@@ -254,6 +228,17 @@ final class DogOwner: Identifiable, ObservableObject {
         dogs: [],
         appointments: [],
         charges: [],
-        badgeTypes: ["Loyal", "Friendly"]
+        badgeTypes: [OwnerBadgeType.loyal.rawValue, OwnerBadgeType.friendly.rawValue]
+    )
+
+    static let previewAtRisk = DogOwner(
+        ownerName: "Lisa Chen",
+        email: "lisa.chen@email.com",
+        phone: "555-7890",
+        notes: "Last appointment >3 months ago.",
+        isActive: true,
+        role: "Owner",
+        preferredContact: "sms",
+        badgeTypes: [OwnerBadgeType.atRisk.rawValue, OwnerBadgeType.newClient.rawValue]
     )
 }

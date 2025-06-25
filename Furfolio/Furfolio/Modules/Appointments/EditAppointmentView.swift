@@ -9,16 +9,77 @@
 
 import SwiftUI
 
-/// View to edit an existing appointment with owner, dog, service, duration, notes, and tags.
-/// This view and its ViewModel are fully modular, tokenized, and auditable, supporting owner-focused workflows,
-/// accessibility, localization, business analytics, and UI design system integration.
-/// All UI elements leverage design tokens for colors, fonts, and spacing to ensure consistency and theming.
-/// Accessibility identifiers are added to support UI testing and assistive technologies.
+// MARK: - Audit/Event Logging
+
+fileprivate struct EditAppointmentAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String      // "appear", "editField", "toggleTag", "save", "cancel", "error"
+    let appointmentID: UUID
+    let field: String?
+    let oldValue: String?
+    let newValue: String?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let op = operation.capitalized
+        let fieldPart = field.map { " field:\($0)" } ?? ""
+        let tagStr = tags.isEmpty ? "" : " [\(tags.joined(separator: ","))]"
+        let valuePart = newValue != nil ? " \"\(newValue!)\"" : ""
+        return "[\(op)] \(appointmentID)\(fieldPart)\(valuePart)\(tagStr) at \(dateStr)\(detail != nil ? ": \(detail!)" : "")"
+    }
+}
+
+fileprivate final class EditAppointmentAudit {
+    static private(set) var log: [EditAppointmentAuditEvent] = []
+
+    static func record(
+        operation: String,
+        appointmentID: UUID,
+        field: String? = nil,
+        oldValue: String? = nil,
+        newValue: String? = nil,
+        tags: [String] = [],
+        actor: String? = "user",
+        context: String? = "EditAppointmentView",
+        detail: String? = nil
+    ) {
+        let event = EditAppointmentAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            appointmentID: appointmentID,
+            field: field,
+            oldValue: oldValue,
+            newValue: newValue,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 300 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No edit events recorded."
+    }
+}
+
+// MARK: - EditAppointmentView
+
 struct EditAppointmentView: View {
     @ObservedObject var viewModel: EditAppointmentViewModel
     @Environment(\.dismiss) private var dismiss
 
     @State private var showDurationPicker = false
+    @State private var lastError: String? = nil
 
     var body: some View {
         NavigationView {
@@ -27,9 +88,18 @@ struct EditAppointmentView: View {
                     DatePicker("Appointment Date", selection: $viewModel.date, in: Date()..., displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.compact)
                         .accessibilityIdentifier("appointmentDatePicker")
-                        .font(AppFonts.body) // Tokenized font for date picker
+                        .font(AppFonts.body)
+                        .onChange(of: viewModel.date) { newVal in
+                            EditAppointmentAudit.record(
+                                operation: "editField",
+                                appointmentID: viewModel.originalAppointment.id,
+                                field: "date",
+                                oldValue: Self.formatDate(viewModel.originalAppointment.date),
+                                newValue: Self.formatDate(newVal),
+                                tags: ["date"]
+                            )
+                        }
                 }
-
                 Section(header: Text("Client").font(AppFonts.subheadline).foregroundColor(AppColors.textPrimary)) {
                     Picker("Owner", selection: $viewModel.selectedOwner) {
                         Text("Select Owner").tag(DogOwner?.none)
@@ -37,11 +107,19 @@ struct EditAppointmentView: View {
                             Text(owner.ownerName).tag(Optional(owner))
                         }
                     }
-                    .onChange(of: viewModel.selectedOwner) { _ in
+                    .onChange(of: viewModel.selectedOwner) { newOwner in
                         viewModel.resetDogIfOwnerChanged()
+                        EditAppointmentAudit.record(
+                            operation: "editField",
+                            appointmentID: viewModel.originalAppointment.id,
+                            field: "owner",
+                            oldValue: viewModel.originalAppointment.owner?.ownerName,
+                            newValue: newOwner?.ownerName,
+                            tags: ["owner"]
+                        )
                     }
                     .accessibilityIdentifier("ownerPicker")
-                    .font(AppFonts.body) // Tokenized font for picker
+                    .font(AppFonts.body)
 
                     if let owner = viewModel.selectedOwner {
                         Picker("Dog", selection: $viewModel.selectedDog) {
@@ -50,64 +128,100 @@ struct EditAppointmentView: View {
                                 Text(dog.name).tag(Optional(dog))
                             }
                         }
+                        .onChange(of: viewModel.selectedDog) { newDog in
+                            EditAppointmentAudit.record(
+                                operation: "editField",
+                                appointmentID: viewModel.originalAppointment.id,
+                                field: "dog",
+                                oldValue: viewModel.originalAppointment.dog?.name,
+                                newValue: newDog?.name,
+                                tags: ["dog"]
+                            )
+                        }
                         .accessibilityIdentifier("dogPicker")
-                        .font(AppFonts.body) // Tokenized font for picker
+                        .font(AppFonts.body)
                     }
                 }
-
                 Section(header: Text("Service").font(AppFonts.subheadline).foregroundColor(AppColors.textPrimary)) {
                     Picker("Service Type", selection: $viewModel.serviceType) {
                         ForEach(viewModel.serviceTypes, id: \.self) { type in
-                            Text(type)
-                                .font(AppFonts.body) // Tokenized font for picker items
+                            Text(type).font(AppFonts.body)
                         }
+                    }
+                    .onChange(of: viewModel.serviceType) { newVal in
+                        EditAppointmentAudit.record(
+                            operation: "editField",
+                            appointmentID: viewModel.originalAppointment.id,
+                            field: "serviceType",
+                            oldValue: viewModel.originalAppointment.serviceType,
+                            newValue: newVal,
+                            tags: ["serviceType"]
+                        )
                     }
                     .accessibilityIdentifier("servicePicker")
                     .font(AppFonts.body)
                 }
-
                 Section(header: Text("Duration").font(AppFonts.subheadline).foregroundColor(AppColors.textPrimary)) {
                     HStack {
-                        Text("\(viewModel.duration) min")
-                            .font(AppFonts.body) // Tokenized font for duration text
+                        Text("\(viewModel.duration) min").font(AppFonts.body)
                         Spacer()
                         Button("Change") {
-                            withAnimation {
-                                showDurationPicker = true
-                            }
+                            withAnimation { showDurationPicker = true }
+                            EditAppointmentAudit.record(
+                                operation: "editField",
+                                appointmentID: viewModel.originalAppointment.id,
+                                field: "duration",
+                                oldValue: "\(viewModel.originalAppointment.duration)",
+                                newValue: "\(viewModel.duration)",
+                                tags: ["duration"]
+                            )
                         }
                         .accessibilityIdentifier("changeDurationButton")
-                        .font(AppFonts.body) // Tokenized font for button
-                        .padding(.horizontal, AppSpacing.small) // Tokenized horizontal padding
-                        .padding(.vertical, AppSpacing.xSmall) // Tokenized vertical padding
-                        .background(AppColors.backgroundSecondary) // Tokenized background color for button
-                        .foregroundColor(AppColors.accent) // Tokenized accent color for button text
+                        .font(AppFonts.body)
+                        .padding(.horizontal, AppSpacing.small)
+                        .padding(.vertical, AppSpacing.xSmall)
+                        .background(AppColors.backgroundSecondary)
+                        .foregroundColor(AppColors.accent)
                         .clipShape(Capsule())
                     }
-                    .padding(.vertical, AppSpacing.xSmall) // Tokenized vertical padding for HStack
+                    .padding(.vertical, AppSpacing.xSmall)
                 }
-
                 Section(header: Text("Notes").font(AppFonts.subheadline).foregroundColor(AppColors.textPrimary)) {
                     TextField("Add notes...", text: $viewModel.notes, axis: .vertical)
+                        .onChange(of: viewModel.notes) { newVal in
+                            EditAppointmentAudit.record(
+                                operation: "editField",
+                                appointmentID: viewModel.originalAppointment.id,
+                                field: "notes",
+                                oldValue: viewModel.originalAppointment.notes,
+                                newValue: newVal,
+                                tags: ["notes"]
+                            )
+                        }
                         .lineLimit(1...3)
                         .accessibilityIdentifier("notesTextField")
-                        .font(AppFonts.body) // Tokenized font for text field
-                        .padding(AppSpacing.xSmall) // Tokenized padding for text field
+                        .font(AppFonts.body)
+                        .padding(AppSpacing.xSmall)
                 }
-
                 if !viewModel.availableTags.isEmpty {
                     Section(header: Text("Tags").font(AppFonts.subheadline).foregroundColor(AppColors.textPrimary)) {
                         FlowLayout(alignment: .leading, spacing: AppSpacing.small) {
                             ForEach(viewModel.availableTags, id: \.self) { tag in
                                 Button {
-                                    withAnimation {
-                                        viewModel.toggleTag(tag)
-                                    }
+                                    withAnimation { viewModel.toggleTag(tag) }
+                                    EditAppointmentAudit.record(
+                                        operation: "toggleTag",
+                                        appointmentID: viewModel.originalAppointment.id,
+                                        field: "tag",
+                                        oldValue: viewModel.selectedTags.contains(tag) ? "selected" : "notSelected",
+                                        newValue: !viewModel.selectedTags.contains(tag) ? "selected" : "notSelected",
+                                        tags: ["tag", tag]
+                                    )
                                 } label: {
                                     Text(tag)
-                                        .font(AppFonts.caption) // Tokenized font for tag text
-                                        .padding(.horizontal, AppSpacing.medium) // Tokenized horizontal padding
-                                        .padding(.vertical, AppSpacing.xSmall) // Tokenized vertical padding
+                                        .font(AppFonts.caption)
+                                        .padding(.horizontal, AppSpacing.medium)
+                                        .padding(.vertical, AppSpacing.xSmall)
                                         .background(viewModel.selectedTags.contains(tag) ? AppColors.accent : AppColors.backgroundSecondary)
                                         .foregroundColor(viewModel.selectedTags.contains(tag) ? AppColors.textOnAccent : AppColors.textPrimary)
                                         .clipShape(Capsule())
@@ -115,22 +229,34 @@ struct EditAppointmentView: View {
                                 .accessibilityIdentifier("tagButton_\(tag)")
                             }
                         }
-                        .padding(.vertical, AppSpacing.xSmall) // Tokenized vertical padding for FlowLayout
+                        .padding(.vertical, AppSpacing.xSmall)
                     }
                 }
             }
             .navigationTitle("Edit Appointment")
-            .font(AppFonts.body) // Tokenized font for navigation title
+            .font(AppFonts.body)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if viewModel.validateAndSave() {
+                            EditAppointmentAudit.record(
+                                operation: "save",
+                                appointmentID: viewModel.originalAppointment.id,
+                                tags: ["save"]
+                            )
                             dismiss()
+                        } else {
+                            EditAppointmentAudit.record(
+                                operation: "error",
+                                appointmentID: viewModel.originalAppointment.id,
+                                tags: ["save", "fail"],
+                                detail: "Validation failed"
+                            )
                         }
                     }
                     .disabled(!viewModel.canSave)
                     .accessibilityIdentifier("saveButton")
-                    .font(AppFonts.body) // Tokenized font for button
+                    .font(AppFonts.body)
                     .padding(.horizontal, AppSpacing.medium)
                     .padding(.vertical, AppSpacing.xSmall)
                     .background(viewModel.canSave ? AppColors.accent : AppColors.backgroundSecondary)
@@ -139,10 +265,15 @@ struct EditAppointmentView: View {
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
+                        EditAppointmentAudit.record(
+                            operation: "cancel",
+                            appointmentID: viewModel.originalAppointment.id,
+                            tags: ["cancel"]
+                        )
                         dismiss()
                     }
                     .accessibilityIdentifier("cancelButton")
-                    .font(AppFonts.body) // Tokenized font for button
+                    .font(AppFonts.body)
                     .padding(.horizontal, AppSpacing.medium)
                     .padding(.vertical, AppSpacing.xSmall)
                     .background(AppColors.backgroundSecondary)
@@ -153,7 +284,32 @@ struct EditAppointmentView: View {
             .sheet(isPresented: $showDurationPicker) {
                 DurationPicker(minutes: $viewModel.duration)
             }
+            .onAppear {
+                EditAppointmentAudit.record(
+                    operation: "appear",
+                    appointmentID: viewModel.originalAppointment.id,
+                    tags: ["appear"]
+                )
+            }
         }
+    }
+
+    private static func formatDate(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum EditAppointmentAuditAdmin {
+    public static var lastSummary: String { EditAppointmentAudit.accessibilitySummary }
+    public static var lastJSON: String? { EditAppointmentAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        EditAppointmentAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 

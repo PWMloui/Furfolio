@@ -10,11 +10,62 @@
 
 import SwiftUI
 
+fileprivate struct AppointmentDetailAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String         // "view", "editSheet", "close", "showConflict"
+    let appointmentID: UUID
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[\(operation.capitalized)] \(appointmentID) [\(tags.joined(separator: ","))] at \(dateStr)\(detail != nil ? ": \(detail!)" : "")"
+    }
+}
+
+fileprivate final class AppointmentDetailAudit {
+    static private(set) var log: [AppointmentDetailAuditEvent] = []
+
+    static func record(
+        operation: String,
+        appointmentID: UUID,
+        tags: [String] = [],
+        actor: String? = "user",
+        context: String? = "AppointmentDetailView",
+        detail: String? = nil
+    ) {
+        let event = AppointmentDetailAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            appointmentID: appointmentID,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No appointment detail actions recorded."
+    }
+}
+
+
+// MARK: - AppointmentDetailView
+
 struct AppointmentDetailView: View {
     @ObservedObject var viewModel: AppointmentDetailViewModel
     @Environment(\.dismiss) private var dismiss
 
-    // Sheet/presentation state
     @State private var showEdit = false
 
     var body: some View {
@@ -25,28 +76,43 @@ struct AppointmentDetailView: View {
                 if viewModel.hasConflict, let conflictMsg = viewModel.conflictMessage {
                     AppointmentConflictBanner(
                         message: conflictMsg,
-                        onResolve: { showEdit = true },
+                        onResolve: {
+                            showEdit = true
+                            AppointmentDetailAudit.record(
+                                operation: "editSheet",
+                                appointmentID: viewModel.appointment.id,
+                                tags: ["editSheet", "fromConflict"],
+                                detail: "Edit sheet opened via conflict banner"
+                            )
+                        },
                         isVisible: .constant(true)
                     )
                     .accessibilityIdentifier("conflict_banner")
                     .padding(.top, 6)
+                    .onAppear {
+                        AppointmentDetailAudit.record(
+                            operation: "showConflict",
+                            appointmentID: viewModel.appointment.id,
+                            tags: ["conflict"],
+                            detail: viewModel.conflictMessage
+                        )
+                    }
                 }
 
                 // Dog/Owner/Service Summary
                 HStack(alignment: .center, spacing: 20) {
                     ProfileImageView(image: viewModel.dogImage)
                     VStack(alignment: .leading, spacing: 6) {
-                        // Using modular font and accessibility label
                         Text(viewModel.dogName)
-                            .font(AppFonts.title3Bold) // Tokenized font for title3 bold
+                            .font(AppFonts.title3Bold)
                             .accessibilityLabel("Dog Name: \(viewModel.dogName)")
                         Text(viewModel.ownerName)
-                            .font(AppFonts.subheadline) // Tokenized font for subheadline
-                            .foregroundColor(AppColors.secondaryText) // Tokenized secondary text color
+                            .font(AppFonts.subheadline)
+                            .foregroundColor(AppColors.secondaryText)
                             .accessibilityLabel("Owner: \(viewModel.ownerName)")
                         Text(viewModel.serviceType)
-                            .font(AppFonts.callout) // Tokenized font for callout
-                            .foregroundColor(AppColors.accent) // Tokenized accent color
+                            .font(AppFonts.callout)
+                            .foregroundColor(AppColors.accent)
                             .accessibilityLabel("Service: \(viewModel.serviceType)")
                     }
                 }
@@ -73,8 +139,8 @@ struct AppointmentDetailView: View {
                 if !viewModel.notes.isEmpty {
                     SectionBox(title: "Notes") {
                         Text(viewModel.notes)
-                            .font(AppFonts.body) // Tokenized body font
-                            .foregroundColor(AppColors.textPrimary) // Tokenized primary text color
+                            .font(AppFonts.body)
+                            .foregroundColor(AppColors.textPrimary)
                             .padding(8)
                     }
                 }
@@ -85,8 +151,8 @@ struct AppointmentDetailView: View {
                         ForEach(viewModel.behaviorLog, id: \.date) { entry in
                             HStack {
                                 Text(viewModel.formatDate(entry.date))
-                                    .font(AppFonts.caption) // Tokenized caption font
-                                    .foregroundColor(AppColors.secondaryText) // Tokenized secondary text color
+                                    .font(AppFonts.caption)
+                                    .foregroundColor(AppColors.secondaryText)
                                 Spacer()
                                 Text(entry.mood)
                                 if let note = entry.note, !note.isEmpty {
@@ -94,7 +160,7 @@ struct AppointmentDetailView: View {
                                 }
                             }
                             .padding(6)
-                            .background(AppColors.warningBackground) // Tokenized warning background color
+                            .background(AppColors.warningBackground)
                             .cornerRadius(6)
                         }
                     }
@@ -103,21 +169,43 @@ struct AppointmentDetailView: View {
                 // Edit/Reschedule button
                 Button {
                     showEdit = true
+                    AppointmentDetailAudit.record(
+                        operation: "editSheet",
+                        appointmentID: viewModel.appointment.id,
+                        tags: ["editSheet"],
+                        detail: "Edit sheet opened from button"
+                    )
                 } label: {
                     Label("Edit / Reschedule", systemImage: "pencil")
                         .frame(maxWidth: .infinity)
                         .accessibilityLabel("Edit or Reschedule Appointment")
                 }
-                .buttonStyle(PulseButtonStyle(color: AppColors.accent)) // Tokenized button color
+                .buttonStyle(PulseButtonStyle(color: AppColors.accent))
                 .padding(.top, 14)
             }
             .padding()
             .navigationTitle("Appointment Details")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") {
+                        AppointmentDetailAudit.record(
+                            operation: "close",
+                            appointmentID: viewModel.appointment.id,
+                            tags: ["close"],
+                            detail: "Detail view closed"
+                        )
+                        dismiss()
+                    }
                 }
             }
+        }
+        .onAppear {
+            AppointmentDetailAudit.record(
+                operation: "view",
+                appointmentID: viewModel.appointment.id,
+                tags: ["view"],
+                detail: "Appointment detail viewed"
+            )
         }
         .sheet(isPresented: $showEdit) {
             AddAppointmentView(viewModel: viewModel.editViewModel)
@@ -274,6 +362,13 @@ struct BehaviorLogEntry: Identifiable, Hashable {
     var dateHash: UUID { UUID() }
 }
 
+public enum AppointmentDetailAuditAdmin {
+    public static var lastSummary: String { AppointmentDetailAudit.accessibilitySummary }
+    public static var lastJSON: String? { AppointmentDetailAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        AppointmentDetailAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+}
 // MARK: - Preview
 
 // Demo/business/tokenized preview for AppointmentDetailView

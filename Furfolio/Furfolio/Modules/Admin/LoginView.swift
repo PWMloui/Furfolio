@@ -3,10 +3,72 @@
 //  LoginView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Modular, Auditable, Tokenized Login/Authentication View
 //
 
 import SwiftUI
+
+// MARK: - Audit/Event Logging for LoginView
+
+fileprivate struct LoginAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String          // "loginAttempt", "loginSuccess", "loginFailure", "roleChange", "rememberToggle", "forgotPassword", "openAppInfo", "openPrivacy"
+    let email: String?
+    let role: String?
+    let rememberMe: Bool?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let op = operation.capitalized
+        let user = email ?? ""
+        let roleStr = role ?? ""
+        let remember = rememberMe == nil ? "" : (rememberMe! ? "Remembered" : "Not remembered")
+        let msg = detail ?? ""
+        return "[\(op)] \(user) \(roleStr) \(remember) at \(dateStr)\(msg.isEmpty ? "" : ": \(msg)")"
+    }
+}
+
+fileprivate final class LoginAudit {
+    static private(set) var log: [LoginAuditEvent] = []
+
+    static func record(
+        operation: String,
+        email: String? = nil,
+        role: String? = nil,
+        rememberMe: Bool? = nil,
+        tags: [String] = [],
+        actor: String? = "user",
+        context: String? = nil,
+        detail: String? = nil
+    ) {
+        let event = LoginAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            email: email,
+            role: role,
+            rememberMe: rememberMe,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 1000 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No login events recorded."
+    }
+}
 
 // MARK: - Roles
 enum FurfolioRole: String, CaseIterable, Identifiable {
@@ -107,6 +169,17 @@ struct LoginView: View {
                     .pickerStyle(.segmented)
                     .accessibilityLabel("Select Role")
                     .accessibilityIdentifier("rolePicker")
+                    .onChange(of: selectedRole) { newRole in
+                        LoginAudit.record(
+                            operation: "roleChange",
+                            email: email,
+                            role: newRole.rawValue,
+                            rememberMe: rememberMe,
+                            tags: ["role", newRole.rawValue],
+                            actor: "user",
+                            context: "LoginView"
+                        )
+                    }
                     // TODO: Use selectedRole in authentication logic
 
                     // MARK: - Remember Me Toggle
@@ -117,6 +190,17 @@ struct LoginView: View {
                         .foregroundColor(AppColors.primaryText)
                         .accessibilityLabel("Remember Me")
                         .accessibilityIdentifier("rememberMeToggle")
+                        .onChange(of: rememberMe) { value in
+                            LoginAudit.record(
+                                operation: "rememberToggle",
+                                email: email,
+                                role: selectedRole.rawValue,
+                                rememberMe: value,
+                                tags: ["rememberMe", value ? "on" : "off"],
+                                actor: "user",
+                                context: "LoginView"
+                            )
+                        }
                 }
 
                 // MARK: - Error & Loading UI
@@ -157,6 +241,15 @@ struct LoginView: View {
 
                 // MARK: - Forgot Password Button
                 Button("Forgot Password?") {
+                    LoginAudit.record(
+                        operation: "forgotPassword",
+                        email: email,
+                        role: selectedRole.rawValue,
+                        rememberMe: rememberMe,
+                        tags: ["forgotPassword"],
+                        actor: "user",
+                        context: "LoginView"
+                    )
                     // TODO: Hook up forgot password/reset flow
                 }
                 .font(AppFonts.footnote)
@@ -170,6 +263,15 @@ struct LoginView: View {
                 // MARK: - Trust Center Links (App Info & Privacy)
                 HStack {
                     Button {
+                        LoginAudit.record(
+                            operation: "openAppInfo",
+                            email: email,
+                            role: selectedRole.rawValue,
+                            rememberMe: rememberMe,
+                            tags: ["appInfo"],
+                            actor: "user",
+                            context: "LoginView"
+                        )
                         // TODO: Show App Info/onboarding
                     } label: {
                         Label("App Info", systemImage: "info.circle")
@@ -181,6 +283,15 @@ struct LoginView: View {
                     Spacer()
 
                     Button {
+                        LoginAudit.record(
+                            operation: "openPrivacy",
+                            email: email,
+                            role: selectedRole.rawValue,
+                            rememberMe: rememberMe,
+                            tags: ["privacy"],
+                            actor: "user",
+                            context: "LoginView"
+                        )
                         // TODO: Show Privacy/Trust Center
                     } label: {
                         Label("Privacy", systemImage: "lock.shield")
@@ -202,7 +313,6 @@ struct LoginView: View {
                 .ignoresSafeArea()
             )
             .navigationBarHidden(true) // Use for wider compatibility
-            // TODO: Integrate audit logs, encryption, advanced authentication, etc.
         }
     }
     
@@ -214,20 +324,68 @@ struct LoginView: View {
         loginError = nil
         guard isValid else {
             loginError = "Enter a valid email and password."
+            LoginAudit.record(
+                operation: "loginFailure",
+                email: email,
+                role: selectedRole.rawValue,
+                rememberMe: rememberMe,
+                tags: ["login", "failure", "invalidInput"],
+                actor: "user",
+                context: "LoginView",
+                detail: loginError
+            )
             return
         }
         isLoggingIn = true
+        LoginAudit.record(
+            operation: "loginAttempt",
+            email: email,
+            role: selectedRole.rawValue,
+            rememberMe: rememberMe,
+            tags: ["login", "attempt"],
+            actor: "user",
+            context: "LoginView"
+        )
         // TODO: Integrate real authentication and audit logging here
         // Simulate async login (replace with your real auth logic)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             isLoggingIn = false
             // TODO: Integrate role-based authentication using selectedRole
             if email.lowercased() == "owner@furfolio.com" && password == "demo" {
+                LoginAudit.record(
+                    operation: "loginSuccess",
+                    email: email,
+                    role: selectedRole.rawValue,
+                    rememberMe: rememberMe,
+                    tags: ["login", "success"],
+                    actor: "user",
+                    context: "LoginView"
+                )
                 onLoginSuccess?()
             } else {
                 loginError = "Incorrect email or password."
+                LoginAudit.record(
+                    operation: "loginFailure",
+                    email: email,
+                    role: selectedRole.rawValue,
+                    rememberMe: rememberMe,
+                    tags: ["login", "failure", "authFailed"],
+                    actor: "user",
+                    context: "LoginView",
+                    detail: loginError
+                )
             }
         }
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum LoginAuditAdmin {
+    public static var lastSummary: String { LoginAudit.accessibilitySummary }
+    public static var lastJSON: String? { LoginAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        LoginAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 

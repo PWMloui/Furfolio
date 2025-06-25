@@ -2,10 +2,53 @@
 //  DashboardCelebrationView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular Celebration Overlay
 //
 
 import SwiftUI
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct CelebrationAuditEvent: Codable {
+    let timestamp: Date
+    let message: String
+    let particleCount: Int
+    let tags: [String]
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[Appear] \(message) (particles: \(particleCount)) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class CelebrationAudit {
+    static private(set) var log: [CelebrationAuditEvent] = []
+
+    static func record(
+        message: String,
+        particleCount: Int,
+        tags: [String] = ["celebration"]
+    ) {
+        let event = CelebrationAuditEvent(
+            timestamp: Date(),
+            message: message,
+            particleCount: particleCount,
+            tags: tags
+        )
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No celebration events recorded."
+    }
+}
+
+// MARK: - DashboardCelebrationView
 
 struct DashboardCelebrationView: View {
     @Binding var isPresented: Bool
@@ -14,6 +57,7 @@ struct DashboardCelebrationView: View {
     @State private var animateConfetti = false
 
     private let particleCount = 100
+    private let message = "🎉 Congratulations! 🎉 You've reached an important milestone!"
 
     var body: some View {
         ZStack {
@@ -67,6 +111,10 @@ struct DashboardCelebrationView: View {
             withAnimation(Animation.linear(duration: 4).repeatForever(autoreverses: false)) {
                 animateConfetti = true
             }
+            CelebrationAudit.record(
+                message: message,
+                particleCount: particleCount
+            )
         }
     }
 
@@ -128,6 +176,16 @@ struct ConfettiView: View {
                     .opacity(animate ? 0 : 1)
             }
         }
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum CelebrationAuditAdmin {
+    public static var lastSummary: String { CelebrationAudit.accessibilitySummary }
+    public static var lastJSON: String? { CelebrationAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        CelebrationAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 

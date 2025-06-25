@@ -2,19 +2,24 @@
 //  ConfirmActionSheet.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: analytics/audit–ready, Trust Center–ready, token-compliant, accessible, preview/test–injectable.
 //
-
-// MARK: - ConfirmActionSheet (Reusable Confirmation Dialog, Modular Token Styling)
-// A reusable confirmation dialog for Furfolio, supporting unified design system and consistent action handling.
-// Applies architectural enhancements for testability, accessibility, and multi-platform readiness.
 
 import SwiftUI
 import UIKit
 
-/// A generic, reusable confirmation dialog modifier for important user actions.
-/// Supports adaptive presentation for iOS/iPadOS (confirmationDialog) and macOS (alert),
-/// customizable button titles, haptic feedback, and accessibility enhancements.
+// MARK: - Analytics/Audit Protocol
+
+public protocol ConfirmActionSheetAnalyticsLogger {
+    func log(event: String, info: [String: Any]?)
+}
+public struct NullConfirmActionSheetAnalyticsLogger: ConfirmActionSheetAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: [String: Any]?) {}
+}
+
+// MARK: - ConfirmActionSheet (Reusable Confirmation Dialog, Modular Token Styling, Audit-Ready)
+
 struct ConfirmActionSheet: ViewModifier {
     @Binding var isPresented: Bool
     let title: String
@@ -25,6 +30,10 @@ struct ConfirmActionSheet: ViewModifier {
     let onConfirm: () -> Void
     let onCancel: (() -> Void)?
     let hapticFeedback: Bool
+    let auditTag: String?   // For Trust Center, compliance, or advanced audit.
+
+    // Injected analytics logger (preview/test-injectable)
+    static var analyticsLogger: ConfirmActionSheetAnalyticsLogger = NullConfirmActionSheetAnalyticsLogger()
 
     private enum Defaults {
         static let defaultConfirmTitle = "Delete"
@@ -45,12 +54,16 @@ struct ConfirmActionSheet: ViewModifier {
                     .font(AppFonts.button)
                     .foregroundColor(AppColors.accent)
                     .accessibilityLabel(Text(confirmTitle))
+                    .accessibilityHint(confirmRole == .destructive ?
+                        Text("Deletes the item. This action cannot be undone.") :
+                        Text("Confirms the action."))
                     Button(cancelTitle, role: .cancel) {
                         performCancel()
                     }
                     .font(AppFonts.button)
                     .foregroundColor(AppColors.accent)
                     .accessibilityLabel(Text(cancelTitle))
+                    .accessibilityHint(Text("Cancels and closes the dialog."))
                 },
                 message: {
                     if let message {
@@ -76,12 +89,16 @@ struct ConfirmActionSheet: ViewModifier {
                 .font(AppFonts.button)
                 .foregroundColor(AppColors.accent)
                 .accessibilityLabel(Text(confirmTitle))
+                .accessibilityHint(confirmRole == .destructive ?
+                    Text("Deletes the item. This action cannot be undone.") :
+                    Text("Confirms the action."))
                 Button(cancelTitle, role: .cancel) {
                     performCancel()
                 }
                 .font(AppFonts.button)
                 .foregroundColor(AppColors.accent)
                 .accessibilityLabel(Text(cancelTitle))
+                .accessibilityHint(Text("Cancels and closes the dialog."))
             } message: {
                 if let message {
                     Text(message)
@@ -99,10 +116,20 @@ struct ConfirmActionSheet: ViewModifier {
         if hapticFeedback {
             triggerHapticFeedback()
         }
+        ConfirmActionSheet.analyticsLogger.log(event: "confirm_tapped", info: [
+            "title": title,
+            "role": String(describing: confirmRole),
+            "auditTag": auditTag as Any
+        ])
         onConfirm()
     }
 
     private func performCancel() {
+        ConfirmActionSheet.analyticsLogger.log(event: "cancel_tapped", info: [
+            "title": title,
+            "role": String(describing: confirmRole),
+            "auditTag": auditTag as Any
+        ])
         onCancel?()
     }
 
@@ -114,9 +141,10 @@ struct ConfirmActionSheet: ViewModifier {
     }
 }
 
+// MARK: - View Extension for Attaching the ConfirmActionSheet
+
 extension View {
     /// Attaches a reusable confirmation dialog to this view.
-    ///
     /// - Parameters:
     ///   - isPresented: Binding to control the presentation of the dialog.
     ///   - title: The title text of the confirmation dialog.
@@ -125,9 +153,9 @@ extension View {
     ///   - confirmRole: Role of the confirm button (e.g. destructive, cancel). Defaults to `.destructive`.
     ///   - cancelTitle: Title for the cancel button. Defaults to "Cancel".
     ///   - hapticFeedback: Whether to trigger haptic feedback on confirm action. Defaults to false.
+    ///   - auditTag: Optional tag for Trust Center/compliance logging.
     ///   - onConfirm: Closure executed when the confirm button is tapped.
     ///   - onCancel: Optional closure executed when the cancel button is tapped.
-    /// - Returns: A view modified with the confirmation dialog behavior.
     func confirmActionSheet(
         isPresented: Binding<Bool>,
         title: String,
@@ -136,6 +164,7 @@ extension View {
         confirmRole: ButtonRole = .destructive,
         cancelTitle: String = ConfirmActionSheet.Defaults.defaultCancelTitle,
         hapticFeedback: Bool = false,
+        auditTag: String? = nil,
         onConfirm: @escaping () -> Void,
         onCancel: (() -> Void)? = nil
     ) -> some View {
@@ -149,15 +178,22 @@ extension View {
                 cancelTitle: cancelTitle,
                 onConfirm: onConfirm,
                 onCancel: onCancel,
-                hapticFeedback: hapticFeedback
+                hapticFeedback: hapticFeedback,
+                auditTag: auditTag
             )
         )
     }
 }
 
-// MARK: - Example Usage Preview
+// MARK: - Example Usage Preview with Analytics/Audit Logging
 
 struct ConfirmActionSheet_Previews: PreviewProvider {
+    struct SpyLogger: ConfirmActionSheetAnalyticsLogger {
+        func log(event: String, info: [String : Any]?) {
+            print("[ConfirmActionSheet] \(event): \(info ?? [:])")
+        }
+    }
+
     struct Demo: View {
         @State private var showDestructiveSheet = false
         @State private var showNonDestructiveSheet = false
@@ -183,6 +219,7 @@ struct ConfirmActionSheet_Previews: PreviewProvider {
                     confirmRole: .destructive,
                     cancelTitle: "Cancel",
                     hapticFeedback: true,
+                    auditTag: "delete_item",
                     onConfirm: {
                         lastAction = "Deleted"
                     },
@@ -205,6 +242,7 @@ struct ConfirmActionSheet_Previews: PreviewProvider {
                     confirmRole: .none,
                     cancelTitle: "Dismiss",
                     hapticFeedback: false,
+                    auditTag: "archive_item",
                     onConfirm: {
                         lastAction = "Archived"
                     },
@@ -219,7 +257,8 @@ struct ConfirmActionSheet_Previews: PreviewProvider {
     }
 
     static var previews: some View {
-        Group {
+        ConfirmActionSheet.analyticsLogger = SpyLogger()
+        return Group {
             Demo()
                 .previewDisplayName("iOS / iPadOS")
                 .previewDevice("iPhone 14")

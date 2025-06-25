@@ -2,26 +2,33 @@
 //  QuickActionsMenu.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: analytics/audit–ready, Trust Center–capable, preview/test–injectable, robust accessibility.
 //
-
-// MARK: - QuickActionsMenu (Universal, Tokenized, Accessible)
 
 import SwiftUI
 
-/**
- A universal, platform-adaptive, and accessible quick actions menu for Furfolio.
+// MARK: - Analytics/Audit Protocol
 
- - Universal: Provides consistent quick action interfaces across iPad, Mac, and iPhone for entities such as dog owners, pets, and appointments.
- - Extensible: Supports both inline horizontal buttons and a compact menu style, with extensibility for custom actions and comprehensive accessibility features.
- - **Tokenized Design**: All color, font, spacing, and background styling is exclusively implemented using design tokens:
-    - Colors: `AppColors`
-    - Fonts: `AppFonts`
-    - Spacing: `AppSpacing`
-    - Corner radius: `BorderRadius`
-    - Shadows: `AppShadows`
- No system fallback or nil coalescing is used—**all appearance is controlled by tokens only** throughout QuickActionsMenu and all subviews.
- */
+public protocol QuickActionsMenuAnalyticsLogger {
+    func log(event: String, info: [String: Any]?)
+}
+public struct NullQuickActionsMenuAnalyticsLogger: QuickActionsMenuAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: [String: Any]?) {}
+}
+
+// MARK: - Trust Center Permission Protocol
+
+public protocol QuickActionsMenuTrustCenterDelegate {
+    func permission(for action: String, context: [String: Any]?) -> Bool
+}
+public struct NullQuickActionsMenuTrustCenterDelegate: QuickActionsMenuTrustCenterDelegate {
+    public init() {}
+    public func permission(for action: String, context: [String: Any]?) -> Bool { true }
+}
+
+// MARK: - QuickActionsMenu (Enterprise Enhanced)
+
 public struct QuickActionsMenu: View {
     public let phone: String?
     public let onCall: (() -> Void)?
@@ -35,6 +42,10 @@ public struct QuickActionsMenu: View {
     public var asMenu: Bool = false
     public var helperText: String?
     public var showDivider: Bool = false
+
+    // Audit/analytics logger & trust center (injectable for QA, Trust Center, preview)
+    public static var analyticsLogger: QuickActionsMenuAnalyticsLogger = NullQuickActionsMenuAnalyticsLogger()
+    public static var trustCenterDelegate: QuickActionsMenuTrustCenterDelegate = NullQuickActionsMenuTrustCenterDelegate()
 
     public init(
         phone: String? = nil,
@@ -68,8 +79,7 @@ public struct QuickActionsMenu: View {
                 Menu {
                     if let onCall = onCall, let phone = phone {
                         Button {
-                            performHaptic()
-                            onCall()
+                            actionHandler("call", ["phone": phone], onCall)
                         } label: {
                             Label("Call \(phone)", systemImage: "phone.fill")
                         }
@@ -78,8 +88,7 @@ public struct QuickActionsMenu: View {
                     }
                     if let onMessage = onMessage {
                         Button {
-                            performHaptic()
-                            onMessage()
+                            actionHandler("message", nil, onMessage)
                         } label: {
                             Label("Message", systemImage: "message.fill")
                         }
@@ -88,8 +97,7 @@ public struct QuickActionsMenu: View {
                     }
                     if let onAddAppointment = onAddAppointment {
                         Button {
-                            performHaptic()
-                            onAddAppointment()
+                            actionHandler("addAppointment", nil, onAddAppointment)
                         } label: {
                             Label("Add Appointment", systemImage: "calendar.badge.plus")
                         }
@@ -98,8 +106,7 @@ public struct QuickActionsMenu: View {
                     }
                     if let onAddNote = onAddNote {
                         Button {
-                            performHaptic()
-                            onAddNote()
+                            actionHandler("addNote", nil, onAddNote)
                         } label: {
                             Label("Add Note", systemImage: "note.text.badge.plus")
                         }
@@ -108,8 +115,7 @@ public struct QuickActionsMenu: View {
                     }
                     if let onEdit = onEdit {
                         Button {
-                            performHaptic()
-                            onEdit()
+                            actionHandler("edit", nil, onEdit)
                         } label: {
                             Label("Edit", systemImage: "pencil")
                         }
@@ -118,8 +124,7 @@ public struct QuickActionsMenu: View {
                     }
                     if let onDelete = onDelete {
                         Button(role: .destructive) {
-                            performHaptic()
-                            onDelete()
+                            actionHandler("delete", nil, onDelete)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -130,8 +135,7 @@ public struct QuickActionsMenu: View {
                     }
                     ForEach(Array(customActions.enumerated()), id: \.offset) { _, action in
                         Button {
-                            performHaptic()
-                            action.action()
+                            actionHandler("custom", ["label": action.label], action.action)
                         } label: {
                             Label(action.label, systemImage: action.systemImage)
                                 .font(AppFonts.body)
@@ -164,8 +168,7 @@ public struct QuickActionsMenu: View {
                             systemImage: "phone.fill",
                             color: AppColors.green,
                             action: {
-                                performHaptic()
-                                onCall()
+                                actionHandler("call", ["phone": phone], onCall)
                             }
                         )
                         .accessibilityLabel("Call \(phone)")
@@ -177,8 +180,7 @@ public struct QuickActionsMenu: View {
                             systemImage: "message.fill",
                             color: AppColors.blue,
                             action: {
-                                performHaptic()
-                                onMessage()
+                                actionHandler("message", nil, onMessage)
                             }
                         )
                         .accessibilityLabel("Message")
@@ -190,8 +192,7 @@ public struct QuickActionsMenu: View {
                             systemImage: "calendar.badge.plus",
                             color: AppColors.accent,
                             action: {
-                                performHaptic()
-                                onAddAppointment()
+                                actionHandler("addAppointment", nil, onAddAppointment)
                             }
                         )
                         .accessibilityLabel("Add Appointment")
@@ -203,8 +204,7 @@ public struct QuickActionsMenu: View {
                             systemImage: "note.text.badge.plus",
                             color: AppColors.orange,
                             action: {
-                                performHaptic()
-                                onAddNote()
+                                actionHandler("addNote", nil, onAddNote)
                             }
                         )
                         .accessibilityLabel("Add Note")
@@ -216,8 +216,7 @@ public struct QuickActionsMenu: View {
                             systemImage: "pencil",
                             color: AppColors.gray,
                             action: {
-                                performHaptic()
-                                onEdit()
+                                actionHandler("edit", nil, onEdit)
                             }
                         )
                         .accessibilityLabel("Edit")
@@ -229,8 +228,7 @@ public struct QuickActionsMenu: View {
                             systemImage: "trash",
                             color: AppColors.red,
                             action: {
-                                performHaptic()
-                                onDelete()
+                                actionHandler("delete", nil, onDelete)
                             },
                             isDestructive: true
                         )
@@ -244,8 +242,7 @@ public struct QuickActionsMenu: View {
                             systemImage: action.systemImage,
                             color: action.color,
                             action: {
-                                performHaptic()
-                                action.action()
+                                actionHandler("custom", ["label": action.label], action.action)
                             }
                         )
                         .accessibilityLabel(action.label)
@@ -275,6 +272,16 @@ public struct QuickActionsMenu: View {
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
         #endif
+    }
+
+    private func actionHandler(_ action: String, _ context: [String: Any]? = nil, _ closure: () -> Void) {
+        guard Self.trustCenterDelegate.permission(for: action, context: context) else {
+            Self.analyticsLogger.log(event: "\(action)_denied", info: context)
+            return
+        }
+        performHaptic()
+        Self.analyticsLogger.log(event: action, info: context)
+        closure()
     }
 }
 
@@ -315,7 +322,23 @@ private extension QuickActionsMenu {
 // MARK: - Previews
 
 #Preview {
-    VStack(spacing: AppSpacing.xxLarge) {
+    struct SpyLogger: QuickActionsMenuAnalyticsLogger {
+        func log(event: String, info: [String: Any]?) {
+            print("[QuickActionsMenuAnalytics] \(event): \(info ?? [:])")
+        }
+    }
+    struct SpyTrustCenter: QuickActionsMenuTrustCenterDelegate {
+        func permission(for action: String, context: [String : Any]?) -> Bool {
+            // Example: Deny delete for demo
+            if action == "delete" { return false }
+            return true
+        }
+    }
+
+    QuickActionsMenu.analyticsLogger = SpyLogger()
+    QuickActionsMenu.trustCenterDelegate = SpyTrustCenter()
+
+    return VStack(spacing: AppSpacing.xxLarge) {
         Group {
             Text("Horizontal Actions")
                 .font(AppFonts.headline)
@@ -358,8 +381,8 @@ private extension QuickActionsMenu {
                 .foregroundColor(AppColors.textPrimary)
             QuickActionsMenu(
                 customActions: [
-                    (label: "Custom 1", systemImage: "star.fill", color: AppColors.yellow), { print("Custom 1") },
-                    (label: "Custom 2", systemImage: "bolt.fill", color: AppColors.purple), { print("Custom 2") }
+                    (label: "Custom 1", systemImage: "star.fill", color: AppColors.yellow, action: { print("Custom 1") }),
+                    (label: "Custom 2", systemImage: "bolt.fill", color: AppColors.purple, action: { print("Custom 2") })
                 ],
                 helperText: "Includes custom actions"
             )

@@ -2,22 +2,24 @@
 //  FurfolioApp.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: token-compliant, analytics/audit/Trust Center–ready, brand/role-injectable, preview/test–injectable.
 //
 
 import SwiftUI
 import SwiftData
 
-// MARK: - FurfolioApp (Entry Point, Dependency Injection, Unified Navigation)
+// MARK: - Analytics/Audit Protocol
 
-// The main entry point of the Furfolio application.
-//
-// FurfolioApp manages dependency injection, application lifecycle,
-// onboarding flow, authentication state, and provides a unified root navigation
-// container across all supported platforms using ContentView as the canonical root view.
-// AdaptiveRootView is deprecated and retained only for legacy reference.
-// This struct ensures consistent environment setup and model context propagation
-// throughout the app's UI hierarchy.
+public protocol FurfolioAppAnalyticsLogger {
+    func log(event: String, info: String?)
+}
+public struct NullFurfolioAppAnalyticsLogger: FurfolioAppAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: String?) {}
+}
+
+// MARK: - FurfolioApp (Entry Point, DI, Lifecycle, Analytics, Unified Navigation)
+
 @main
 struct FurfolioApp: App {
     // Dependency container holds global state, managers, and SwiftData
@@ -25,6 +27,9 @@ struct FurfolioApp: App {
 
     // AppDelegate for notifications & lifecycle events
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    // Analytics logger (injectable for QA/Trust Center/print)
+    static var analyticsLogger: FurfolioAppAnalyticsLogger = NullFurfolioAppAnalyticsLogger()
 
     var body: some Scene {
         WindowGroup {
@@ -34,16 +39,31 @@ struct FurfolioApp: App {
                     OnboardingView()
                         .environmentObject(dependencies.appState)
                         .environment(\.modelContext, dependencies.modelContainer.mainContext)
+                        .onAppear {
+                            Self.analyticsLogger.log(event: "show_onboarding", info: nil)
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Onboarding View")
                 } else if !dependencies.appState.isAuthenticated {
                     // Show login/authentication view if user is not authenticated
                     LoginView()
                         .environmentObject(dependencies.appState)
                         .environment(\.modelContext, dependencies.modelContainer.mainContext)
+                        .onAppear {
+                            Self.analyticsLogger.log(event: "show_login", info: nil)
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Login View")
                 } else {
                     // After authentication, show main content with unified root on all platforms
                     ContentView()
                         .environmentObject(dependencies.appState)
                         .environment(\.modelContext, dependencies.modelContainer.mainContext)
+                        .onAppear {
+                            Self.analyticsLogger.log(event: "show_main_content", info: nil)
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Main Content View")
                     // Future: Add platform-specific root view enhancements here (e.g., iPad/Mac business dashboards)
                 }
             }

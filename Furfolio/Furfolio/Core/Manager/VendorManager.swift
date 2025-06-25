@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Refactored for unified business management, multi-platform, and advanced UX.
-//  Enhanced 2025 by Senpai & ChatGPT.
+//  Enhanced 2025 by Senpai & ChatGPT
 //
 
 import Foundation
@@ -36,6 +36,15 @@ struct Vendor: Identifiable, Codable, Equatable, Hashable {
         self.notes = notes
         self.lastTransactionDate = lastTransactionDate
     }
+
+    // Tagging for audit and BI
+    var tags: [String] {
+        var t = ["vendor"]
+        if (contactInfo?.contains("@") ?? false) { t.append("email") }
+        if servicesProvided.contains(where: { $0.localizedCaseInsensitiveContains("groom") }) { t.append("grooming") }
+        if servicesProvided.count > 3 { t.append("multi-service") }
+        return t
+    }
 }
 
 // MARK: - VendorManager
@@ -44,7 +53,7 @@ struct Vendor: Identifiable, Codable, Equatable, Hashable {
  
  - Modular: Designed for easy integration, extension, and separation of vendor logic.
  - Tokenized: Vendor data is structured for integration with design systems (badges, icons, colors, etc.).
- - Auditable: All vendor data operations should support audit/event logging and future compliance requirements.
+ - Auditable: All vendor data operations now have audit/event logging for compliance.
  - Privacy & Localization: Ready for implementation of owner/staff privacy controls and localization/internationalization.
  
  Thread-safe, offline-ready, and scalable for future multi-user roles.
@@ -58,11 +67,61 @@ final class VendorManager: ObservableObject {
     // For change broadcasting to multiple modules if needed
     private let vendorSubject = PassthroughSubject<[Vendor], Never>()
 
+    // MARK: - Audit/Event Log
+
+    struct VendorAuditEvent: Codable {
+        let timestamp: Date
+        let operation: String         // "add", "remove", "update", "load", "save"
+        let vendorId: UUID?
+        let vendorName: String?
+        let tags: [String]
+        let actor: String?
+        let context: String?
+        let errorDescription: String?
+        var accessibilityLabel: String {
+            let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+            let vname = vendorName ?? ""
+            let vpart = vname.isEmpty ? "" : " \"\(vname)\""
+            return "\(operation.capitalized)\(vpart) (\(tags.joined(separator: ","))) at \(dateStr)\(errorDescription == nil ? "" : ": \(errorDescription!)")"
+        }
+    }
+    private(set) static var auditLog: [VendorAuditEvent] = []
+
+    private func logEvent(
+        operation: String,
+        vendor: Vendor? = nil,
+        tags: [String] = [],
+        actor: String? = nil,
+        context: String? = nil,
+        error: Error? = nil
+    ) {
+        let event = VendorAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            vendorId: vendor?.id,
+            vendorName: vendor?.name,
+            tags: tags,
+            actor: actor,
+            context: context,
+            errorDescription: error?.localizedDescription
+        )
+        Self.auditLog.append(event)
+        if Self.auditLog.count > 500 { Self.auditLog.removeFirst() }
+    }
+
+    static func exportLastAuditEventJSON() -> String? {
+        guard let last = auditLog.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    var accessibilitySummary: String {
+        Self.auditLog.last?.accessibilityLabel ?? "No vendor events recorded."
+    }
+
     // MARK: - Add Vendor
-    /// Adds a vendor to the manager.
-    /// All vendor data changes should be logged for audit/compliance.
-    func addVendor(_ vendor: Vendor) {
-        // TODO: Integrate audit/event logging before mutation/persistence for compliance.
+    func addVendor(_ vendor: Vendor, actor: String? = nil, context: String? = nil) {
+        logEvent(operation: "add", vendor: vendor, tags: vendor.tags, actor: actor, context: context)
         queue.async(flags: .barrier) {
             var newList = self.vendors
             newList.append(vendor)
@@ -74,10 +133,8 @@ final class VendorManager: ObservableObject {
     }
 
     // MARK: - Remove Vendor
-    /// Removes a vendor from the manager.
-    /// All vendor data changes should be logged for audit/compliance.
-    func removeVendor(_ vendor: Vendor) {
-        // TODO: Integrate audit/event logging before mutation/persistence for compliance.
+    func removeVendor(_ vendor: Vendor, actor: String? = nil, context: String? = nil) {
+        logEvent(operation: "remove", vendor: vendor, tags: vendor.tags, actor: actor, context: context)
         queue.async(flags: .barrier) {
             let newList = self.vendors.filter { $0.id != vendor.id }
             DispatchQueue.main.async {
@@ -88,10 +145,8 @@ final class VendorManager: ObservableObject {
     }
 
     // MARK: - Update Vendor
-    /// Updates an existing vendor in the manager.
-    /// All vendor data changes should be logged for audit/compliance.
-    func updateVendor(_ vendor: Vendor) {
-        // TODO: Integrate audit/event logging before mutation/persistence for compliance.
+    func updateVendor(_ vendor: Vendor, actor: String? = nil, context: String? = nil) {
+        logEvent(operation: "update", vendor: vendor, tags: vendor.tags, actor: actor, context: context)
         queue.async(flags: .barrier) {
             guard let idx = self.vendors.firstIndex(where: { $0.id == vendor.id }) else { return }
             var newList = self.vendors
@@ -128,10 +183,8 @@ final class VendorManager: ObservableObject {
     }
 
     // MARK: - Load & Save (Async-Ready for Future SwiftData/Cloud/Offline)
-    /// Loads vendors from persistent storage.
-    /// All vendor data changes should be logged for audit/compliance.
-    func load(completion: @escaping () -> Void = {}) {
-        // TODO: Integrate audit/event logging before mutation/persistence for compliance.
+    func load(actor: String? = nil, context: String? = nil, completion: @escaping () -> Void = {}) {
+        logEvent(operation: "load", tags: ["load"], actor: actor, context: context)
         queue.async(flags: .barrier) {
             // Placeholder: Load vendors from persistent storage.
             DispatchQueue.main.async {
@@ -141,10 +194,8 @@ final class VendorManager: ObservableObject {
         }
     }
 
-    /// Saves vendors to persistent storage.
-    /// All vendor data changes should be logged for audit/compliance.
-    func save(completion: @escaping () -> Void = {}) {
-        // TODO: Integrate audit/event logging before mutation/persistence for compliance.
+    func save(actor: String? = nil, context: String? = nil, completion: @escaping () -> Void = {}) {
+        logEvent(operation: "save", tags: ["save"], actor: actor, context: context)
         queue.async(flags: .barrier) {
             // Placeholder: Save vendors to persistent storage.
             DispatchQueue.main.async {
@@ -162,8 +213,6 @@ final class VendorManager: ObservableObject {
 // MARK: - Example/Test Data
 #if DEBUG
 extension VendorManager {
-    /// Example/test data for previews and unit/UI testing only.
-    /// Vendors in this list are for development/preview/testing purposes and should be flagged or excluded in production.
     static var example: VendorManager {
         let manager = VendorManager()
         manager.vendors = [

@@ -2,116 +2,63 @@
 //  RevenueForecastEngine.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: Audit, BI, analytics, accessibility, export, dashboard tokens.
+//  Author: mac + ChatGPT
 //
 
 import Foundation
 
-// MARK: - RevenueForecastEngine (Tokenized, Modular, Accessible Revenue Projections)
-
-/**
- `RevenueForecastEngine` is a modular, tokenized, auditable engine responsible for revenue forecasting and projections within Furfolio.
-
- Furfolio is designed as an offline-first, owner-focused financial management platform. This engine supports Furfolio’s mission by providing accurate, timely revenue forecasts that empower business owners to make informed decisions without requiring constant internet connectivity.
-
- The engine encapsulates multiple forecasting strategies, including simple linear projections, multi-month forecasts, and yearly revenue estimations, while providing extensibility points for UI integration and analytics.
-
- All UI summary and analytics outputs must utilize design tokens for color, font, and badge presentation to ensure consistency and accessibility. Audit and event hooks are integrated to enable comprehensive tracking and logging of forecast updates.
-
- This engine is built with extensibility, tokenization for UI, and audit logging in mind, ensuring a robust foundation for future enhancements.
- */
-
 public protocol RevenueForecasting: AnyObject, Codable {
-    /// Projects next month's revenue based on recent trends.
-    /// - Parameter charges: Array of `Charge` representing revenue transactions.
-    /// - Returns: Forecasted revenue amount for the next month.
-    ///
-    /// - Note: Implementations should support extensibility and tokenized UI integration without hardcoded UI elements.
     func forecastNextMonthRevenue(charges: [Charge]) -> Double
-
-    /// Forecasts revenue for the next N months using average monthly revenue.
-    /// - Parameters:
-    ///   - charges: Array of `Charge` representing revenue transactions.
-    ///   - months: Number of months to forecast ahead.
-    /// - Returns: Array of tuples with month start `Date` and projected revenue.
-    ///
-    /// - Note: Designed for extensibility and integration with tokenized UI components.
     func forecastRevenue(charges: [Charge], months: Int) -> [(month: Date, projectedRevenue: Double)]
-
-    /// Forecasts total revenue for the current year (using YTD and trend).
-    /// - Parameter charges: Array of `Charge` representing revenue transactions.
-    /// - Returns: Projected total revenue for the current calendar year.
-    ///
-    /// - Note: Supports audit logging and tokenized UI display.
     func forecastFullYearRevenue(charges: [Charge]) -> Double
-
-    /// Returns projected month-end revenue and percent toward a target goal.
-    /// - Parameters:
-    ///   - charges: Array of `Charge` representing revenue transactions.
-    ///   - monthlyGoal: Target revenue goal for the current month.
-    /// - Returns: Tuple containing forecasted revenue and progress ratio (0.0 to 1.0).
-    ///
-    /// - Note: Enables audit event hooks and UI tokenization.
     func forecastGoalProgress(charges: [Charge], monthlyGoal: Double) -> (forecast: Double, progress: Double)
-
-    /// Produces a human-readable summary string for UI dashboards.
-    /// - Parameter charges: Array of `Charge` representing revenue transactions.
-    /// - Returns: Summary string describing current revenue status.
-    ///
-    /// - Note: Future implementations should avoid hardcoded colors or icons and instead use design tokens for badges and fonts to ensure accessibility and consistency.
     func uiSummary(for charges: [Charge]) -> String
 }
 
+// MARK: - Enhanced Revenue Forecast Engine
+
 @MainActor
 public final class RevenueForecastEngine: RevenueForecasting {
-    // MARK: - Interface
-
-    /// Shared singleton instance for app-wide usage.
     public static let shared = RevenueForecastEngine()
+    public static let previewEngine: RevenueForecasting = RevenueForecastEngine()
 
-    /// Dummy instance for SwiftUI previews and testing.
-    public static let previewEngine: RevenueForecasting = {
-        let engine = RevenueForecastEngine()
-        return engine
-    }()
+    // --- ENHANCEMENTS: Audit, Tags, Analytics ---
 
-    /// Optional closure hook called after forecast updates, useful for analytics and audit logs.
+    /// Audit trail of all forecasts and events (for BI, trust center, debugging).
+    public private(set) var auditLog: [String] = []
+
+    /// Analytics: Badge tokens for dashboard or reporting ("onTarget", "atRisk", "growth", "decline", etc.)
+    public private(set) var forecastBadgeTokens: [String] = []
+
+    /// Risk score (demo logic, use in dashboards)
+    public private(set) var riskScore: Int = 0
+
+    /// Current trend direction ("growth", "decline", "steady")
+    public private(set) var trendDirection: String = "steady"
+
+    /// Accessible summary for UI/VoiceOver.
+    public var accessibilityLabel: String {
+        let last = auditLog.last ?? "No recent forecast."
+        return "Revenue engine: \(trendDirection) trend. \(last)"
+    }
+
     public var onForecastUpdate: ((Double) -> Void)?
-
-    // MARK: - Initialization
 
     private init() {}
 
-    // MARK: - Public Methods
+    // MARK: - Public Methods (with Analytics & Audit)
 
-    /**
-     Projects next month's revenue based on recent trends using a simple linear growth model.
-
-     - Parameter charges: Array of `Charge` representing revenue transactions.
-     - Returns: Forecasted revenue amount for the next month.
-
-     Usage:
-     ```
-     let forecast = engine.forecastNextMonthRevenue(charges: charges)
-     ```
-
-     - Note: Designed for extensibility, tokenized UI integration, and audit logging.
-     */
     public func forecastNextMonthRevenue(charges: [Charge]) -> Double {
-        guard !charges.isEmpty else {
-            notifyForecastUpdate(amount: 0)
-            return 0
-        }
+        guard !charges.isEmpty else { addAudit("No charges available for forecast."); updateBadgesAndRisk(0, 0); return 0 }
 
         let calendar = Calendar.current
         let now = Date()
-        guard let thisMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) else {
-            notifyForecastUpdate(amount: 0)
-            return 0
-        }
-        guard let lastMonthStart = calendar.date(byAdding: .month, value: -1, to: thisMonthStart),
+        guard let thisMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now)),
+              let lastMonthStart = calendar.date(byAdding: .month, value: -1, to: thisMonthStart),
               let lastMonthEnd = calendar.date(byAdding: .day, value: -1, to: thisMonthStart) else {
-            notifyForecastUpdate(amount: 0)
+            addAudit("Calendar error during forecast.")
+            updateBadgesAndRisk(0, 0)
             return 0
         }
 
@@ -125,31 +72,14 @@ public final class RevenueForecastEngine: RevenueForecasting {
         let forecast = thisMonthTotal + (thisMonthTotal * growth)
         let finalForecast = max(forecast, 0)
 
+        addAudit("Next month forecast: \(finalForecast.rounded(.toNearestOrAwayFromZero)) (\(growth > 0 ? "growth" : (growth < 0 ? "decline" : "steady")))")
+        updateBadgesAndRisk(growth, finalForecast)
         notifyForecastUpdate(amount: finalForecast)
         return finalForecast
     }
 
-    /**
-     Forecasts revenue for the next N months using average monthly revenue over the last 6 months.
-
-     - Parameters:
-       - charges: Array of `Charge` representing revenue transactions.
-       - months: Number of months to forecast ahead (default is 3).
-     - Returns: Array of tuples containing month start `Date` and projected revenue.
-
-     Usage:
-     ```
-     let forecasts = engine.forecastRevenue(charges: charges, months: 6)
-     ```
-
-     - Note: Supports tokenized UI integration and audit hooks.
-     */
     public func forecastRevenue(charges: [Charge], months: Int = 3) -> [(month: Date, projectedRevenue: Double)] {
-        guard !charges.isEmpty, months > 0 else {
-            notifyForecastUpdate(amount: 0)
-            return []
-        }
-
+        guard !charges.isEmpty, months > 0 else { addAudit("No data for multi-month forecast."); updateBadgesAndRisk(0, 0); return [] }
         let calendar = Calendar.current
         let now = Date()
         var monthTotals: [Double] = []
@@ -158,10 +88,8 @@ public final class RevenueForecastEngine: RevenueForecasting {
             guard let monthStart = calendar.date(byAdding: .month, value: -i, to: now),
                   let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) else { continue }
             let monthCharges = charges.filter { $0.date >= monthStart && $0.date < nextMonthStart }
-            let total = monthCharges.reduce(0) { $0 + $1.amount }
-            monthTotals.append(total)
+            monthTotals.append(monthCharges.reduce(0, +) { $0 + $1.amount })
         }
-
         let avgMonthly: Double = monthTotals.isEmpty ? 0 : monthTotals.reduce(0, +) / Double(monthTotals.count)
         var forecasts: [(Date, Double)] = []
 
@@ -170,137 +98,146 @@ public final class RevenueForecastEngine: RevenueForecasting {
                 forecasts.append((nextMonth, avgMonthly))
             }
         }
-
+        addAudit("Forecasted \(months) months at avg \(avgMonthly.rounded(.toNearestOrAwayFromZero)).")
+        updateBadgesAndRisk(0, avgMonthly)
         notifyForecastUpdate(amount: avgMonthly)
         return forecasts
     }
 
-    /**
-     Forecasts total revenue for the current year based on year-to-date revenue and trend extrapolation.
-
-     - Parameter charges: Array of `Charge` representing revenue transactions.
-     - Returns: Projected total revenue for the current calendar year.
-
-     Usage:
-     ```
-     let yearlyForecast = engine.forecastFullYearRevenue(charges: charges)
-     ```
-
-     - Note: Designed for audit logging and tokenized UI display.
-     */
     public func forecastFullYearRevenue(charges: [Charge]) -> Double {
         let calendar = Calendar.current
         let now = Date()
         guard let yearStart = calendar.date(from: calendar.dateComponents([.year], from: now)) else {
-            notifyForecastUpdate(amount: 0)
+            addAudit("Year start not found.")
+            updateBadgesAndRisk(0, 0)
             return 0
         }
-
         let ytdCharges = charges.filter { $0.date >= yearStart && $0.date <= now }
         let totalYTD = ytdCharges.reduce(0) { $0 + $1.amount }
-
         let daysSoFar = calendar.dateComponents([.day], from: yearStart, to: now).day ?? 1
         let totalDays = calendar.range(of: .day, in: .year, for: now)?.count ?? 365
-
         let projected = (Double(totalYTD) / Double(daysSoFar)) * Double(totalDays)
+        addAudit("Full year revenue projected: \(projected.rounded(.toNearestOrAwayFromZero)).")
+        updateBadgesAndRisk(0, projected)
         notifyForecastUpdate(amount: projected)
         return projected
     }
 
-    /**
-     Calculates projected month-end revenue and progress toward a monthly revenue goal.
-
-     - Parameters:
-       - charges: Array of `Charge` representing revenue transactions.
-       - monthlyGoal: Target revenue goal for the current month.
-     - Returns: Tuple containing forecasted revenue and progress ratio (0.0 to 1.0).
-
-     Usage:
-     ```
-     let (forecast, progress) = engine.forecastGoalProgress(charges: charges, monthlyGoal: 10000)
-     ```
-
-     - Note: Enables audit event hooks and UI tokenization.
-     */
     public func forecastGoalProgress(charges: [Charge], monthlyGoal: Double) -> (forecast: Double, progress: Double) {
         let calendar = Calendar.current
         let now = Date()
         guard let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) else {
-            notifyForecastUpdate(amount: 0)
+            addAudit("Month start not found.")
+            updateBadgesAndRisk(0, 0)
             return (0, 0)
         }
-
         let monthCharges = charges.filter { $0.date >= monthStart && $0.date <= now }
         let totalSoFar = monthCharges.reduce(0) { $0 + $1.amount }
-
         let daysInMonth = calendar.range(of: .day, in: .month, for: now)?.count ?? 30
         let daysSoFar = calendar.dateComponents([.day], from: monthStart, to: now).day ?? 1
-
         let projected = (Double(totalSoFar) / Double(daysSoFar)) * Double(daysInMonth)
         let progress = monthlyGoal > 0 ? projected / monthlyGoal : 0
         let cappedProgress = min(progress, 1.0)
-
+        addAudit("Forecast goal progress: \(projected.rounded(.toNearestOrAwayFromZero)) (\(Int(cappedProgress * 100))%).")
+        updateBadgesAndRisk(0, projected)
         notifyForecastUpdate(amount: projected)
         return (projected, cappedProgress)
     }
 
-    /**
-     Produces a human-readable summary string for UI dashboards to quickly convey revenue status.
-
-     - Parameter charges: Array of `Charge` representing revenue transactions.
-     - Returns: Readable summary string.
-
-     Usage:
-     ```
-     let summary = engine.uiSummary(for: charges)
-     ```
-
-     - Note: Future summary outputs must return not just strings, but also color and icon tokens for dashboard badge presentation to support tokenized UI and accessibility.
-
-     - TODO: Return a tuple including summary text, badge color token (AppColors), and icon (SF Symbol or token) for dashboard use.
-     */
     public func uiSummary(for charges: [Charge]) -> String {
         let forecast = forecastNextMonthRevenue(charges: charges)
         let yearlyProjection = forecastFullYearRevenue(charges: charges)
-
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.maximumFractionDigits = 2
-
         let forecastStr = formatter.string(from: NSNumber(value: forecast)) ?? "$0"
         let yearlyStr = formatter.string(from: NSNumber(value: yearlyProjection)) ?? "$0"
-
-        return "Next Month Forecast: \(forecastStr)\nYearly Projection: \(yearlyStr)"
+        let badge = forecastBadgeTokens.last ?? "unknown"
+        return "Forecast: \(forecastStr) [\(badge)]\nYearly: \(yearlyStr)"
     }
 
-    // MARK: - Internal Helpers
+    // MARK: - Audit/BI Helpers
+
+    private func addAudit(_ entry: String) {
+        let ts = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(ts)] \(entry)")
+        if auditLog.count > 1000 { auditLog.removeFirst() }
+    }
+
+    private func updateBadgesAndRisk(_ growth: Double, _ forecast: Double) {
+        forecastBadgeTokens.removeAll()
+        if growth > 0.04 { forecastBadgeTokens.append("growth"); trendDirection = "growth" }
+        else if growth < -0.04 { forecastBadgeTokens.append("decline"); trendDirection = "decline" }
+        else { forecastBadgeTokens.append("steady"); trendDirection = "steady" }
+        if forecast < 500 { forecastBadgeTokens.append("atRisk"); riskScore = 3 }
+        else if forecast > 10000 { forecastBadgeTokens.append("onTarget"); riskScore = 0 }
+        else { riskScore = 1 }
+    }
+
+    public func exportJSON() -> String? {
+        struct Export: Codable {
+            let trendDirection: String
+            let riskScore: Int
+            let forecastBadgeTokens: [String]
+            let lastAuditLog: [String]
+        }
+        let export = Export(
+            trendDirection: trendDirection,
+            riskScore: riskScore,
+            forecastBadgeTokens: forecastBadgeTokens,
+            lastAuditLog: Array(auditLog.suffix(10))
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // MARK: - SwiftUI/Preview/Test Helpers
+
+    public func demoForecasts(for months: Int = 6) -> [(month: Date, projectedRevenue: Double)] {
+        var fakeCharges: [Charge] = []
+        let calendar = Calendar.current
+        for i in 1...12 {
+            if let d = calendar.date(byAdding: .month, value: -i, to: Date()) {
+                fakeCharges.append(Charge(date: d, amount: Double(arc4random_uniform(4000) + 2000)))
+            }
+        }
+        return forecastRevenue(charges: fakeCharges, months: months)
+    }
+
+    // MARK: - Internal Notification
 
     private func notifyForecastUpdate(amount: Double) {
         onForecastUpdate?(amount)
         NotificationCenter.default.post(name: .RevenueForecastUpdated, object: self, userInfo: ["amount": amount])
+    }
+
+    // MARK: - At-Risk/High-Growth Filters (for dashboards)
+
+    public func atRiskPeriods() -> [String] {
+        auditLog.filter { $0.contains("atRisk") }
+    }
+    public func highGrowthPeriods() -> [String] {
+        auditLog.filter { $0.contains("growth") }
     }
 }
 
 // MARK: - Notification.Name Extension
 
 public extension Notification.Name {
-    /// Notification posted after any revenue forecast update occurs.
     static let RevenueForecastUpdated = Notification.Name("RevenueForecastUpdated")
 }
 
 // MARK: - Codable Support
 
 extension RevenueForecastEngine {
-    enum CodingKeys: CodingKey {
-        // No stored properties to encode/decode currently.
-    }
+    enum CodingKeys: CodingKey {}
+    public convenience init(from decoder: Decoder) throws { self.init() }
+    public func encode(to encoder: Encoder) throws {}
+}
 
-    public convenience init(from decoder: Decoder) throws {
-        self.init()
-        // No properties to decode; placeholder for future expansion.
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        // No properties to encode; placeholder for future expansion.
-    }
+// MARK: - Charge Model (Minimal for Demo)
+public struct Charge: Codable {
+    public var date: Date
+    public var amount: Double
+    public init(date: Date, amount: Double) { self.date = date; self.amount = amount }
 }

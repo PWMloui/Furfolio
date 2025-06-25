@@ -2,19 +2,36 @@
 //  NotificationSettingsView.swift
 //  Furfolio
 //
-//  Architectural summary:
-//  - This view provides a centralized interface for users to manage their notification preferences across all Furfolio-supported platforms (iOS, iPadOS, macOS).
-//  - The view is ready for Trust Center/audit trail support, with hooks for logging notification setting changes.
-//  - Notification preferences are managed via a dedicated ObservableObject ViewModel, enabling multi-user, testing, and preview support.
-//  - The UI is built with NavigationStack for modern SwiftUI navigation and consistent experience on all platforms.
-//  - Adaptive layout, onboarding/documentation links, and localization placeholders are included for future expansion.
+//  Enhanced: tokenized, auditable, diagnostics-ready, modular, and preview/test-injectable.
 //
-//  Trust Center/Multi-platform ready.
 
 import SwiftUI
 import UserNotifications
 
+// MARK: - Audit Logger Protocol
+
+public protocol NotificationAuditLogger {
+    func log(event: NotificationAuditEvent)
+}
+public struct NullNotificationAuditLogger: NotificationAuditLogger {
+    public init() {}
+    public func log(event: NotificationAuditEvent) {}
+}
+public struct NotificationAuditEvent {
+    public let key: String
+    public let newValue: Bool
+    public let timestamp: Date
+    public let userID: String?
+    public init(key: String, newValue: Bool, userID: String? = nil) {
+        self.key = key
+        self.newValue = newValue
+        self.timestamp = .init()
+        self.userID = userID
+    }
+}
+
 // MARK: - ViewModel for Notification Settings
+
 class NotificationSettingsViewModel: ObservableObject {
     // User preferences (AppStorage-backed)
     @AppStorage("notificationsEnabled") var notificationsEnabled: Bool = true {
@@ -29,7 +46,6 @@ class NotificationSettingsViewModel: ObservableObject {
     @AppStorage("marketingNotificationsEnabled") var marketingNotificationsEnabled: Bool = false {
         didSet { logNotificationSettingChange("marketingNotificationsEnabled", marketingNotificationsEnabled) }
     }
-    // New toggles for future features
     @AppStorage("expenseRemindersEnabled") var expenseRemindersEnabled: Bool = false {
         didSet { logNotificationSettingChange("expenseRemindersEnabled", expenseRemindersEnabled) }
     }
@@ -42,6 +58,29 @@ class NotificationSettingsViewModel: ObservableObject {
 
     // For navigation, onboarding, etc.
     let learnMoreURL = URL(string: "https://furfolio.app/docs/notifications")!
+
+    // Diagnostics
+    var diagnosticsSummary: String {
+        let enabled = [
+            notificationsEnabled,
+            appointmentRemindersEnabled,
+            taskRemindersEnabled,
+            marketingNotificationsEnabled,
+            expenseRemindersEnabled,
+            inventoryNotificationsEnabled
+        ].filter { $0 }.count
+        return "Enabled: \(enabled)/6"
+    }
+
+    // Audit/analytics
+    private let auditLogger: NotificationAuditLogger
+    private let userID: String?
+
+    // Init (inject for preview/test)
+    init(auditLogger: NotificationAuditLogger = NullNotificationAuditLogger(), userID: String? = nil) {
+        self.auditLogger = auditLogger
+        self.userID = userID
+    }
 
     // MARK: - Permission Handling
     func handleNotificationsEnabledChanged(to newValue: Bool) {
@@ -64,11 +103,11 @@ class NotificationSettingsViewModel: ObservableObject {
 
     // MARK: - Audit Logging
     func logNotificationSettingChange(_ key: String, _ newValue: Bool) {
-        // Placeholder for Trust Center/audit logging
-        // Example: TrustCenter.log(event: .notificationSettingChanged(key, newValue))
-        // print("[Audit] \(key) changed to \(newValue)")
+        auditLogger.log(event: NotificationAuditEvent(key: key, newValue: newValue, userID: userID))
     }
 }
+
+// MARK: - View
 
 struct NotificationSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -86,12 +125,12 @@ struct NotificationSettingsView: View {
                         .accessibilityAddTraits(.isHeader)
                 ) {
                     Toggle(isOn: $viewModel.notificationsEnabled) {
-                        VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
+                        VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
                             Text(NSLocalizedString("Enable Notifications", comment: "Toggle title"))
-                                .font(AppFonts.body) // replaced .fontWeight(.semibold) with AppFonts.body
+                                .font(AppFonts.body ?? .body)
                             Text(NSLocalizedString("Receive important alerts, reminders, and updates from Furfolio.", comment: "Toggle description"))
-                                .font(AppFonts.caption) // replaced .font(.caption)
-                                .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
+                                .font(AppFonts.caption ?? .caption)
+                                .foregroundColor(AppColors.textSecondary ?? .secondary)
                         }
                     }
                     .onChange(of: viewModel.notificationsEnabled) { newValue in
@@ -103,7 +142,7 @@ struct NotificationSettingsView: View {
                     HStack {
                         Spacer()
                         Link(NSLocalizedString("Learn More", comment: "Learn more link"), destination: viewModel.learnMoreURL)
-                            .font(AppFonts.caption) // replaced .font(.caption)
+                            .font(AppFonts.caption ?? .caption)
                             .accessibilityLabel(Text(NSLocalizedString("Learn more about notifications", comment: "Accessibility label for learn more link")))
                             .accessibilityHint(Text(NSLocalizedString("Opens Furfolio documentation about notifications in your browser.", comment: "Accessibility hint for learn more link")))
                         Spacer()
@@ -117,47 +156,55 @@ struct NotificationSettingsView: View {
                             .accessibilityAddTraits(.isHeader)
                     ) {
                         Toggle(isOn: $viewModel.appointmentRemindersEnabled) {
-                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
+                            VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
                                 Text(NSLocalizedString("Appointment Reminders", comment: "Toggle title"))
                                 Text(NSLocalizedString("Get reminders for upcoming grooming appointments.", comment: "Toggle description"))
-                                    .font(AppFonts.caption2) // replaced .font(.caption2)
-                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2 ?? .caption2)
+                                    .foregroundColor(AppColors.textSecondary ?? .secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.taskRemindersEnabled) {
-                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
+                            VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
                                 Text(NSLocalizedString("Task Reminders", comment: "Toggle title"))
                                 Text(NSLocalizedString("Be notified about tasks and to-dos.", comment: "Toggle description"))
-                                    .font(AppFonts.caption2) // replaced .font(.caption2)
-                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2 ?? .caption2)
+                                    .foregroundColor(AppColors.textSecondary ?? .secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.marketingNotificationsEnabled) {
-                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
+                            VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
                                 Text(NSLocalizedString("Marketing & Tips", comment: "Toggle title"))
                                 Text(NSLocalizedString("Occasional updates, business tips, and special offers.", comment: "Toggle description"))
-                                    .font(AppFonts.caption2) // replaced .font(.caption2)
-                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2 ?? .caption2)
+                                    .foregroundColor(AppColors.textSecondary ?? .secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.expenseRemindersEnabled) {
-                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
+                            VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
                                 Text(NSLocalizedString("Expense Reminders", comment: "Toggle title"))
                                 Text(NSLocalizedString("Get reminders for expense tracking and payments. (Coming Soon)", comment: "Toggle description"))
-                                    .font(AppFonts.caption2) // replaced .font(.caption2)
-                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2 ?? .caption2)
+                                    .foregroundColor(AppColors.textSecondary ?? .secondary)
                             }
                         }
                         Toggle(isOn: $viewModel.inventoryNotificationsEnabled) {
-                            VStack(alignment: .leading, spacing: AppSpacing.small) { // TODO: Confirm AppSpacing.small exists
+                            VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
                                 Text(NSLocalizedString("Inventory Notifications", comment: "Toggle title"))
                                 Text(NSLocalizedString("Be alerted about low inventory and supply levels. (Coming Soon)", comment: "Toggle description"))
-                                    .font(AppFonts.caption2) // replaced .font(.caption2)
-                                    .foregroundColor(AppColors.textSecondary) // replaced .foregroundColor(.secondary)
+                                    .font(AppFonts.caption2 ?? .caption2)
+                                    .foregroundColor(AppColors.textSecondary ?? .secondary)
                             }
                         }
                     }
                     .accessibilityElement(children: .contain)
+                }
+
+                // Diagnostics/Debug
+                Section {
+                    Text("\(NSLocalizedString("Diagnostics", comment: "")): \(viewModel.diagnosticsSummary)")
+                        .font(AppFonts.footnote ?? .footnote)
+                        .foregroundColor(AppColors.textSecondary ?? .secondary)
+                        .accessibilityHidden(true)
                 }
             }
             .navigationTitle(NSLocalizedString("Notifications", comment: "Navigation title"))
@@ -180,6 +227,8 @@ struct NotificationSettingsView: View {
         }
     }
 }
+
+// MARK: - Previews
 
 #Preview {
     Group {

@@ -1,9 +1,12 @@
-
-//FeedbackAndSupportView.swift
-
+// FeedbackAndSupportView.swift
 
 import SwiftUI
 import Combine
+
+// MARK: - TODOs
+// - Replace DefaultFeedbackService with real API
+// - Implement analytics logging and error reporting
+// - Ensure AppColors, AppFonts, and AppSpacing tokens are fully defined
 
 protocol FeedbackSubmitting {
     func submitFeedback(_ message: String, completion: @escaping (Bool) -> Void)
@@ -33,19 +36,27 @@ final class FeedbackAndSupportViewModel: ObservableObject {
                 if success {
                     self.feedback = ""
                     self.showSuccessAlert = true
+                    // Haptic feedback for success
+                    #if os(iOS)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    #endif
                 } else {
                     self.showErrorAlert = true
+                    // Haptic feedback for error
+                    #if os(iOS)
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    #endif
                 }
             }
         }
     }
 }
 
-// MARK: - Default Service (To be replaced with real implementation)
+// MARK: - Default Service Stub (Replace with real implementation)
 
 final class DefaultFeedbackService: FeedbackSubmitting {
     func submitFeedback(_ message: String, completion: @escaping (Bool) -> Void) {
-        // TODO: Replace with actual networking/API logic and analytics logging
+        // TODO: Replace with actual networking/API logic, analytics logging
         DispatchQueue.global().asyncAfter(deadline: .now() + 1.1) {
             completion(true)
         }
@@ -57,22 +68,28 @@ final class DefaultFeedbackService: FeedbackSubmitting {
 struct FeedbackAndSupportView: View {
     @StateObject private var viewModel: FeedbackAndSupportViewModel
 
+    // Allow injection for previews/tests
     init(viewModel: FeedbackAndSupportViewModel = FeedbackAndSupportViewModel(feedbackService: DefaultFeedbackService())) {
         _viewModel = StateObject(wrappedValue: viewModel)
     }
 
+    @FocusState private var isTextEditorFocused: Bool
+
     var body: some View {
         ScrollView {
-            VStack(spacing: AppSpacing.xLarge) { // 24 replaced with AppSpacing.xLarge
+            VStack(spacing: AppSpacing.xLarge ?? 24) {
                 headerSection
                 descriptionText
                 feedbackForm
                 submitButton
                 contactInfo
             }
-            .padding(AppSpacing.medium) // TODO: Replace with AppSpacing token if not defined
+            .padding(AppSpacing.medium ?? 16)
+            .onTapGesture {
+                isTextEditorFocused = false // Tap outside to dismiss keyboard
+            }
         }
-        .background(AppColors.background) // Used design token
+        .background(AppColors.background ?? Color(UIColor.systemBackground))
         .navigationTitle(LocalizedStringKey("Feedback & Support"))
         .navigationBarTitleDisplayMode(.inline)
         .alert(LocalizedStringKey("Thank you!"), isPresented: $viewModel.showSuccessAlert) {
@@ -85,89 +102,104 @@ struct FeedbackAndSupportView: View {
         } message: {
             Text(LocalizedStringKey("There was an error submitting your feedback. Please try again later."))
         }
+        .animation(.easeInOut, value: viewModel.isSubmitting)
     }
 
     private var headerSection: some View {
         Image(systemName: "bubble.left.and.bubble.right.fill")
             .resizable()
             .scaledToFit()
-            .frame(width: AppSpacing.xxxLarge, height: AppSpacing.xxxLarge) // 64 replaced with AppSpacing.xxxLarge
-            .foregroundStyle(AppColors.accent)
-            .padding(.top, AppSpacing.large) // TODO: Replace .large with correct token if not defined
+            .frame(width: AppSpacing.xxxLarge ?? 64, height: AppSpacing.xxxLarge ?? 64)
+            .foregroundStyle(AppColors.accent ?? Color.accentColor)
+            .padding(.top, AppSpacing.large ?? 20)
             .accessibilityLabel(LocalizedStringKey("Feedback and Support Icon"))
             .accessibilityHint(LocalizedStringKey("Decorative header image representing feedback and support"))
     }
 
     private var descriptionText: some View {
-        VStack(spacing: AppSpacing.small) { // 8 replaced with AppSpacing.small
+        VStack(spacing: AppSpacing.small ?? 8) {
             Text(LocalizedStringKey("Feedback & Support"))
-                .font(AppFonts.title.bold()) // Use design token
+                .font(AppFonts.title?.bold() ?? .title.bold())
                 .accessibilityAddTraits(.isHeader)
 
             Text(LocalizedStringKey("Share your thoughts, suggest features, or report an issue. Our team appreciates your feedback and will get back to you as soon as possible."))
                 .multilineTextAlignment(.center)
-                .font(AppFonts.body) // Use design token
-                .foregroundStyle(AppColors.secondaryText) // TODO: Replace with correct secondaryText token if available
+                .font(AppFonts.body ?? .body)
+                .foregroundStyle(AppColors.secondaryText ?? .secondary)
         }
-        .padding(.horizontal, AppSpacing.medium) // TODO: Replace with token if not defined
+        .padding(.horizontal, AppSpacing.medium ?? 16)
     }
 
     private var feedbackForm: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.small) { // 8 replaced with AppSpacing.small
+        VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
             Text(LocalizedStringKey("Your Feedback"))
-                .font(AppFonts.headline) // Use design token
+                .font(AppFonts.headline ?? .headline)
 
             ZStack(alignment: .topLeading) {
                 if viewModel.feedback.isEmpty {
                     Text(LocalizedStringKey("Type your message here…"))
-                        .foregroundStyle(AppColors.secondaryText) // TODO: Replace with correct token if available
-                        .padding(.top, AppSpacing.small) // 8
-                        .padding(.horizontal, AppSpacing.xxSmall) // 4
+                        .foregroundStyle(AppColors.secondaryText ?? .secondary)
+                        .padding(.top, AppSpacing.small ?? 8)
+                        .padding(.horizontal, AppSpacing.xxSmall ?? 4)
+                        .accessibilityHidden(true)
                 }
                 TextEditor(text: $viewModel.feedback)
-                    .frame(height: 140) // TODO: Consider using a height token if available
-                    .padding(AppSpacing.xxSmall) // 4
-                    .background(AppColors.secondaryBackground) // Used design token
-                    .clipShape(RoundedRectangle(cornerRadius: 10)) // TODO: Use token for radius if available
+                    .focused($isTextEditorFocused)
+                    .frame(height: 140)
+                    .padding(AppSpacing.xxSmall ?? 4)
+                    .background(AppColors.secondaryBackground ?? Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: AppSpacing.large ?? 10))
                     .accessibilityLabel(LocalizedStringKey("Feedback text"))
                     .accessibilityHint(LocalizedStringKey("Enter your feedback or support request here"))
             }
         }
-        .padding(.horizontal, AppSpacing.medium) // TODO: Replace with token if not defined
+        .padding(.horizontal, AppSpacing.medium ?? 16)
     }
 
     private var submitButton: some View {
-        Button(action: viewModel.submitFeedback) {
+        Button(action: {
+            viewModel.submitFeedback()
+            isTextEditorFocused = false
+        }) {
             HStack {
                 if viewModel.isSubmitting {
-                    ProgressView().progressViewStyle(.circular)
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(1.1)
+                        .tint(AppColors.accent ?? .accentColor)
+                        .padding(.trailing, 6)
                 }
                 Text(LocalizedStringKey("Send Feedback"))
-                    .font(AppFonts.button) // TODO: Use AppFonts.button or appropriate token
+                    .font(AppFonts.button ?? .headline)
                     .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity)
-            .padding(AppSpacing.medium) // TODO: Replace with token if not defined
-            .background(AppColors.accent.opacity(0.2)) // Used design token
-            .foregroundStyle(AppColors.accent)
-            .clipShape(RoundedRectangle(cornerRadius: 10)) // TODO: Use token for radius if available
+            .padding(AppSpacing.medium ?? 16)
+            .background(
+                (viewModel.isSubmitting || viewModel.feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ? (AppColors.accent ?? .accentColor).opacity(0.09)
+                : (AppColors.accent ?? .accentColor).opacity(0.19)
+            )
+            .foregroundStyle(AppColors.accent ?? .accentColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppSpacing.large ?? 10))
+            .animation(.easeInOut(duration: 0.15), value: viewModel.isSubmitting)
         }
         .disabled(viewModel.feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSubmitting)
-        .padding(.horizontal, AppSpacing.medium) // TODO: Replace with token if not defined
+        .padding(.horizontal, AppSpacing.medium ?? 16)
         .accessibilityLabel(LocalizedStringKey("Send Feedback"))
         .accessibilityHint(LocalizedStringKey("Send your feedback to the Furfolio team"))
     }
 
     private var contactInfo: some View {
-        VStack(spacing: AppSpacing.xSmall) { // 6 replaced with AppSpacing.xSmall
+        VStack(spacing: AppSpacing.xSmall ?? 6) {
             Text(LocalizedStringKey("Contact support@furfolio.app"))
-                .font(AppFonts.footnote) // Use design token
-                .foregroundStyle(AppColors.secondaryText) // TODO: Replace with correct token if available
+                .font(AppFonts.footnote ?? .footnote)
+                .foregroundStyle(AppColors.secondaryText ?? .secondary)
             Link(LocalizedStringKey("Visit Help Center"), destination: URL(string: "https://furfolio.app/help")!)
-                .font(AppFonts.footnote) // Use design token
+                .font(AppFonts.footnote ?? .footnote)
         }
-        .padding(.top, AppSpacing.xLarge) // 24
-        .padding(.bottom, AppSpacing.large) // 12
+        .padding(.top, AppSpacing.xLarge ?? 24)
+        .padding(.bottom, AppSpacing.large ?? 12)
     }
 }
 
@@ -188,7 +220,7 @@ struct FeedbackAndSupportView_Previews: PreviewProvider {
             .previewDisplayName("Dark Mode")
 
             NavigationStack {
-                FeedbackAndSupportView()
+                FeedbackAndSupportView(viewModel: FeedbackAndSupportViewModel(feedbackService: DefaultFeedbackService()))
             }
             .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
             .previewDisplayName("Accessibility Large Text")

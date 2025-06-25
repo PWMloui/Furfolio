@@ -7,10 +7,58 @@
 //  ChargeFilterBar.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular, Analytics-Ready
 //
 
 import SwiftUI
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct ChargeFilterAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String      // "filter", "clear"
+    let filterType: String?
+    let tags: [String]
+    let context: String
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let op = operation.capitalized
+        let filter = filterType ?? "All"
+        return "[\(op)] filter: \(filter) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class ChargeFilterAudit {
+    static private(set) var log: [ChargeFilterAuditEvent] = []
+
+    static func record(
+        operation: String,
+        filterType: String?,
+        tags: [String] = [],
+        context: String = "ChargeFilterBar"
+    ) {
+        let event = ChargeFilterAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            filterType: filterType,
+            tags: tags,
+            context: context
+        )
+        log.append(event)
+        if log.count > 100 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No charge filter events recorded."
+    }
+}
+
+// MARK: - ChargeFilterBar
 
 struct ChargeFilterBar: View {
     /// Selected charge type filter (nil means "All")
@@ -25,6 +73,13 @@ struct ChargeFilterBar: View {
             HStack(spacing: AppSpacing.filterChipSpacing) { // Use spacing token for filter chips
                 // "All" filter button
                 Button(action: {
+                    if selectedChargeType != nil {
+                        ChargeFilterAudit.record(
+                            operation: "clear",
+                            filterType: nil,
+                            tags: ["all", "clear"]
+                        )
+                    }
                     selectedChargeType = nil
                     onClearFilters?()
                 }) {
@@ -34,11 +89,9 @@ struct ChargeFilterBar: View {
                         .padding(.vertical, AppSpacing.filterChipVertical) // Tokenized vertical padding
                         .padding(.horizontal, AppSpacing.filterChipHorizontal) // Tokenized horizontal padding
                         .background(
-                            // Use accent and secondary background tokens
                             selectedChargeType == nil ? AppColors.accent : AppColors.backgroundSecondary
                         )
                         .foregroundColor(
-                            // Use text on accent and primary text tokens
                             selectedChargeType == nil ? AppColors.textOnAccent : AppColors.textPrimary
                         )
                         .clipShape(Capsule())
@@ -51,13 +104,23 @@ struct ChargeFilterBar: View {
                         if selectedChargeType == type {
                             selectedChargeType = nil
                             onClearFilters?()
+                            ChargeFilterAudit.record(
+                                operation: "clear",
+                                filterType: type,
+                                tags: ["clear", type]
+                            )
                         } else {
                             selectedChargeType = type
+                            ChargeFilterAudit.record(
+                                operation: "filter",
+                                filterType: type,
+                                tags: ["filter", type]
+                            )
                         }
                     }) {
                         Text(type)
-                            .font(AppFonts.subheadline) // Tokenized font
-                            .font(AppFonts.subheadlineSemibold) // Tokenized semibold variant
+                            .font(AppFonts.subheadline)
+                            .font(AppFonts.subheadlineSemibold)
                             .padding(.vertical, AppSpacing.filterChipVertical)
                             .padding(.horizontal, AppSpacing.filterChipHorizontal)
                             .background(
@@ -71,12 +134,21 @@ struct ChargeFilterBar: View {
                     .accessibilityLabel(Text("Filter charges by \(type)"))
                 }
             }
-            .padding(.horizontal, AppSpacing.filterBarHorizontal) // Use horizontal padding token
-            .padding(.vertical, AppSpacing.filterBarVertical) // Use vertical padding token
+            .padding(.horizontal, AppSpacing.filterBarHorizontal)
+            .padding(.vertical, AppSpacing.filterBarVertical)
         }
-        .background(AppColors.background) // Tokenized background color
+        .background(AppColors.background)
         .accessibilityElement(children: .contain)
-        // Accessibility: Treat filter bar as a group of controls
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum ChargeFilterAuditAdmin {
+    public static var lastSummary: String { ChargeFilterAudit.accessibilitySummary }
+    public static var lastJSON: String? { ChargeFilterAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        ChargeFilterAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 

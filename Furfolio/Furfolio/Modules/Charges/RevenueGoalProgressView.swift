@@ -2,10 +2,72 @@
 //  RevenueGoalProgressView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular Revenue Goal Progress UI
 //
 
 import SwiftUI
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct RevenueGoalProgressAuditEvent: Codable {
+    let timestamp: Date
+    let currentRevenue: Double
+    let goalRevenue: Double
+    let progress: Double
+    let color: String
+    let label: String?
+    let tags: [String]
+    var accessibilityLabel: String {
+        let percent = Int(progress * 100)
+        let colorText = color.capitalized
+        let base = "\(label ?? "Revenue progress"): \(percent)% (\(currentRevenue) of \(goalRevenue)), Color: \(colorText)"
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[Appear] \(base) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class RevenueGoalProgressAudit {
+    static private(set) var log: [RevenueGoalProgressAuditEvent] = []
+
+    static func record(
+        currentRevenue: Double,
+        goalRevenue: Double,
+        progress: Double,
+        color: Color,
+        label: String?,
+        tags: [String] = []
+    ) {
+        let colorDesc: String
+        switch color {
+        case .green: colorDesc = "green"
+        case .orange: colorDesc = "orange"
+        case .red: colorDesc = "red"
+        default: colorDesc = color.description
+        }
+        let event = RevenueGoalProgressAuditEvent(
+            timestamp: Date(),
+            currentRevenue: currentRevenue,
+            goalRevenue: goalRevenue,
+            progress: progress,
+            color: colorDesc,
+            label: label,
+            tags: tags
+        )
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No revenue goal events recorded."
+    }
+}
+
+// MARK: - RevenueGoalProgressView
 
 struct RevenueGoalProgressView: View {
     var currentRevenue: Double
@@ -68,11 +130,31 @@ struct RevenueGoalProgressView: View {
         .padding()
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        .onAppear {
+            RevenueGoalProgressAudit.record(
+                currentRevenue: currentRevenue,
+                goalRevenue: goalRevenue,
+                progress: progress,
+                color: progressColor,
+                label: label,
+                tags: ["revenueGoal", "progress"]
+            )
+        }
     }
 
     private var accessibilityLabel: String {
         let labelText = label ?? "Revenue progress"
         return "\(labelText), \(formattedCurrentRevenue) out of \(formattedGoalRevenue)"
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum RevenueGoalProgressAuditAdmin {
+    public static var lastSummary: String { RevenueGoalProgressAudit.accessibilitySummary }
+    public static var lastJSON: String? { RevenueGoalProgressAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        RevenueGoalProgressAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 

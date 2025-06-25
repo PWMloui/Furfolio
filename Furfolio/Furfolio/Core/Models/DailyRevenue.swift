@@ -2,66 +2,58 @@
 //  DailyRevenue.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: analytics/audit–ready, Trust Center–capable, preview/test–injectable.
 //
 
 import Foundation
 import SwiftData
 
-// MARK: - DailyRevenue (Modular, Tokenized, Auditable Daily Revenue Record)
+// MARK: - Analytics/Audit Protocol
 
-/// Represents a modular, auditable, and tokenized daily revenue entity used across analytics, dashboards, compliance, and business logic layers.
-/// This class supports detailed audit trails, charge breakdowns, business reporting, and UI tokenization for seamless integration in workflows and event logging.
-/// Designed for robust data integrity, compliance tracking, and flexible usage in financial reporting and analytics pipelines.
+public protocol DailyRevenueAnalyticsLogger {
+    func log(event: String, info: [String: Any]?)
+}
+public struct NullDailyRevenueAnalyticsLogger: DailyRevenueAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: [String: Any]?) {}
+}
+
+// MARK: - Trust Center Permission Protocol
+
+public protocol DailyRevenueTrustCenterDelegate {
+    func permission(for action: String, context: [String: Any]?) -> Bool
+}
+public struct NullDailyRevenueTrustCenterDelegate: DailyRevenueTrustCenterDelegate {
+    public init() {}
+    public func permission(for action: String, context: [String: Any]?) -> Bool { true }
+}
+
 @MainActor
 @Model
 final class DailyRevenue: Identifiable, ObservableObject, Equatable, Hashable {
 
-    // MARK: - Identifiers
+    // MARK: - Analytics/Trust Center (Injectable)
+    static var analyticsLogger: DailyRevenueAnalyticsLogger = NullDailyRevenueAnalyticsLogger()
+    static var trustCenterDelegate: DailyRevenueTrustCenterDelegate = NullDailyRevenueTrustCenterDelegate()
 
-    /// Unique identifier for this daily revenue record.
-    /// Used for audit traceability, data integrity checks, and unique referencing in UI tokenization and business workflows.
+    // MARK: - Identifiers
     @Attribute(.unique)
     var id: UUID = UUID()
 
     // MARK: - Dates
-
-    /// The date this record represents, normalized to the start of the day (midnight/local).
-    /// Critical for time-based analytics, reporting consistency, and compliance with financial period boundaries.
     var date: Date
-
-    /// Last updated timestamp for this record.
-    /// Essential for audit trails, change tracking, synchronization, and compliance reporting.
     var lastUpdated: Date
 
     // MARK: - Revenue Data
-
-    /// Total revenue amount for the day.
-    /// Central to business analytics, financial reporting, and KPI calculations.
     var totalAmount: Double
 
     // MARK: - References
-
-    /// List of associated charge IDs representing individual transactions or breakdowns.
-    /// Supports detailed audit event linking, charge-level analytics, and UI tokenization for drill-down capabilities.
     private(set) var chargeIDs: [UUID]
 
     // MARK: - Notes
-
-    /// Optional notes or tags for special events, corrections, or annotations.
-    /// Useful for compliance comments, audit remarks, and business workflow annotations.
     var notes: String?
 
     // MARK: - Init
-
-    /// Initializes a new DailyRevenue record.
-    /// - Parameters:
-    ///   - id: Unique identifier, default is new UUID.
-    ///   - date: The date for this revenue record, normalized to start of day.
-    ///   - totalAmount: Total revenue amount, defaults to 0.
-    ///   - chargeIDs: List of associated charge IDs, default empty.
-    ///   - notes: Optional notes or tags for audit or business context.
-    ///   - lastUpdated: Timestamp of last update, default to current date/time.
     init(
         id: UUID = UUID(),
         date: Date,
@@ -71,50 +63,77 @@ final class DailyRevenue: Identifiable, ObservableObject, Equatable, Hashable {
         lastUpdated: Date = Date()
     ) {
         self.id = id
-        self.date = Calendar.current.startOfDay(for: date) // Always store as start of day
+        self.date = Calendar.current.startOfDay(for: date)
         self.totalAmount = totalAmount
         self.chargeIDs = chargeIDs
         self.notes = notes
         self.lastUpdated = lastUpdated
+        Self.analyticsLogger.log(event: "created", info: [
+            "id": id.uuidString,
+            "date": self.date,
+            "totalAmount": totalAmount
+        ])
     }
 
     // MARK: - ChargeIDs Mutation
 
-    /// Adds a charge ID to the list if not already present.
-    /// Ensures audit event linkage for new charges and supports incremental analytics updates.
-    /// - Parameter id: The charge UUID to add.
-    func addChargeID(_ id: UUID) {
+    func addChargeID(_ id: UUID, by user: String? = nil) {
+        guard Self.trustCenterDelegate.permission(for: "addChargeID", context: [
+            "dailyRevenueID": self.id.uuidString,
+            "chargeID": id.uuidString,
+            "user": user as Any
+        ]) else {
+            Self.analyticsLogger.log(event: "addChargeID_denied", info: [
+                "dailyRevenueID": self.id.uuidString,
+                "chargeID": id.uuidString,
+                "user": user as Any
+            ])
+            return
+        }
         guard !chargeIDs.contains(id) else { return }
         chargeIDs.append(id)
-        updateLastModified(reason: "Added chargeID \(id)")
+        updateLastModified(reason: "Added chargeID \(id)", user: user)
+        Self.analyticsLogger.log(event: "chargeID_added", info: [
+            "dailyRevenueID": self.id.uuidString,
+            "chargeID": id.uuidString,
+            "user": user as Any
+        ])
     }
 
-    /// Removes a charge ID from the list if it exists.
-    /// Supports audit event correction, charge-level analytics updates, and business workflow adjustments.
-    /// - Parameter id: The charge UUID to remove.
-    func removeChargeID(_ id: UUID) {
+    func removeChargeID(_ id: UUID, by user: String? = nil) {
+        guard Self.trustCenterDelegate.permission(for: "removeChargeID", context: [
+            "dailyRevenueID": self.id.uuidString,
+            "chargeID": id.uuidString,
+            "user": user as Any
+        ]) else {
+            Self.analyticsLogger.log(event: "removeChargeID_denied", info: [
+                "dailyRevenueID": self.id.uuidString,
+                "chargeID": id.uuidString,
+                "user": user as Any
+            ])
+            return
+        }
         if let index = chargeIDs.firstIndex(of: id) {
             chargeIDs.remove(at: index)
-            updateLastModified(reason: "Removed chargeID \(id)")
+            updateLastModified(reason: "Removed chargeID \(id)", user: user)
+            Self.analyticsLogger.log(event: "chargeID_removed", info: [
+                "dailyRevenueID": self.id.uuidString,
+                "chargeID": id.uuidString,
+                "user": user as Any
+            ])
         }
     }
 
     // MARK: - Computed Properties
 
-    /// Returns true if the date corresponds to today.
-    /// Useful for UI highlighting, real-time analytics, and workflow triggers.
     var isToday: Bool {
         Calendar.current.isDateInToday(date)
     }
 
-    /// Returns true if totalAmount is zero.
-    /// Helps identify empty revenue days for reporting filters and business logic conditions.
     var isEmpty: Bool {
         totalAmount == 0
     }
 
-    /// Returns the localized day of the week string for the date.
-    /// Used in UI displays, reports, and temporal analytics grouping.
     var dayOfWeek: String {
         let formatter = DateFormatter()
         formatter.locale = Locale.current
@@ -122,20 +141,12 @@ final class DailyRevenue: Identifiable, ObservableObject, Equatable, Hashable {
         return formatter.string(from: date)
     }
 
-    // MARK: - Formatting Helpers
-
-    /// Formatted date string for display in dashboard views and reports.
-    /// Ensures consistent UI presentation and localized date formatting.
     var formattedDate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
     }
 
-    /// Returns formatted currency string for totalAmount.
-    /// Supports localization and currency formatting for UI display and financial reporting.
-    /// - Parameter locale: Optional locale to override default currency formatting.
-    /// - Returns: Currency formatted string.
     func formattedAmount(locale: Locale? = nil) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
@@ -147,30 +158,64 @@ final class DailyRevenue: Identifiable, ObservableObject, Equatable, Hashable {
 
     // MARK: - Business Logic Helpers
 
-    /// Updates the total revenue by adding the given amount.
-    /// Integrates audit/event logging and triggers analytics recalculations as needed.
-    /// - Parameter amount: The amount to add (can be negative).
-    func updateTotal(by amount: Double) {
+    func updateTotal(by amount: Double, by user: String? = nil) {
+        guard Self.trustCenterDelegate.permission(for: "updateTotal", context: [
+            "dailyRevenueID": self.id.uuidString,
+            "amount": amount,
+            "user": user as Any
+        ]) else {
+            Self.analyticsLogger.log(event: "updateTotal_denied", info: [
+                "dailyRevenueID": self.id.uuidString,
+                "amount": amount,
+                "user": user as Any
+            ])
+            return
+        }
         totalAmount += amount
-        updateLastModified(reason: "Updated total by \(amount)")
+        updateLastModified(reason: "Updated total by \(amount)", user: user)
+        Self.analyticsLogger.log(event: "total_updated", info: [
+            "dailyRevenueID": self.id.uuidString,
+            "amount": amount,
+            "newTotal": totalAmount,
+            "user": user as Any
+        ])
     }
 
-    /// Resets the total revenue to zero.
-    /// Useful for business workflows requiring revenue correction or data resets, with audit trail capture.
-    func resetRevenue() {
+    func resetRevenue(by user: String? = nil) {
+        guard Self.trustCenterDelegate.permission(for: "resetRevenue", context: [
+            "dailyRevenueID": self.id.uuidString,
+            "user": user as Any
+        ]) else {
+            Self.analyticsLogger.log(event: "resetRevenue_denied", info: [
+                "dailyRevenueID": self.id.uuidString,
+                "user": user as Any
+            ])
+            return
+        }
         totalAmount = 0
-        updateLastModified(reason: "Reset total revenue to zero")
+        updateLastModified(reason: "Reset total revenue to zero", user: user)
+        Self.analyticsLogger.log(event: "revenue_reset", info: [
+            "dailyRevenueID": self.id.uuidString,
+            "user": user as Any
+        ])
     }
 
     // MARK: - Audit Trail
 
-    /// Updates lastUpdated timestamp and can be extended to log audit events.
-    /// Ensures compliance and traceability for all modifications.
-    /// - Parameter reason: A description of the change for audit/event logging.
-    private func updateLastModified(reason: String) {
+    private func updateLastModified(reason: String, user: String? = nil) {
         lastUpdated = Date()
-        // TODO: Integrate audit logging here, e.g.:
-        // AuditLogger.log(event: "DailyRevenue \(id) changed: \(reason)")
+        Self.analyticsLogger.log(event: "lastModified", info: [
+            "dailyRevenueID": self.id.uuidString,
+            "reason": reason,
+            "user": user as Any,
+            "timestamp": lastUpdated
+        ])
+    }
+
+    // MARK: - Accessibility
+
+    var accessibilityLabel: String {
+        "Daily revenue: \(formattedAmount()) for \(formattedDate). \(notes ?? "")"
     }
 
     // MARK: - Equatable & Hashable
@@ -195,8 +240,6 @@ final class DailyRevenue: Identifiable, ObservableObject, Equatable, Hashable {
 
     // MARK: - Sample Data
 
-    /// Static sample instance for previews and testing.
-    /// Demonstrates demo/business logic scenarios and tokenized preview intent for UI and analytics validation.
     static let sample = DailyRevenue(
         date: Date(),
         totalAmount: 1234.56,

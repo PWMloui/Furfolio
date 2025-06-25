@@ -2,17 +2,26 @@
 //  AboutAppView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: token-compliant, analytics/audit-ready, fully accessible, brand/white-label, modular.
 //
-
 import SwiftUI
+
+// MARK: - About App Analytics Protocol
+
+public protocol AboutAppViewAnalyticsLogger {
+    func log(event: String, info: String)
+}
+public struct NullAboutAppViewAnalyticsLogger: AboutAppViewAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: String) {}
+}
 
 // MARK: - AboutAppView (Furfolio About & Credits, Tokenized Styling)
 
-/// View displaying information about the Furfolio app, including version, features, and credits.
 struct AboutAppView: View {
-    @State private var showDeveloperDebugSection = false // Feature flag toggle for developer debug section
-    
+    @State private var showDeveloperDebugSection = false
+    static var analyticsLogger: AboutAppViewAnalyticsLogger = NullAboutAppViewAnalyticsLogger()
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -25,11 +34,9 @@ struct AboutAppView: View {
                             .frame(width: 80, height: 80)
                             .foregroundStyle(AppColors.accent)
                             .accessibilityHidden(true)
-                        
                         Text("Furfolio")
                             .font(AppFonts.largeTitleBold)
                             .accessibilityAddTraits(.isHeader)
-                        
                         Text("Version \(Bundle.appVersionDisplay)")
                             .font(AppFonts.title3)
                             .foregroundStyle(AppColors.secondary)
@@ -42,7 +49,7 @@ struct AboutAppView: View {
                     .appShadow(AppShadows.card)
                     .padding(.horizontal, AppSpacing.medium)
                     .accessibilityElement(children: .combine)
-                    
+
                     // MARK: Business Description & Features
                     VStack(alignment: .leading, spacing: AppSpacing.medium) {
                         Text("Furfolio is your all-in-one grooming business manager, designed to streamline appointments, track clients and pets, and grow your business — all offline, private, and secure.")
@@ -50,11 +57,11 @@ struct AboutAppView: View {
                             .foregroundStyle(AppColors.primary)
                             .multilineTextAlignment(.leading)
                             .accessibilityLabel("Business description: Furfolio is your all-in-one grooming business manager, designed to streamline appointments, track clients and pets, and grow your business — all offline, private, and secure.")
-                        
+
                         Text("Key Features")
                             .font(AppFonts.title2Bold)
                             .accessibilityAddTraits(.isHeader)
-                        
+
                         VStack(alignment: .leading, spacing: AppSpacing.small) {
                             FeatureLabel(text: "Appointments")
                             FeatureLabel(text: "Clients & Pets")
@@ -65,7 +72,7 @@ struct AboutAppView: View {
                         }
                     }
                     .padding(.horizontal, AppSpacing.medium)
-                    
+
                     // MARK: Privacy & Trust Center Navigation
                     NavigationLink(destination: TrustCenterView()) {
                         Text("Privacy & Trust Center")
@@ -78,22 +85,19 @@ struct AboutAppView: View {
                             .accessibilityLabel("Navigate to Privacy and Trust Center")
                     }
                     .padding(.horizontal, AppSpacing.medium)
-                    
+
                     // MARK: Developer / Credits Section
                     VStack(spacing: AppSpacing.small) {
                         Text("Developed by Furfolio Team")
                             .font(AppFonts.footnote)
                             .accessibilityAddTraits(.isStaticText)
-                        
                         Text("Contact: support@furfolio.app")
                             .font(AppFonts.footnote)
                             .foregroundStyle(AppColors.secondary)
                             .accessibilityLabel("Contact email support at furfolio dot app")
-                        
                         Link("Visit Website", destination: URL(string: "https://furfolio.app")!)
                             .font(AppFonts.footnote)
                             .accessibilityLabel("Visit Furfolio website")
-                        
                         Text("Furfolio is offline-first and prioritizes your data privacy and security.")
                             .font(AppFonts.footnote)
                             .foregroundStyle(AppColors.secondary)
@@ -102,7 +106,7 @@ struct AboutAppView: View {
                             .accessibilityLabel("Furfolio is offline first and prioritizes your data privacy and security.")
                     }
                     .padding(.horizontal, AppSpacing.medium)
-                    
+
                     // MARK: Developer Debug Section (Feature Flag)
                     if showDeveloperDebugSection {
                         VStack(spacing: AppSpacing.medium) {
@@ -115,9 +119,9 @@ struct AboutAppView: View {
                         }
                         .padding(.horizontal, AppSpacing.medium)
                     }
-                    
+
                     Spacer(minLength: AppSpacing.medium)
-                    
+
                     // MARK: Footer
                     Text("© \(Calendar.current.component(.year, from: Date())) Furfolio. All rights reserved.")
                         .font(AppFonts.caption2)
@@ -129,12 +133,21 @@ struct AboutAppView: View {
                 .frame(maxWidth: .infinity)
                 .background(AppColors.background)
                 .ignoresSafeArea(edges: .bottom)
+                .onAppear {
+                    AboutAppView.analyticsLogger.log(event: "about_view_appear", info: Bundle.appVersionDisplay)
+                }
             }
             .navigationTitle("About Furfolio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showDeveloperDebugSection.toggle() }) {
+                    Button(action: {
+                        showDeveloperDebugSection.toggle()
+                        AboutAppView.analyticsLogger.log(
+                            event: showDeveloperDebugSection ? "dev_debug_section_shown" : "dev_debug_section_hidden",
+                            info: ""
+                        )
+                    }) {
                         Image(systemName: "hammer.fill")
                             .accessibilityLabel(showDeveloperDebugSection ? "Hide developer debug section" : "Show developer debug section")
                     }
@@ -144,10 +157,9 @@ struct AboutAppView: View {
     }
 }
 
-/// A reusable label view for feature list items.
+// MARK: - Feature Label (Re-usable)
 private struct FeatureLabel: View {
     let text: String
-    
     var body: some View {
         Label {
             Text(text)
@@ -195,12 +207,19 @@ extension Bundle {
 
 // MARK: - Preview
 struct AboutAppView_Previews: PreviewProvider {
+    struct SpyLogger: AboutAppViewAnalyticsLogger {
+        func log(event: String, info: String) {
+            print("[AboutAppViewAnalytics] \(event): \(info)")
+        }
+    }
     static var previews: some View {
-        AboutAppView()
-            .previewDevice("iPhone 14 Pro")
-        
-        AboutAppView()
-            .previewDevice("iPad Pro (12.9-inch) (6th generation)")
-            .previewInterfaceOrientation(.landscapeLeft)
+        AboutAppView.analyticsLogger = SpyLogger()
+        return Group {
+            AboutAppView()
+                .previewDevice("iPhone 14 Pro")
+            AboutAppView()
+                .previewDevice("iPad Pro (12.9-inch) (6th generation)")
+                .previewInterfaceOrientation(.landscapeLeft)
+        }
     }
 }

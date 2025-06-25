@@ -2,19 +2,65 @@
 //  AppointmentConflictBanner.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  ENHANCED: Tokenized, Modular, Auditable Conflict Notification Banner
 //
 
 import SwiftUI
 
-// MARK: - AppointmentConflictBanner (Tokenized, Modular, Auditable Conflict Notification Banner)
+// MARK: - Audit/Event Logging for AppointmentConflictBanner
 
-// Using modular design tokens for colors, fonts, and spacing for maintainability and consistency across the app.
+fileprivate struct ConflictBannerAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String          // "appear", "dismiss", "resolve"
+    let message: String
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[\(operation.capitalized)] \(message) [\(tags.joined(separator: ","))] at \(dateStr)\(detail != nil ? ": \(detail!)" : "")"
+    }
+}
+
+fileprivate final class ConflictBannerAudit {
+    static private(set) var log: [ConflictBannerAuditEvent] = []
+
+    static func record(
+        operation: String,
+        message: String,
+        tags: [String] = [],
+        actor: String? = "user",
+        context: String? = "AppointmentConflictBanner",
+        detail: String? = nil
+    ) {
+        let event = ConflictBannerAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            message: message,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 250 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No conflict banner actions recorded."
+    }
+}
 
 // MARK: - AppointmentConflictBannerStyle
 
 struct AppointmentConflictBannerStyle {
-    // Replaced hardcoded colors with design tokens for warning and critical states
     var gradientColors: [Color] = [AppColors.warning, AppColors.critical]
     var shadowColor: Color = AppColors.critical.opacity(0.16)
     var cornerRadius: CGFloat = 14
@@ -22,15 +68,7 @@ struct AppointmentConflictBannerStyle {
 }
 
 /// A unified and modern banner view indicating scheduling conflicts for appointments.
-/// 
-/// This view is designed with cross-platform consistency in mind (iPad/Mac/iPhone),
-/// extracting styling into a dedicated style struct for design system compliance.
-/// It supports full accessibility with identifiers and VoiceOver labels,
-/// customizable action titles for localization or workflow variations,
-/// and enhanced appearance with subtle bounce-in animation and haptic feedback where available.
-/// 
-/// Use this banner to inform users of overlapping appointments, providing clear resolution and dismissal actions.
-/// The banner gracefully animates in and out, ensuring a smooth user experience across the Furfolio app.
+/// Now with built-in audit/event logging for all key user interactions.
 struct AppointmentConflictBanner: View {
     var message: String = "⚠️ Appointment conflict detected! Another appointment overlaps with this time."
     var onResolve: (() -> Void)? = nil
@@ -46,14 +84,11 @@ struct AppointmentConflictBanner: View {
             VStack(spacing: 0) {
                 HStack(alignment: .center, spacing: 14) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        // Tokenized font and color for icon
                         .foregroundColor(AppColors.textOnAccent)
                         .font(AppFonts.title2Bold)
-                        // Tokenized leading padding
                         .padding(.leading, AppSpacing.small)
                         .accessibilityHidden(true)
                     Text(message)
-                        // Tokenized font and color for message text
                         .font(AppFonts.subheadlineSemibold)
                         .foregroundColor(AppColors.textOnAccent)
                         .accessibilityLabel(message)
@@ -64,17 +99,19 @@ struct AppointmentConflictBanner: View {
                             #if canImport(UIKit)
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             #endif
+                            ConflictBannerAudit.record(
+                                operation: "resolve",
+                                message: message,
+                                tags: ["conflict", "resolve"],
+                                detail: "User tapped resolve"
+                            )
                             onResolve()
                         }) {
                             Text(resolveButtonTitle)
-                                // Tokenized font for button text
                                 .font(AppFonts.calloutBold)
-                                // Tokenized horizontal and vertical padding
                                 .padding(.horizontal, AppSpacing.medium)
                                 .padding(.vertical, AppSpacing.small)
-                                // Tokenized background color with opacity
                                 .background(AppColors.textOnAccent.opacity(0.22))
-                                // Tokenized foreground color
                                 .foregroundColor(AppColors.textOnAccent)
                                 .clipShape(Capsule())
                         }
@@ -87,20 +124,22 @@ struct AppointmentConflictBanner: View {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         #endif
                         withAnimation { isVisible = false }
+                        ConflictBannerAudit.record(
+                            operation: "dismiss",
+                            message: message,
+                            tags: ["conflict", "dismiss"],
+                            detail: "User dismissed banner"
+                        )
                     }) {
                         Image(systemName: "xmark.circle.fill")
-                            // Tokenized color with opacity for dismiss icon
                             .foregroundColor(AppColors.textOnAccent.opacity(0.7))
-                            // Tokenized font for dismiss icon
                             .font(AppFonts.title3)
                     }
                     .buttonStyle(.plain)
-                    // Tokenized trailing padding
                     .padding(.trailing, AppSpacing.small)
                     .accessibilityLabel("Dismiss banner")
                     .accessibilityIdentifier("DismissButton")
                 }
-                // Tokenized horizontal and vertical padding for HStack
                 .padding(.horizontal, AppSpacing.medium)
                 .padding(.vertical, AppSpacing.small)
             }
@@ -114,7 +153,6 @@ struct AppointmentConflictBanner: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous))
             .shadow(color: style.shadowColor, radius: 7, x: 0, y: 2)
-            // Tokenized horizontal padding and top padding (top padding remains numeric as no token specified)
             .padding(.horizontal, style.padding)
             .padding(.top, 10)
             .scaleEffect(bounce ? 1.05 : 1)
@@ -129,6 +167,12 @@ struct AppointmentConflictBanner: View {
                 #if canImport(UIKit)
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 #endif
+                ConflictBannerAudit.record(
+                    operation: "appear",
+                    message: message,
+                    tags: ["conflict", "appear"],
+                    detail: "Banner shown"
+                )
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     withAnimation(.spring(response: 0.48, dampingFraction: 0.86)) {
                         bounce = false
@@ -141,34 +185,37 @@ struct AppointmentConflictBanner: View {
     }
 }
 
+// MARK: - Audit/Admin Accessors
+
+public enum ConflictBannerAuditAdmin {
+    public static var lastSummary: String { ConflictBannerAudit.accessibilitySummary }
+    public static var lastJSON: String? { ConflictBannerAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        ConflictBannerAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
 struct AppointmentConflictBanner_Previews: PreviewProvider {
     struct Demo: View {
-        // Demo/business/tokenized preview using design tokens for colors, fonts, and spacing
         @State private var show = true
         var body: some View {
             VStack {
                 Spacer()
                 AppointmentConflictBanner(message: "⚠️ You have an overlapping appointment!", isVisible: $show, onResolve: {
-                    // Demo resolve action
                     show = false
                 }, resolveButtonTitle: "Fix Now")
                 Spacer()
                 Button("Toggle Banner") {
-                    withAnimation {
-                        show.toggle()
-                    }
+                    withAnimation { show.toggle() }
                 }
-                // Tokenized background color for button
                 .padding()
                 .background(AppColors.accent.opacity(0.8))
-                // Tokenized foreground color for button text
                 .foregroundColor(AppColors.textOnAccent)
                 .clipShape(Capsule())
             }
-            // Tokenized background color for preview container
             .background(AppColors.background)
         }
     }

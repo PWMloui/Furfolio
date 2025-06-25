@@ -2,28 +2,78 @@
 //  CrashLogView.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
-//
-//  ENHANCED: A view within the Admin Panel to display and manage
-//  logged crash and error reports from the CrashReporter service.
+//  ENHANCED: Auditable, Tokenized, BI/Compliance-Ready Crash/Error Log UI (2025)
 //
 
 import SwiftUI
 import SwiftData
 
-// MARK: - CrashLogView (Modular, Tokenized, Auditable Crash/Error Log UI)
+// MARK: - CrashLog Audit/Event Logging
 
-/// A modular, tokenized, auditable crash and error log UI component for the Admin Panel.
-/// This view supports analytics, compliance, diagnostics, business reporting,
-/// UI badge/integration, and audit/event trails. It is designed for owner-focused dashboards,
-/// error forensics, and compliance dashboards, providing a comprehensive interface to
-/// view, manage, and analyze crash reports collected by the `CrashReporter`.
+fileprivate struct CrashLogAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String      // "view", "delete", "inspect"
+    let reportType: String?
+    let resolved: Bool?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let status = resolved == nil ? "" : (resolved! ? "✅" : "❌")
+        let type = reportType ?? ""
+        let desc = detail.map { ": \($0)" } ?? ""
+        return "[\(operation.capitalized)] \(type) \(status) at \(dateStr)\(desc)"
+    }
+}
+
+fileprivate final class CrashLogAudit {
+    static private(set) var log: [CrashLogAuditEvent] = []
+
+    static func record(
+        operation: String,
+        report: CrashReport? = nil,
+        tags: [String] = [],
+        actor: String? = nil,
+        context: String? = nil,
+        detail: String? = nil
+    ) {
+        let event = CrashLogAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            reportType: report?.type,
+            resolved: report?.resolved,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No crash log actions recorded."
+    }
+}
+
+// MARK: - CrashLogView (Tokenized, Modular, Auditable Crash/Error Log UI)
+
 struct CrashLogView: View {
     @Environment(\.modelContext) private var modelContext
-    
+
     // The reports are fetched once and passed into this view.
     @State private var reports: [CrashReport]
-    
+
+    @State private var showAuditSheet = false
+
     init(reports: [CrashReport]) {
         _reports = State(initialValue: reports)
     }
@@ -36,9 +86,30 @@ struct CrashLogView: View {
                     systemImage: "ladybug.fill",
                     description: Text("No crashes or fatal errors have been logged.")
                 )
+                .onAppear {
+                    CrashLogAudit.record(
+                        operation: "view",
+                        tags: ["empty", "list"],
+                        actor: "admin",
+                        context: "CrashLogView",
+                        detail: "No crash logs"
+                    )
+                }
             } else {
                 ForEach(reports) { report in
-                    NavigationLink(destination: CrashLogDetailView(report: report)) {
+                    NavigationLink(destination: {
+                        CrashLogDetailView(report: report)
+                            .onAppear {
+                                CrashLogAudit.record(
+                                    operation: "inspect",
+                                    report: report,
+                                    tags: ["detail", report.resolved ? "resolved" : "unresolved"],
+                                    actor: "admin",
+                                    context: "CrashLogDetailView",
+                                    detail: report.message
+                                )
+                            }
+                    }) {
                         CrashLog_RowView(report: report)
                     }
                 }
@@ -47,16 +118,42 @@ struct CrashLogView: View {
         }
         .navigationTitle("Crash & Error Logs")
         .toolbar {
-            if !reports.isEmpty {
-                EditButton()
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if !reports.isEmpty { EditButton() }
+                Button {
+                    showAuditSheet = true
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .accessibilityLabel("View Crash Log Audit Events")
+                }
             }
         }
+        .sheet(isPresented: $showAuditSheet) {
+            CrashLogAuditSheetView(isPresented: $showAuditSheet)
+        }
+        .onAppear {
+            CrashLogAudit.record(
+                operation: "view",
+                tags: ["list"],
+                actor: "admin",
+                context: "CrashLogView",
+                detail: "\(reports.count) logs"
+            )
+        }
     }
-    
+
     private func deleteReport(at offsets: IndexSet) {
         let reportsToDelete = offsets.map { reports[$0] }
         for report in reportsToDelete {
             CrashReporter.shared.delete(report: report, context: modelContext)
+            CrashLogAudit.record(
+                operation: "delete",
+                report: report,
+                tags: ["delete", report.resolved ? "resolved" : "unresolved"],
+                actor: "admin",
+                context: "CrashLogView",
+                detail: report.message
+            )
         }
         reports.remove(atOffsets: offsets)
     }
@@ -72,7 +169,7 @@ private struct CrashLog_RowView: View {
                 Text(report.type)
                     .font(AppFonts.headline)
                     .foregroundColor(report.resolved ? AppColors.textSecondary : AppColors.danger)
-                
+
                 Text(report.message)
                     .font(AppFonts.caption)
                     .lineLimit(2)
@@ -80,7 +177,6 @@ private struct CrashLog_RowView: View {
 
                 Text(report.date, style: .date)
                     .font(AppFonts.caption2)
-                    // TODO: Create a secondary/subtle text color token for opacity 0.7 effect
                     .foregroundColor(AppColors.secondaryText)
             }
             Spacer()
@@ -97,7 +193,7 @@ private struct CrashLog_RowView: View {
 /// A detail view to show the full information for a single crash report.
 struct CrashLogDetailView: View {
     let report: CrashReport
-    
+
     var body: some View {
         Form {
             Section("Error Details") {
@@ -108,13 +204,13 @@ struct CrashLogDetailView: View {
                     .font(AppFonts.body)
                     .foregroundColor(AppColors.textPrimary)
             }
-            
+
             Section("Message") {
                 Text(report.message)
                     .font(AppFonts.body)
                     .foregroundColor(AppColors.textPrimary)
             }
-            
+
             if let deviceInfo = report.deviceInfo {
                 Section("Device Info") {
                     Text(deviceInfo)
@@ -122,12 +218,11 @@ struct CrashLogDetailView: View {
                         .foregroundColor(AppColors.textPrimary)
                 }
             }
-            
+
             if let stackTrace = report.stackTrace {
                 Section("Stack Trace") {
                     ScrollView {
                         Text(stackTrace)
-                            // TODO: Create AppFonts.captionMonospaced token for monospaced caption font
                             .font(AppFonts.captionMonospaced)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -139,20 +234,61 @@ struct CrashLogDetailView: View {
     }
 }
 
+// MARK: - CrashLog Audit Sheet for Admin/QA/Trust Center
+
+private struct CrashLogAuditSheetView: View {
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if CrashLogAudit.log.isEmpty {
+                    ContentUnavailableView("No Crash Log Events Yet", systemImage: "doc.text.magnifyingglass")
+                } else {
+                    ForEach(CrashLogAudit.log.suffix(40).reversed(), id: \.timestamp) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(event.accessibilityLabel)
+                                .font(.footnote)
+                                .foregroundColor(.primary)
+                            if let context = event.context, !context.isEmpty {
+                                Text("Context: \(context)").font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .navigationTitle("Crash Log Audit Events")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { isPresented = false }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    if let json = CrashLogAudit.exportLastJSON() {
+                        Button {
+                            UIPasteboard.general.string = json
+                        } label: {
+                            Label("Copy Last as JSON", systemImage: "doc.on.doc")
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+        }
+    }
+}
 
 // MARK: - Preview
 #Preview {
-    // Demo/business/tokenized preview intent: showcasing CrashLogView with token-based fonts, colors, and spacing.
     let container = try! ModelContainer(for: CrashReport.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     let context = container.mainContext
-    
-    // Create sample logs
+
     let resolvedReport = CrashReport(type: "Data Corruption", message: "Owner record was missing a dog link.", resolved: true)
     let unresolvedReport = CrashReport(type: "Fatal Error", message: "Failed to save appointment due to network timeout simulation.", stackTrace: "Thread 0 crashed with exception an.. \n0x10... main + 23\n0x1f... start + 43", deviceInfo: "iPhone 15 Pro, iOS 18.0")
-    
+
     context.insert(resolvedReport)
     context.insert(unresolvedReport)
-    
+
     return NavigationStack {
         CrashLogView(reports: [resolvedReport, unresolvedReport])
     }

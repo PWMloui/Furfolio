@@ -2,33 +2,96 @@
 //  CalendarView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//
-//  Unified, owner-focused calendar and scheduling interface for Furfolio, enabling business owners to manage appointments, birthdays, and tasks efficiently with a consistent, two-pane SwiftUI experience.
-//  Multi-Platform Ready: Designed to adapt between two-pane and compact navigation layouts for optimal user experience across devices.
-//  Security/Privacy Note: All user data shown here is local/offline; ensure data never leaves device (matches Furfolio business model).
+//  Enhanced 2025: Unified, Modular, Auditable, Tokenized Calendar & Scheduling UI
 //
 
 import SwiftUI
 
-/// The main calendar view presenting a unified interface for managing appointments, birthdays, and tasks.
-/// This view is fully modular and uses design tokens for colors, fonts, spacings, and corner radii,
-/// ensuring consistency and audit readiness across Furfolio’s UI components.
+// MARK: - Calendar Audit/Event Logging
+
+fileprivate struct CalendarAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String            // e.g. "navigateMonth", "selectDate", "reload", "reschedule"
+    let date: Date?
+    let value: String?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let dateVal = date.map { DateUtils.monthYearString($0) } ?? ""
+        let msg = detail ?? ""
+        return "[\(operation.capitalized)] \(dateVal) \(value ?? "") at \(dateStr)\(msg.isEmpty ? "" : ": \(msg)")"
+    }
+}
+
+fileprivate final class CalendarAudit {
+    static private(set) var log: [CalendarAuditEvent] = []
+
+    static func record(
+        operation: String,
+        date: Date? = nil,
+        value: String? = nil,
+        tags: [String] = [],
+        actor: String? = "user",
+        context: String? = "CalendarView",
+        detail: String? = nil
+    ) {
+        let event = CalendarAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            date: date,
+            value: value,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No calendar actions recorded."
+    }
+}
+
+// MARK: - CalendarView
+
 struct CalendarView: View {
     @ObservedObject var viewModel: CalendarViewModel
 
-    /// State controlling the presentation of the add appointment sheet.
     @State private var showingAddAppointment = false
-
-    /// The currently selected date in the calendar grid.
     @State private var selectedDate: Date? = nil
+    @State private var showAuditSheet = false
 
     var body: some View {
         VStack(spacing: AppSpacing.small) {
             CalendarHeaderView(
                 currentMonth: viewModel.currentMonth,
-                onPrev: { viewModel.changeMonth(by: -1) },
-                onNext: { viewModel.changeMonth(by: 1) },
+                onPrev: {
+                    viewModel.changeMonth(by: -1)
+                    CalendarAudit.record(
+                        operation: "navigateMonth",
+                        date: viewModel.currentMonth,
+                        tags: ["navigate", "prevMonth"]
+                    )
+                },
+                onNext: {
+                    viewModel.changeMonth(by: 1)
+                    CalendarAudit.record(
+                        operation: "navigateMonth",
+                        date: viewModel.currentMonth,
+                        tags: ["navigate", "nextMonth"]
+                    )
+                },
                 showWeek: $viewModel.showingWeek
             )
             .padding(.horizontal, AppSpacing.medium)
@@ -44,9 +107,20 @@ struct CalendarView: View {
                 onTapDay: { date in
                     selectedDate = date
                     showingAddAppointment = true
+                    CalendarAudit.record(
+                        operation: "selectDate",
+                        date: date,
+                        tags: ["select", "date"]
+                    )
                 },
                 onDragAppointment: { appointmentID, toDate in
                     viewModel.rescheduleAppointment(id: appointmentID, to: toDate)
+                    CalendarAudit.record(
+                        operation: "reschedule",
+                        date: toDate,
+                        value: appointmentID.uuidString,
+                        tags: ["reschedule", "dragDrop"]
+                    )
                 }
             )
             .animation(.easeInOut(duration: 0.24), value: viewModel.currentMonth)
@@ -56,32 +130,47 @@ struct CalendarView: View {
                 AddAppointmentSheet(
                     date: selectedDate,
                     isPresented: $showingAddAppointment,
-                    onComplete: { viewModel.reloadAppointments() }
+                    onComplete: {
+                        viewModel.reloadAppointments()
+                        CalendarAudit.record(
+                            operation: "reload",
+                            date: selectedDate,
+                            tags: ["reload", "addAppointment"]
+                        )
+                    }
                 )
             }
         }
         .background(AppColors.background)
         .onAppear {
             viewModel.reloadAppointments()
+            CalendarAudit.record(
+                operation: "reload",
+                tags: ["reload", "onAppear"]
+            )
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showAuditSheet = true
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .accessibilityLabel("View Calendar Audit Log")
+                }
+            }
+        }
+        .sheet(isPresented: $showAuditSheet) {
+            CalendarAuditSheetView(isPresented: $showAuditSheet)
         }
     }
 }
 
+// MARK: - CalendarHeaderView
 
-/// The header view for the calendar, showing the current month and navigation controls.
-/// This component is fully tokenized for colors, fonts, spacings, and accessibility,
-/// providing a consistent and audit-ready navigation interface in Furfolio.
 struct CalendarHeaderView: View {
-    /// The currently displayed month.
     var currentMonth: Date
-
-    /// Action to perform when navigating to the previous month.
     var onPrev: () -> Void
-
-    /// Action to perform when navigating to the next month.
     var onNext: () -> Void
-
-    /// Binding controlling whether the calendar is in week or month view.
     @Binding var showWeek: Bool
 
     var body: some View {
@@ -111,29 +200,15 @@ struct CalendarHeaderView: View {
     }
 }
 
+// MARK: - CalendarGridView
 
-/// The grid view displaying days of the current month (or week) along with associated appointments, birthdays, and tasks.
-/// This view uses modular tokens for spacing and colors, ensuring a consistent and audit-ready UI experience.
 struct CalendarGridView: View {
-    /// The array of dates to display in the grid.
     let days: [Date]
-
-    /// Dictionary mapping dates to their appointments.
     let appointments: [Date: [Appointment]]
-
-    /// Dictionary mapping dates to their birthdays.
     let birthdays: [Date: [Dog]]
-
-    /// Dictionary mapping dates to their tasks.
     let tasks: [Date: [Task]]
-
-    /// Binding to the currently selected date.
     @Binding var selectedDate: Date?
-
-    /// Callback when a day is tapped.
     var onTapDay: (Date) -> Void
-
-    /// Callback when an appointment is dragged to a new date.
     var onDragAppointment: (UUID, Date) -> Void
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: AppSpacing.xSmall), count: 7)
@@ -148,7 +223,7 @@ struct CalendarGridView: View {
                     tasks: tasks[day] ?? [],
                     isSelected: Calendar.current.isDate(day, inSameDayAs: selectedDate ?? Date()),
                     onTap: { onTapDay(day) }
-                    // Future implementation: integrate drag/drop support with audit logging and tokenized UI.
+                    // (Enhance: Add drag/drop hooks for traceability.)
                 )
             }
         }
@@ -156,31 +231,22 @@ struct CalendarGridView: View {
     }
 }
 
+// MARK: - AddAppointmentSheet (Placeholder)
 
-/// A sheet view for adding a new appointment on a selected date.
-/// Currently a placeholder to be replaced with the actual add appointment UI.
 struct AddAppointmentSheet: View {
-    /// The date for which the appointment is being added.
     let date: Date
-
-    /// Binding controlling the presentation of the sheet.
     @Binding var isPresented: Bool
-
-    /// Callback invoked when the appointment addition is completed.
     var onComplete: () -> Void
 
     var body: some View {
-        // Replace with your app's actual add appointment view!
+        // TODO: Replace with full add appointment UI
         EmptyView()
     }
 }
 
+// MARK: - DateUtils
 
-/// Utility functions related to date formatting and manipulation.
 enum DateUtils {
-    /// Returns a string representing the month and year of the given date, e.g. "June 2025".
-    /// - Parameter date: The date to format.
-    /// - Returns: A formatted string with full month name and year.
     static func monthYearString(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "LLLL yyyy"
@@ -188,77 +254,129 @@ enum DateUtils {
     }
 }
 
+// MARK: - CalendarViewModel
 
-/// View model managing the state and data for the calendar view.
-/// Handles current month, appointments, birthdays, tasks, and user interactions.
-///
-/// - Note: Data source should be injected via DependencyContainer for testability and scalability.
 final class CalendarViewModel: ObservableObject {
     @Published var currentMonth: Date = Date()
     @Published var showingWeek: Bool = false
-
-    /// Dictionary mapping dates to appointments.
     @Published var appointmentsByDay: [Date: [Appointment]] = [:]
-
-    /// Dictionary mapping dates to dog birthdays.
     @Published var birthdaysByDay: [Date: [Dog]] = [:]
-
-    /// Dictionary mapping dates to tasks.
     @Published var tasksByDay: [Date: [Task]] = [:]
 
-    /// Returns an array of dates representing all visible days in the current calendar view (month or week).
     var daysInCurrentMonth: [Date] {
-        // Placeholder for audit/event logging and tokenized UI design for date grid generation.
-        return []
+        // (Demo implementation)
+        let calendar = Calendar.current
+        let range = calendar.range(of: .day, in: .month, for: currentMonth) ?? 1...30
+        var comps = calendar.dateComponents([.year, .month], from: currentMonth)
+        comps.day = 1
+        let start = calendar.date(from: comps)!
+        return range.compactMap { day in
+            calendar.date(byAdding: .day, value: day-1, to: start)
+        }
     }
 
-    /// Changes the current month by the specified offset.
-    /// - Parameter value: The number of months to shift. Negative for previous months, positive for next.
     func changeMonth(by value: Int) {
-        // Placeholder for audit/event logging and tokenized UI design for month navigation.
+        if let newDate = Calendar.current.date(byAdding: .month, value: value, to: currentMonth) {
+            currentMonth = newDate
+            CalendarAudit.record(
+                operation: "navigateMonth",
+                date: newDate,
+                tags: ["navigate", value > 0 ? "nextMonth" : "prevMonth"],
+                detail: "Changed month by \(value)"
+            )
+        }
     }
 
-    /// Reloads appointments, birthdays, and tasks data.
-    /// Typically fetches or refreshes data from the data source.
     func reloadAppointments() {
-        // Placeholder for audit/event logging and tokenized data refresh implementation.
+        // Simulate a reload with audit event
+        CalendarAudit.record(
+            operation: "reload",
+            date: currentMonth,
+            tags: ["reload", "data"]
+        )
     }
 
-    /// Reschedules an appointment to a new date.
-    /// - Parameters:
-    ///   - id: The unique identifier of the appointment.
-    ///   - date: The new date to assign to the appointment.
     func rescheduleAppointment(id: UUID, to date: Date) {
-        // Move an appointment to a new date with audit logging and tokenized UI updates.
+        // Simulate rescheduling with audit event
+        CalendarAudit.record(
+            operation: "reschedule",
+            date: date,
+            value: id.uuidString,
+            tags: ["reschedule", "appointment"]
+        )
     }
 }
 
+// MARK: - Models
 
-/// Represents an appointment with a unique identifier, date, and service type.
-///
-/// Conforms to `Identifiable`, `Hashable`, and `Codable` for use in SwiftUI and data persistence.
 struct Appointment: Identifiable, Hashable, Codable {
     var id: UUID
     var date: Date
     var serviceType: String
 }
 
-
-/// Represents a dog with a unique identifier, name, and birth date.
-///
-/// Conforms to `Identifiable`, `Hashable`, and `Codable` for use in SwiftUI and data persistence.
 struct Dog: Identifiable, Hashable, Codable {
     var id: UUID
     var name: String
     var birthDate: Date
 }
 
-
-/// Represents a task with a unique identifier, title, and due date.
-///
-/// Conforms to `Identifiable`, `Hashable`, and `Codable` for use in SwiftUI and data persistence.
 struct Task: Identifiable, Hashable, Codable {
     var id: UUID
     var title: String
     var dueDate: Date
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum CalendarAuditAdmin {
+    public static var lastSummary: String { CalendarAudit.accessibilitySummary }
+    public static var lastJSON: String? { CalendarAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        CalendarAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+}
+
+// MARK: - Audit Sheet for Admin/Trust Center
+
+private struct CalendarAuditSheetView: View {
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if CalendarAudit.log.isEmpty {
+                    ContentUnavailableView("No Calendar Events Yet", systemImage: "doc.text.magnifyingglass")
+                } else {
+                    ForEach(CalendarAudit.log.suffix(40).reversed(), id: \.timestamp) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(event.accessibilityLabel)
+                                .font(.footnote)
+                                .foregroundColor(.primary)
+                            if let context = event.context, !context.isEmpty {
+                                Text("Context: \(context)").font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .navigationTitle("Calendar Audit Events")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { isPresented = false }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    if let json = CalendarAudit.exportLastJSON() {
+                        Button {
+                            UIPasteboard.general.string = json
+                        } label: {
+                            Label("Copy Last as JSON", systemImage: "doc.on.doc")
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+        }
+    }
 }

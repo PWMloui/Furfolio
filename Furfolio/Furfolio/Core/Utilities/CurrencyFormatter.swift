@@ -4,11 +4,73 @@
 //  CurrencyFormatter.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//  Updated & enhanced for unified business management 6/21/25.
+//  Enhanced: Auditable, Tokenized, BI/Compliance Ready, 2025
 //
 
 import Foundation
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct CurrencyFormatterAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String         // "update" | "format"
+    let locale: String
+    let currencyCode: String
+    let value: Double?
+    let formatted: String?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let errorDescription: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let op = operation.capitalized
+        let valStr = value.map { "\($0)" } ?? "--"
+        let out = formatted ?? ""
+        return "\(op) \(currencyCode) (\(locale)): \(valStr) → \(out) at \(dateStr)"
+    }
+}
+
+fileprivate final class CurrencyFormatterAudit {
+    static private(set) var log: [CurrencyFormatterAuditEvent] = []
+
+    static func record(
+        operation: String,
+        locale: Locale,
+        currencyCode: String,
+        value: Double?,
+        formatted: String?,
+        tags: [String],
+        actor: String? = nil,
+        context: String? = nil,
+        error: Error? = nil
+    ) {
+        let event = CurrencyFormatterAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            locale: locale.identifier,
+            currencyCode: currencyCode,
+            value: value,
+            formatted: formatted,
+            tags: tags,
+            actor: actor,
+            context: context,
+            errorDescription: error?.localizedDescription
+        )
+        log.append(event)
+        if log.count > 1000 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No currency events recorded."
+    }
+}
 
 // MARK: - CurrencyFormatter (Modular, Tokenized, Auditable Currency Formatting Utility)
 
@@ -43,11 +105,20 @@ final class CurrencyFormatter {
     /// Update locale and currency code dynamically for multi-business or user preferences.
     /// This method supports audit/event logging, analytics tracking, and updates UI/dashboard components with the new settings.
     /// It ensures that currency formatting remains consistent with business context and compliance requirements.
-    func update(locale: Locale, currencyCode: String) {
+    func update(locale: Locale, currencyCode: String, actor: String? = nil, context: String? = nil) {
         self.locale = locale
         self.currencyCode = currencyCode
         configureFormatter()
-        // Additional audit/event logging and analytics hooks can be placed here.
+        CurrencyFormatterAudit.record(
+            operation: "update",
+            locale: locale,
+            currencyCode: currencyCode,
+            value: nil,
+            formatted: nil,
+            tags: ["update", "locale", "currency"],
+            actor: actor,
+            context: context
+        )
     }
 
     /// Configure the NumberFormatter with current settings.
@@ -66,9 +137,40 @@ final class CurrencyFormatter {
     /// Returns a localized string representation or a fallback string.
     /// This method supports audit logging of formatted values, analytics on currency usage,
     /// business reporting, dashboard visualization, and ensures localization compliance.
-    func string(from amount: Double?) -> String {
-        guard let amount = amount else { return "--" }
-        return formatter.string(from: NSNumber(value: amount)) ?? "\(amount)"
+    func string(from amount: Double?, actor: String? = nil, context: String? = nil) -> String {
+        guard let amount = amount else {
+            CurrencyFormatterAudit.record(
+                operation: "format",
+                locale: locale,
+                currencyCode: currencyCode,
+                value: nil,
+                formatted: "--",
+                tags: ["format", "currency", "fallback"],
+                actor: actor,
+                context: context
+            )
+            return "--"
+        }
+        let formatted = formatter.string(from: NSNumber(value: amount)) ?? "\(amount)"
+        CurrencyFormatterAudit.record(
+            operation: "format",
+            locale: locale,
+            currencyCode: currencyCode,
+            value: amount,
+            formatted: formatted,
+            tags: ["format", "currency"],
+            actor: actor,
+            context: context
+        )
+        return formatted
+    }
+
+    // MARK: - Audit/Admin Accessors
+
+    static var lastAuditSummary: String { CurrencyFormatterAudit.accessibilitySummary }
+    static var lastAuditJSON: String? { CurrencyFormatterAudit.exportLastJSON() }
+    static func recentAuditEvents(limit: Int = 5) -> [String] {
+        CurrencyFormatterAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 
@@ -82,17 +184,24 @@ struct CurrencyFormatterPreview: View {
         VStack(spacing: AppSpacing.medium) {
             // Demo of formatted currency display using modular font tokens.
             // This preview demonstrates business logic for tokenized UI and audit-friendly formatting.
-            Text(CurrencyFormatter.shared.string(from: 129.99))
+            Text(CurrencyFormatter.shared.string(from: 129.99, actor: "preview"))
                 .font(AppFonts.title)
                 .bold(AppFonts.bold)
                 .accessibilityLabel("Formatted price")
             // Display fallback for nil amount with secondary text color for UI clarity.
-            Text(CurrencyFormatter.shared.string(from: nil))
+            Text(CurrencyFormatter.shared.string(from: nil, actor: "preview"))
                 .foregroundColor(AppColors.secondaryText)
                 .accessibilityLabel("No price available")
             // Button to simulate switching currency context for multi-business and analytics demo.
             Button("Switch to Euro") {
-                CurrencyFormatter.shared.update(locale: Locale(identifier: "fr_FR"), currencyCode: "EUR")
+                CurrencyFormatter.shared.update(locale: Locale(identifier: "fr_FR"), currencyCode: "EUR", actor: "preview")
+            }
+            // Debug: Show last audit event
+            if let summary = CurrencyFormatter.lastAuditJSON {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .padding(.top, 16)
             }
         }
         .padding(AppSpacing.medium)

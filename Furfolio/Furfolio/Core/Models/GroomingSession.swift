@@ -2,164 +2,195 @@
 //  GroomingSession.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//
+//  Enhanced for analytics, tokenization, auditing, accessibility, and export.
+//  Author: ChatGPT
 
 import Foundation
 import SwiftData
 
-// MARK: - GroomingSession (Modular, Tokenized, Auditable Grooming Session Model)
-
-/// Represents a modular, auditable, and tokenized business session entity for a dog's grooming appointment.
-/// This model supports comprehensive audit trails, business analytics, badge/status logic, compliance requirements,
-/// and seamless UI design system integration (including badges, colors, icons, and outcome tags).
-/// Designed to facilitate advanced analytics, route optimization for mobile groomers, staff and owner workflows,
-/// and full integration with SwiftUI and SwiftData frameworks for efficient data management and UI rendering.
 @Model
 final class GroomingSession: Identifiable, ObservableObject {
-    // MARK: - Identifiers
-    
-    /// Unique identifier for the grooming session.
-    /// Used for audit tracking, data integrity, and referencing in business workflows.
-    @Attribute(.unique)
-    @Attribute(.required)
+    @Attribute(.unique) @Attribute(.required)
     var id: UUID
-    
-    // MARK: - Time
-    
-    /// The date and time of the session.
-    /// Critical for audit trails, compliance reporting, scheduling analytics, and timeline visualizations in UI.
+
     @Attribute(.required)
     var date: Date
-    
-    // MARK: - Relationships
-    
-    /// Staff member who performed the grooming.
-    /// Integral for business analytics on staff performance, workload, and compliance with service standards.
-    /// Enables UI workflows for staff assignment and reporting dashboards.
+
     @Relationship(deleteRule: .nullify, inverse: nil)
     var staff: StaffMember?
-    
-    /// The dog that was groomed.
-    /// Central to linking grooming records for analytics on pet health, preferences, and owner engagement.
-    /// Supports UI features like profile badges and history views.
+
     @Relationship(deleteRule: .nullify, inverse: \Dog.groomingSessions)
     var dog: Dog?
-    
-    /// Appointment this session is linked to (optional).
-    /// Provides business context and linkage for scheduling analytics, appointment compliance, and workflow tracking.
-    /// Supports UI appointment management and reminders.
+
     @Relationship(deleteRule: .nullify, inverse: nil)
     var appointment: Appointment?
-    
-    /// Behavior log or mood (optional relationship).
-    /// Captures behavioral notes for compliance, owner communication, and staff training analytics.
-    /// Enables UI indicators and badges related to temperament and session adjustments.
+
     @Relationship(deleteRule: .cascade, inverse: nil)
     var behaviorLog: BehaviorLog?
-    
-    /// Audit log entries for tracking changes, history, and event provenance.
-    /// Essential for compliance, forensic auditing, and business intelligence reporting.
-    /// Supports UI audit trail views and change notifications.
+
     @Attribute(.required)
     var auditLog: [String]
-    
-    // MARK: - Session Data
-    
-    /// The service performed (e.g., Full Groom, Bath, Nail Trim).
-    /// Used for business analytics, service popularity metrics, and UI badge/status display.
-    /// Supports tokenized design system integration for consistent iconography and labeling.
+
     @Attribute(.required)
     var serviceType: ServiceType
-    
-    /// Duration in minutes.
-    /// Important for operational analytics, billing, and route optimization.
-    /// Displayed in UI summaries and scheduling views.
+
     @Attribute(.required)
     var durationMinutes: Int
-    
-    /// Optional notes (style, temperament, instructions).
-    /// Captures session-specific details for owner/staff communication, compliance, and personalized service.
-    /// Supports UI detail views and workflow instructions.
+
     var notes: String?
-    
-    /// List of products used (shampoos, treatments, etc.)
-    /// Facilitates product usage analytics, inventory tracking, and compliance with safety standards.
-    /// Enables UI product tagging and reporting.
+
     @Attribute(.required)
     var productsUsed: [String]
-    
-    /// List of outcomes/tags (e.g., "Ear Cleaned", "Nail Dremel", "Bit Clippers").
-    /// Supports outcome-based analytics, badge/status logic, and UI tokenization for quick visual cues.
-    /// Enables filtering and reporting on service quality and compliance.
+
     @Attribute(.required)
     var outcomes: [String]
-    
-    /// Is this session marked as a favorite style for the dog?
-    /// Used in business logic to recommend styles, personalize marketing, and enhance owner engagement.
-    /// Drives UI badges and favorite indicators.
+
     @Attribute(.required)
     var isFavorite: Bool
-    
-    /// Session rating (owner satisfaction, 1–5 stars).
-    /// Key metric for business performance analytics, staff evaluation, and quality control.
-    /// Displayed in UI dashboards and summary views.
+
     @Attribute(.required)
     var rating: Int
-    
-    /// Route order for mobile groomers to optimize travel sequence (TSP support).
-    /// Critical for operational efficiency analytics and route planning algorithms.
-    /// Supports UI route maps and schedule optimization features.
+
     @Attribute(.required)
     var routeOrder: Int
-    
-    // MARK: - Images
-    
-    /// Before photo for the session (as Data).
-    /// Supports visual audit, compliance documentation, and marketing materials.
-    /// Used in UI galleries and session summaries.
+
     var beforePhoto: Data?
-    
-    /// After photo for the session (as Data).
-    /// Enables visual outcome verification, owner satisfaction tracking, and marketing.
-    /// Displayed in UI galleries and progress views.
     var afterPhoto: Data?
-    
-    // MARK: - Analytics / Metadata
-    
-    /// Metadata: creation date.
-    /// Used for audit timelines, compliance reporting, and data lifecycle management.
+
     @Attribute(.required)
     var createdAt: Date
-    
-    /// Metadata: last modification date.
-    /// Supports audit trail accuracy, version control, and compliance.
+
     @Attribute(.required)
     var lastModified: Date
-    
-    /// Metadata: created by user identifier.
-    /// Essential for accountability, audit logs, and staff performance tracking.
+
     @Attribute(.required)
     var createdBy: String
-    
-    /// Metadata: last modified by user identifier.
-    /// Facilitates change tracking, audit compliance, and workflow accountability.
+
     @Attribute(.required)
     var lastModifiedBy: String
-    
-    // MARK: - Computed Properties
-    
-    /// Returns a readable summary string of the service performed and duration.
-    /// Used extensively in dashboards, analytics exports, badge generation, and business workflows
-    /// to provide quick, human-readable overviews of session details.
+
+    // --- ENHANCEMENTS ---
+
+    // MARK: - Financials
+    @Attribute
+    var sessionCost: Double? // Internal cost for analysis
+    @Attribute
+    var sessionRevenue: Double? // Amount charged for session
+    @Attribute
+    var tip: Double? // Tip received
+
+    // MARK: - Tokenization: Badges/Tags
+    enum SessionBadge: String, CaseIterable, Codable {
+        case incident, loyaltyReward, firstSession, referral, ownerPresent, difficultDog, newStyle, rebooked, rushed
+    }
+    @Attribute
+    var badgeTokens: [String]
+
+    var badges: [SessionBadge] { badgeTokens.compactMap { SessionBadge(rawValue: $0) } }
+    func addBadge(_ badge: SessionBadge) {
+        if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) }
+    }
+    func removeBadge(_ badge: SessionBadge) {
+        badgeTokens.removeAll { $0 == badge.rawValue }
+    }
+    func hasBadge(_ badge: SessionBadge) -> Bool {
+        badgeTokens.contains(badge.rawValue)
+    }
+
+    // MARK: - Business Intelligence
+
+    /// Gross profit for this session (if revenue/cost available)
+    var profit: Double? {
+        guard let revenue = sessionRevenue, let cost = sessionCost else { return nil }
+        return revenue - cost
+    }
+
+    /// Efficiency: Revenue per hour for this session
+    var revenuePerHour: Double? {
+        guard let revenue = sessionRevenue, durationMinutes > 0 else { return nil }
+        return revenue * 60.0 / Double(durationMinutes)
+    }
+
+    /// Quick status string for UI
+    var quickStatus: String {
+        if hasBadge(.incident) { return "Incident" }
+        if rating <= 2 { return "Low Rating" }
+        if isFavorite { return "Favorite" }
+        return "Completed"
+    }
+
+    // MARK: - Audit Helpers
+
+    func addAuditEntry(_ entry: String) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(stamp)] \(entry)")
+        lastModified = Date()
+    }
+
+    var recentAuditSummary: String {
+        auditLog.suffix(2).joined(separator: "\n")
+    }
+
+    // MARK: - Accessibility
+
+    var accessibilityLabel: String {
+        """
+        Grooming session for \(dog?.name ?? "unknown dog"). \(serviceType.rawValue), \(durationMinutes) minutes. Rating: \(rating) star\(rating == 1 ? "" : "s").
+        Staff: \(staff?.name ?? "unknown").
+        \(isFavorite ? "Marked as favorite style." : "")
+        \(badges.isEmpty ? "" : "Badges: \(badges.map { $0.rawValue }.joined(separator: ", ")).")
+        """
+    }
+
+    // MARK: - Export Utility
+
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID
+            let date: Date
+            let dogName: String?
+            let staffName: String?
+            let serviceType: String
+            let duration: Int
+            let productsUsed: [String]
+            let outcomes: [String]
+            let isFavorite: Bool
+            let rating: Int
+            let sessionRevenue: Double?
+            let sessionCost: Double?
+            let tip: Double?
+            let badgeTokens: [String]
+        }
+        let export = Export(
+            id: id, date: date,
+            dogName: dog?.name, staffName: staff?.name,
+            serviceType: serviceType.rawValue,
+            duration: durationMinutes,
+            productsUsed: productsUsed,
+            outcomes: outcomes,
+            isFavorite: isFavorite,
+            rating: rating,
+            sessionRevenue: sessionRevenue,
+            sessionCost: sessionCost,
+            tip: tip,
+            badgeTokens: badgeTokens
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        if let data = try? encoder.encode(export) {
+            return String(data: data, encoding: .utf8)
+        }
+        return nil
+    }
+
+    // MARK: - Service Summary
+
     var displayServiceSummary: String {
         "\(serviceType.rawValue) - \(durationMinutes) min"
     }
-    
+
     // MARK: - Initializer
-    
-    /// Initializes a new GroomingSession instance with full audit, analytics, and workflow metadata.
-    /// Emphasizes audit/event logging, analytics readiness, and owner/staff workflow impact.
+
     init(
         id: UUID = UUID(),
         date: Date = Date(),
@@ -181,7 +212,11 @@ final class GroomingSession: Identifiable, ObservableObject {
         lastModified: Date = Date(),
         createdBy: String = "system",
         lastModifiedBy: String = "system",
-        auditLog: [String] = []
+        auditLog: [String] = [],
+        sessionCost: Double? = nil,
+        sessionRevenue: Double? = nil,
+        tip: Double? = nil,
+        badgeTokens: [String] = []
     ) {
         self.id = id
         self.date = date
@@ -204,13 +239,14 @@ final class GroomingSession: Identifiable, ObservableObject {
         self.createdBy = createdBy
         self.lastModifiedBy = lastModifiedBy
         self.auditLog = auditLog
+        self.sessionCost = sessionCost
+        self.sessionRevenue = sessionRevenue
+        self.tip = tip
+        self.badgeTokens = badgeTokens
     }
-    
-    // MARK: - Preview for SwiftUI and testing
-    
-    /// Preview instance for SwiftUI previews and development/testing.
-    /// Demonstrates demo/business/preview logic and tokenized design intent,
-    /// showcasing audit, analytics, and UI integration in a representative sample.
+
+    // MARK: - Preview
+
     static var preview: GroomingSession {
         GroomingSession(
             date: Date(),
@@ -230,7 +266,11 @@ final class GroomingSession: Identifiable, ObservableObject {
             lastModified: Date(),
             createdBy: "previewUser",
             lastModifiedBy: "previewUser",
-            auditLog: ["Created preview session"]
+            auditLog: ["Created preview session"],
+            sessionCost: 32.50,
+            sessionRevenue: 80.00,
+            tip: 10.00,
+            badgeTokens: [SessionBadge.loyaltyReward.rawValue, SessionBadge.newStyle.rawValue]
         )
     }
 }
@@ -238,10 +278,6 @@ final class GroomingSession: Identifiable, ObservableObject {
 // MARK: - Extend Dog to relate to grooming sessions
 
 extension Dog {
-    /// All grooming sessions associated with this dog.
-    /// Enables audit and analytics integration by linking pet grooming history with business workflows.
-    /// Supports UI features for displaying session history, badges, and compliance status.
-    /// Facilitates business logic for personalized grooming recommendations and owner engagement.
     @Relationship(deleteRule: .cascade, inverse: \GroomingSession.dog)
     var groomingSessions: [GroomingSession] {
         get { [] }

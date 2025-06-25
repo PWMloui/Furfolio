@@ -538,3 +538,253 @@ public enum QuickNoteSort {
     case lastAccessedAt
     case pinnedOnly
 }
+
+// MARK: - Audit Logging Protocol for DI
+
+public protocol AuditLogger {
+    func log(action: String, note: QuickNote, actor: String?, businessID: String?)
+}
+
+/// A no-op audit logger (default for previews/tests)
+public struct NullAuditLogger: AuditLogger {
+    public init() {}
+    public func log(action: String, note: QuickNote, actor: String?, businessID: String?) { }
+}
+
+// MARK: - QuickNoteAssistant
+
+@MainActor
+public final class QuickNoteAssistant: ObservableObject {
+    // MARK: - Published for UI
+    @Published public private(set) var lastActionStatus: QuickNoteActionStatus?
+    @Published public private(set) var diagnosticsSummary: String = ""
+    
+    // MARK: - Dependencies (DI)
+    private let context: ModelContext
+    private let auditLogger: AuditLogger
+    private let businessID: String?
+
+    /// Notification name for cross-module updates (widgets, dashboards, etc).
+    public static let notesDidChangeNotification = Notification.Name("QuickNoteAssistantNotesDidChange")
+    
+    // MARK: - Init (Inject for test/preview)
+    public init(
+        context: ModelContext = ModelContext(),
+        auditLogger: AuditLogger = NullAuditLogger(),
+        businessID: String? = nil
+    ) {
+        self.context = context
+        self.auditLogger = auditLogger
+        self.businessID = businessID
+    }
+    
+    // MARK: - Diagnostics Snapshot
+    /// Returns a summary of note health for admin dashboards.
+    public func diagnosticsSnapshot() -> [String: Any] {
+        var result: [String: Any] = [:]
+        do {
+            let all = try fetchAllNotes()
+            result["totalNotes"] = all.count
+            result["pinnedNotes"] = all.filter { $0.pinned }.count
+            result["recentlyUpdated"] = all.filter { $0.updatedAt > Date().addingTimeInterval(-7*86400) }.count
+            result["orphans"] = all.filter { $0.owner == nil && $0.dog == nil && $0.appointment == nil }.count
+            result["categories"] = Dictionary(grouping: all, by: { $0.category }).mapValues { $0.count }
+        } catch {
+            result["error"] = error.localizedDescription
+        }
+        return result
+    }
+    
+    // MARK: - Diagnostics Summary
+    private func updateDiagnosticsSummary() {
+        let snap = diagnosticsSnapshot()
+        diagnosticsSummary = "Notes: \(snap["totalNotes"] ?? 0), Pinned: \(snap["pinnedNotes"] ?? 0), Orphans: \(snap["orphans"] ?? 0)"
+    }
+
+    // MARK: - Note Actions
+
+    /// Adds a new note (async).
+    public func addNote(
+        content: String,
+        owner: DogOwner? = nil,
+        dog: Dog? = nil,
+        appointment: Appointment? = nil,
+        pinned: Bool = false,
+        category: QuickNoteCategory = .general,
+        createdBy: String? = nil
+    ) async throws -> QuickNote {
+        let note = QuickNote(
+            content: content,
+            pinned: pinned,
+            category: category,
+            createdBy: createdBy,
+            owner: owner,
+            dog: dog,
+            appointment: appointment
+        )
+        context.insert(note)
+        try await saveContext()
+        auditLogger.log(action: "Add", note: note, actor: createdBy, businessID: businessID)
+        notifyChange()
+        lastActionStatus = .success(message: NSLocalizedString("Note created.", comment: "Quick note created"))
+        updateDiagnosticsSummary()
+        return note
+    }
+    
+    /// Adds a note (sync, thin wrapper)
+    public func addNote(
+        content: String,
+        owner: DogOwner? = nil,
+        dog: Dog? = nil,
+        appointment: Appointment? = nil,
+        pinned: Bool = false,
+        category: QuickNoteCategory = .general,
+        createdBy: String? = nil
+    ) throws -> QuickNote {
+        try awaitResult { try await self.addNote(content: content, owner: owner, dog: dog, appointment: appointment, pinned: pinned, category: category, createdBy: createdBy) }
+    }
+
+    /// Updates note content (async)
+    public func updateNote(
+        _ note: QuickNote,
+        newContent: String,
+        updatedBy: String? = nil
+    ) async throws {
+        note.updateContent(newContent)
+        try await saveContext()
+        auditLogger.log(action: "Update Content", note: note, actor: updatedBy, businessID: businessID)
+        notifyChange()
+        lastActionStatus = .success(message: NSLocalizedString("Note updated.", comment: "Quick note updated"))
+        updateDiagnosticsSummary()
+    }
+    
+    /// Updates note content (sync)
+    public func updateNote(
+        _ note: QuickNote,
+        newContent: String,
+        updatedBy: String? = nil
+    ) throws {
+        try awaitResult { try await self.updateNote(note, newContent: newContent, updatedBy: updatedBy) }
+    }
+
+    /// Toggles pin (async)
+    public func togglePin(
+        _ note: QuickNote,
+        actor: String? = nil
+    ) async throws {
+        note.togglePin()
+        try await saveContext()
+        auditLogger.log(action: "Toggle Pin", note: note, actor: actor, businessID: businessID)
+        notifyChange()
+        lastActionStatus = .success(message: NSLocalizedString("Pin toggled.", comment: "Note pin toggled"))
+        updateDiagnosticsSummary()
+    }
+    
+    /// Toggles pin (sync)
+    public func togglePin(
+        _ note: QuickNote,
+        actor: String? = nil
+    ) throws {
+        try awaitResult { try await self.togglePin(note, actor: actor) }
+    }
+
+    /// Deletes note (async)
+    public func deleteNote(
+        _ note: QuickNote,
+        actor: String? = nil
+    ) async throws {
+        context.delete(note)
+        try await saveContext()
+        auditLogger.log(action: "Delete", note: note, actor: actor, businessID: businessID)
+        notifyChange()
+        lastActionStatus = .success(message: NSLocalizedString("Note deleted.", comment: "Note deleted"))
+        updateDiagnosticsSummary()
+    }
+    
+    /// Deletes note (sync)
+    public func deleteNote(
+        _ note: QuickNote,
+        actor: String? = nil
+    ) throws {
+        try awaitResult { try await self.deleteNote(note, actor: actor) }
+    }
+    
+    // MARK: - Fetching
+
+    public func fetchNotes(
+        owner: DogOwner? = nil,
+        dog: Dog? = nil,
+        appointment: Appointment? = nil,
+        category: QuickNoteCategory? = nil,
+        sortBy: QuickNoteSort = .pinnedThenAccessed,
+        ascending: Bool? = nil
+    ) throws -> [QuickNote] {
+        var predicates: [Predicate<QuickNote>] = []
+        if let owner = owner { predicates.append(#Predicate { $0.owner?.id == owner.id }) }
+        if let dog = dog { predicates.append(#Predicate { $0.dog?.id == dog.id }) }
+        if let appointment = appointment { predicates.append(#Predicate { $0.appointment?.id == appointment.id }) }
+        if let category = category { predicates.append(#Predicate { $0.category == category }) }
+        let predicate: Predicate<QuickNote>? = predicates.isEmpty ? nil : predicates.dropFirst().reduce(predicates.first!) { $0 && $1 }
+
+        let sortDescriptors: [SortDescriptor<QuickNote>]
+        switch sortBy {
+        case .pinnedThenAccessed:
+            sortDescriptors = [SortDescriptor(\.pinned, order: .reverse), SortDescriptor(\.lastAccessedAt, order: .reverse)]
+        case .createdAt:
+            sortDescriptors = [SortDescriptor(\.createdAt, order: ascending == true ? .forward : .reverse)]
+        case .updatedAt:
+            sortDescriptors = [SortDescriptor(\.updatedAt, order: ascending == true ? .forward : .reverse)]
+        case .lastAccessedAt:
+            sortDescriptors = [SortDescriptor(\.lastAccessedAt, order: ascending == true ? .forward : .reverse)]
+        case .pinnedOnly:
+            sortDescriptors = [SortDescriptor(\.pinned, order: .reverse)]
+        }
+        let fetchDescriptor = FetchDescriptor<QuickNote>(predicate: predicate, sortBy: sortDescriptors)
+        return try context.fetch(fetchDescriptor)
+    }
+
+    public func fetchAllNotes() throws -> [QuickNote] {
+        try fetchNotes()
+    }
+
+    public func fetchPinnedNotes() throws -> [QuickNote] {
+        try fetchNotes(sortBy: .pinnedThenAccessed).filter { $0.pinned }
+    }
+    
+    // MARK: - Private Helpers
+    
+    private func saveContext() async throws {
+        try await context.save()
+    }
+    private func saveContextSync() throws {
+        try context.save()
+    }
+    private func notifyChange() {
+        objectWillChange.send()
+        NotificationCenter.default.post(name: Self.notesDidChangeNotification, object: nil)
+    }
+    /// Helper: Await sync wrapper for async calls
+    private func awaitResult<T>(_ block: @escaping () async throws -> T) throws -> T {
+        var result: Result<T, Error>?
+        let group = DispatchGroup()
+        group.enter()
+        Task {
+            defer { group.leave() }
+            do { result = .success(try await block()) }
+            catch { result = .failure(error) }
+        }
+        group.wait()
+        switch result {
+            case .success(let value): return value
+            case .failure(let error): throw error
+            case .none: fatalError("Async result not set")
+        }
+    }
+}
+
+// MARK: - Action Status for UI
+
+public enum QuickNoteActionStatus {
+    case success(message: String)
+    case failure(error: Error, message: String)
+}

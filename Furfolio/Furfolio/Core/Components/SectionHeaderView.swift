@@ -2,61 +2,89 @@
 //  SectionHeaderView.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
-//
-//  ENHANCED: A reusable, theme-aware section header with an optional action button.
+//  Enhanced: analytics/audit–ready, token-compliant, accessible, preview/test–injectable.
 //
 
 import SwiftUI
 
-// MARK: - SectionHeaderView (Tokenized, Reusable, Accessible Section Header)
+// MARK: - Analytics/Audit Protocol
 
-/// A standardized header view for use in `List` or `Form` sections.
-/// It displays a title and an optional trailing action button.
-/// All styling uses ONLY modular tokens (`AppColors`, `AppFonts`, `AppSpacing`).
-/// This is a universal, accessible section header for lists/forms with optional trailing action.
+public protocol SectionHeaderAnalyticsLogger {
+    func log(event: String, info: [String: Any]?)
+}
+public struct NullSectionHeaderAnalyticsLogger: SectionHeaderAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: [String: Any]?) {}
+}
+
+// MARK: - SectionHeaderView (Enterprise Enhanced)
+
 struct SectionHeaderView: View {
     /// The title to be displayed.
     let title: LocalizedStringKey
-    
+
     /// The optional label for a trailing action button (e.g., "See All").
     var actionLabel: LocalizedStringKey? = nil
-    
+
     /// The optional closure to be executed when the action button is tapped.
     var action: (() -> Void)? = nil
+
+    /// Analytics logger (swap in QA/print/Trust Center/test)
+    static var analyticsLogger: SectionHeaderAnalyticsLogger = NullSectionHeaderAnalyticsLogger()
 
     var body: some View {
         HStack {
             Text(title)
                 .font(AppFonts.caption)
                 .foregroundColor(AppColors.secondaryText)
-                .textCase(.uppercase) // A common style for section headers
+                .textCase(.uppercase)
+                .accessibilityLabel(Text("\(title) section header"))
+                .accessibilityAddTraits(.isHeader)
 
             Spacer()
 
-            // Only show the button if both an action and a label are provided
             if let actionLabel = actionLabel, let action = action {
-                Button(action: action) {
+                Button(action: {
+                    Self.analyticsLogger.log(event: "section_action_tapped", info: [
+                        "title": "\(title)",
+                        "actionLabel": "\(actionLabel)"
+                    ])
+                    action()
+                }) {
                     Text(actionLabel)
                         .font(AppFonts.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(AppColors.primary)
                         .padding(.leading, AppSpacing.small)
                 }
+                .accessibilityLabel(Text(actionLabel))
+                .accessibilityHint(Text("Tap to \(actionLabel)."))
             }
         }
         .padding(.bottom, AppSpacing.small)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("SectionHeaderView_\(title)")
+        .onAppear {
+            Self.analyticsLogger.log(event: "section_header_rendered", info: [
+                "title": "\(title)",
+                "actionLabel": actionLabel != nil ? "\(actionLabel!)" : nil
+            ])
+        }
     }
 }
 
-
-// MARK: - Preview
+// MARK: - Preview with analytics logger
 
 #if DEBUG
 struct SectionHeaderView_Previews: PreviewProvider {
+    struct SpyLogger: SectionHeaderAnalyticsLogger {
+        func log(event: String, info: [String : Any]?) {
+            print("[SectionHeaderAnalytics] \(event): \(info ?? [:])")
+        }
+    }
     static var previews: some View {
-        Form {
+        SectionHeaderView.analyticsLogger = SpyLogger()
+        return Form {
             Section(
                 header: SectionHeaderView(title: "Upcoming Appointments")
             ) {

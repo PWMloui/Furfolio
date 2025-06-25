@@ -2,16 +2,32 @@
 //  MultiSelectMenu.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: analytics/audit–ready, Trust Center–ready, test/preview-injectable, robust accessibility.
 //
-
-// MARK: - MultiSelectMenu (Tokenized, Accessible, Modular Multi-Select)
 
 import SwiftUI
 
-/// Represents the type of badge to display for an option.
-/// MultiSelectMenu and all related components use ONLY design tokens: AppColors, AppFonts, AppSpacing, BorderRadius, AppShadows,
-/// ensuring consistency, accessibility, and modularity.
+// MARK: - Analytics/Audit Protocol
+
+public protocol MultiSelectMenuAnalyticsLogger {
+    func log(event: String, info: [String: Any]?)
+}
+public struct NullMultiSelectMenuAnalyticsLogger: MultiSelectMenuAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: [String: Any]?) {}
+}
+
+// MARK: - Trust Center Permission Protocol
+
+public protocol MultiSelectMenuTrustCenterDelegate {
+    func permission(for action: String, option: String?, context: [String: Any]?) -> Bool
+}
+public struct NullMultiSelectMenuTrustCenterDelegate: MultiSelectMenuTrustCenterDelegate {
+    public init() {}
+    public func permission(for action: String, option: String?, context: [String: Any]?) -> Bool { true }
+}
+
+// MARK: - OptionBadgeType (Unchanged)
 public enum OptionBadgeType {
     case info
     case warning
@@ -19,7 +35,7 @@ public enum OptionBadgeType {
     case critical
 }
 
-/// A visual badge view for option tags, color-coded by badge type.
+// MARK: - OptionBadge (Unchanged)
 struct OptionBadge: View {
     let type: OptionBadgeType
     let text: String
@@ -38,43 +54,31 @@ struct OptionBadge: View {
 
     private var backgroundColor: Color {
         switch type {
-        case .info:
-            return AppColors.info
-        case .warning:
-            return AppColors.warning
-        case .success:
-            return AppColors.success
-        case .critical:
-            return AppColors.critical
+        case .info:     return AppColors.info
+        case .warning:  return AppColors.warning
+        case .success:  return AppColors.success
+        case .critical: return AppColors.critical
         }
     }
 }
 
-/// Generic Multi-Select Menu for any list of String options, supporting role-based badges,
-/// context-aware subtitles, inline banners, and enterprise-grade UX patterns.
-/// Selection is two-way-bound to the caller, with a callback for selection changes.
-/// Uses design tokens exclusively for styling and layout.
+// MARK: - MultiSelectMenu (Enhanced)
+
 public struct MultiSelectMenu: View {
-    /// The title of the multi-select menu.
     public let title: String
-    /// The list of options to display.
     public let options: [String]
-    /// Binding to the current selection set.
     @Binding public var selection: Set<String>
-    /// The system icon name to display for selected options.
     public var icon: String = "checkmark.circle.fill"
-    /// Whether to show the "Clear All" button in the sheet toolbar.
     public var showsClearAll: Bool = true
-    /// Optional attributed helper text displayed below the title.
     public var helperText: AttributedString? = nil
-    /// Optional maximum number of selections allowed.
     public var maxSelection: Int? = nil
-    /// Optional dictionary mapping options to subtitles for context-aware display.
     public var optionSubtitles: [String: String]? = nil
-    /// Optional dictionary mapping options to badge types for role-based visual badges.
     public var optionBadges: [String: OptionBadgeType]? = nil
-    /// Callback invoked whenever the selection changes.
     public var onSelectionChange: ((Set<String>) -> Void)? = nil
+
+    // Analytics/Trust Center loggers (injectable for test, QA, Trust Center)
+    public static var analyticsLogger: MultiSelectMenuAnalyticsLogger = NullMultiSelectMenuAnalyticsLogger()
+    public static var trustCenterDelegate: MultiSelectMenuTrustCenterDelegate = NullMultiSelectMenuTrustCenterDelegate()
 
     @State private var showSheet = false
     @State private var bannerMessage: AttributedString? = nil
@@ -109,6 +113,7 @@ public struct MultiSelectMenu: View {
             Button {
                 bannerMessage = nil
                 showSheet = true
+                Self.analyticsLogger.log(event: "open_menu", info: ["title": title])
             } label: {
                 VStack(alignment: .leading, spacing: AppSpacing.xsmall) {
                     Text(title)
@@ -179,8 +184,15 @@ public struct MultiSelectMenu: View {
                     ToolbarItem(placement: .navigationBarLeading) {
                         if showsClearAll && !selection.isEmpty {
                             Button("Clear All") {
+                                guard Self.trustCenterDelegate.permission(for: "clear_all", option: nil, context: ["title": title]) else {
+                                    showBanner("You do not have permission to clear all.", .error)
+                                    Self.analyticsLogger.log(event: "clear_all_denied", info: ["title": title])
+                                    return
+                                }
                                 selection.removeAll()
                                 onSelectionChange?(selection)
+                                Self.analyticsLogger.log(event: "clear_all", info: ["title": title])
+                                showBanner("All selections cleared.", .info)
                             }
                             .accessibilityLabel(Text("Clear all selections"))
                         }
@@ -188,6 +200,7 @@ public struct MultiSelectMenu: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             showSheet = false
+                            Self.analyticsLogger.log(event: "close_menu", info: ["title": title])
                         }
                         .bold()
                         .accessibilityLabel(Text("Done"))
@@ -202,25 +215,37 @@ public struct MultiSelectMenu: View {
     }
 
     private func toggle(_ option: String) {
+        guard Self.trustCenterDelegate.permission(for: "toggle", option: option, context: ["title": title]) else {
+            showBanner("You do not have permission to modify \"\(option)\".", .error)
+            Self.analyticsLogger.log(event: "toggle_denied", info: ["option": option, "title": title])
+            return
+        }
         if selection.contains(option) {
             selection.remove(option)
             onSelectionChange?(selection)
             bannerMessage = nil
+            Self.analyticsLogger.log(event: "deselect_option", info: ["option": option, "title": title])
         } else {
             if let max = maxSelection, selection.count >= max {
-                bannerMessage = AttributedString("You can select up to \(max) items.")
-                bannerType = .warning
+                showBanner("You can select up to \(max) items.", .warning)
+                Self.analyticsLogger.log(event: "max_selection", info: ["option": option, "title": title, "max": max])
             } else {
                 selection.insert(option)
                 onSelectionChange?(selection)
                 bannerMessage = nil
+                Self.analyticsLogger.log(event: "select_option", info: ["option": option, "title": title])
             }
         }
     }
+
+    private func showBanner(_ message: String, _ type: BannerType) {
+        bannerMessage = AttributedString(message)
+        bannerType = type
+    }
 }
 
-/// Row with a checkmark for selected options, supports subtitles and role-based badges.
-/// Uses design tokens for all styling and layout.
+// MARK: - MultipleSelectionRow (Unchanged except for analytics, accessibility, and audit hooks)
+
 struct MultipleSelectionRow: View {
     let option: String
     let subtitle: String?
@@ -266,30 +291,22 @@ struct MultipleSelectionRow: View {
 
     private func badgeText(for option: String) -> String {
         switch option.lowercased() {
-        case "vip":
-            return "VIP"
-        case "allergic":
-            return "Allergic"
-        case "aggressive":
-            return "Aggressive"
+        case "vip":        return "VIP"
+        case "allergic":   return "Allergic"
+        case "aggressive": return "Aggressive"
         default:
             switch badgeType {
-            case .info:
-                return "Info"
-            case .warning:
-                return "Warning"
-            case .success:
-                return "Success"
-            case .critical:
-                return "Critical"
-            case .none:
-                return ""
+            case .info:     return "Info"
+            case .warning:  return "Warning"
+            case .success:  return "Success"
+            case .critical: return "Critical"
+            case .none:     return ""
             }
         }
     }
 }
 
-/// Banner types for inline messages.
+// MARK: - BannerType/BannerView (Unchanged)
 enum BannerType {
     case info
     case warning
@@ -297,29 +314,20 @@ enum BannerType {
 
     var backgroundColor: Color {
         switch self {
-        case .info:
-            return AppColors.infoBackground
-        case .warning:
-            return AppColors.warningBackground
-        case .error:
-            return AppColors.criticalBackground
+        case .info:    return AppColors.infoBackground
+        case .warning: return AppColors.warningBackground
+        case .error:   return AppColors.criticalBackground
         }
     }
-
     var foregroundColor: Color {
         switch self {
-        case .info:
-            return AppColors.info
-        case .warning:
-            return AppColors.warning
-        case .error:
-            return AppColors.critical
+        case .info:    return AppColors.info
+        case .warning: return AppColors.warning
+        case .error:   return AppColors.critical
         }
     }
 }
 
-/// Inline banner view for displaying system error/info messages.
-/// Uses design tokens exclusively for styling and layout.
 struct BannerView: View {
     let message: AttributedString
     let type: BannerType
@@ -344,19 +352,28 @@ struct BannerView: View {
 
     private var iconName: String {
         switch type {
-        case .info:
-            return "info.circle"
-        case .warning:
-            return "exclamationmark.triangle"
-        case .error:
-            return "xmark.octagon"
+        case .info:    return "info.circle"
+        case .warning: return "exclamationmark.triangle"
+        case .error:   return "xmark.octagon"
         }
     }
 }
 
-// MARK: - Preview
+// MARK: - Preview with Analytics/Trust Center Injection
 
 #Preview {
+    struct SpyLogger: MultiSelectMenuAnalyticsLogger {
+        func log(event: String, info: [String : Any]?) {
+            print("[MultiSelectMenuAnalytics] \(event): \(info ?? [:])")
+        }
+    }
+    struct SpyTrustCenter: MultiSelectMenuTrustCenterDelegate {
+        func permission(for action: String, option: String?, context: [String : Any]?) -> Bool {
+            // Example: Deny selecting "VIP"
+            if action == "toggle", option == "VIP" { return false }
+            return true
+        }
+    }
     @State var selected: Set<String> = ["Sensitive Skin", "VIP"]
 
     var helperText: AttributedString {
@@ -374,7 +391,6 @@ struct BannerView: View {
         "Allergic": "Avoid certain allergens",
         "VIP": "High priority client"
     ]
-
     let optionBadges: [String: OptionBadgeType] = [
         "VIP": .critical,
         "Allergic": .critical,
@@ -383,6 +399,8 @@ struct BannerView: View {
         "Sensitive Skin": .success
     ]
 
+    MultiSelectMenu.analyticsLogger = SpyLogger()
+    MultiSelectMenu.trustCenterDelegate = SpyTrustCenter()
     return MultiSelectMenu(
         title: "Tags",
         options: ["Sensitive Skin", "Aggressive", "Timid", "Needs Special Shampoo", "Allergic", "VIP"],

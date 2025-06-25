@@ -2,22 +2,99 @@
 //  FinancialReportView.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
-//
-//  ENHANCED: A view to generate and display a professional Profit & Loss
-//  financial report for the business.
+//  Enhanced 2025: Auditable, Tokenized, Modular Financial Report View
 //
 
 import SwiftUI
 
-/// A data model for a single line item in the financial report.
+// MARK: - Audit/Event Logging
+
+fileprivate struct FinancialReportAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String          // "generate", "export"
+    let period: String
+    let totalRevenue: Double
+    let totalExpenses: Double
+    let netProfit: Double
+    let profitMargin: Double
+    let revenueBreakdown: [String: Double]
+    let expenseBreakdown: [String: Double]
+    let tags: [String]
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        var s = "[\(operation.capitalized)] \(period)"
+        s += ", Revenue: $\(String(format: "%.2f", totalRevenue))"
+        s += ", Expenses: $\(String(format: "%.2f", totalExpenses))"
+        s += ", Net: $\(String(format: "%.2f", netProfit)), Margin: \(String(format: "%.1f", profitMargin))%"
+        if !revenueBreakdown.isEmpty {
+            let r = revenueBreakdown.map { "\($0.key): $\(String(format: "%.2f", $0.value))" }.joined(separator: ", ")
+            s += " | Revenue Breakdown: [\(r)]"
+        }
+        if !expenseBreakdown.isEmpty {
+            let e = expenseBreakdown.map { "\($0.key): $\(String(format: "%.2f", $0.value))" }.joined(separator: ", ")
+            s += " | Expense Breakdown: [\(e)]"
+        }
+        if !tags.isEmpty { s += " [\(tags.joined(separator: ","))]" }
+        s += " at \(dateStr)"
+        if let detail, !detail.isEmpty { s += ": \(detail)" }
+        return s
+    }
+}
+
+fileprivate final class FinancialReportAudit {
+    static private(set) var log: [FinancialReportAuditEvent] = []
+
+    static func record(
+        operation: String,
+        period: String,
+        totalRevenue: Double,
+        totalExpenses: Double,
+        netProfit: Double,
+        profitMargin: Double,
+        revenueBreakdown: [String: Double],
+        expenseBreakdown: [String: Double],
+        tags: [String] = [],
+        detail: String? = nil
+    ) {
+        let event = FinancialReportAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            period: period,
+            totalRevenue: totalRevenue,
+            totalExpenses: totalExpenses,
+            netProfit: netProfit,
+            profitMargin: profitMargin,
+            revenueBreakdown: revenueBreakdown,
+            expenseBreakdown: expenseBreakdown,
+            tags: tags,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 100 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No financial report events recorded."
+    }
+}
+
+// MARK: - ReportLineItem
+
 struct ReportLineItem: Identifiable, Hashable {
     let id = UUID()
     let category: String
     let amount: Double
 }
 
-/// The ViewModel responsible for fetching and calculating financial report data.
+// MARK: - FinancialReportViewModel
+
 @MainActor
 final class FinancialReportViewModel: ObservableObject {
     @Published var reportTitle: String = "Financial Report"
@@ -34,6 +111,8 @@ final class FinancialReportViewModel: ObservableObject {
     // Injected dependencies
     private let revenueAnalyzer: RevenueAnalyzer
     private let dataStore: DataStoreService
+
+    private(set) var lastPeriod: TimePeriod = .month
     
     init(revenueAnalyzer: RevenueAnalyzer = .shared, dataStore: DataStoreService = .shared) {
         self.revenueAnalyzer = revenueAnalyzer
@@ -43,14 +122,15 @@ final class FinancialReportViewModel: ObservableObject {
     /// Fetches all necessary data and calculates the report values for a given time period.
     func generateReport(for period: TimePeriod) async {
         isLoading = true
+        lastPeriod = period
         reportTitle = "\(period.rawValue) Financial Report"
         
         // Determine date range from the selected period
         let (start, end) = period.dateRange()
         
         // Fetch all charges and expenses within the date range
-        let allCharges = await dataStore.fetchAll(Charge.self) // In a real app, you'd filter by date in the fetch
-        let allExpenses = await dataStore.fetchAll(Expense.self) // Placeholder for your Expense model
+        let allCharges = await dataStore.fetchAll(Charge.self)
+        let allExpenses = await dataStore.fetchAll(Expense.self)
         
         let periodCharges = allCharges.filter { $0.date >= start && $0.date <= end }
         let periodExpenses = allExpenses.filter { $0.date >= start && $0.date <= end }
@@ -69,16 +149,37 @@ final class FinancialReportViewModel: ObservableObject {
         self.expenseBreakdown = Dictionary(grouping: periodExpenses, by: { $0.category })
             .map { ReportLineItem(category: $0.key, amount: $0.value.reduce(0) { $0 + $1.amount }) }
             .sorted { $0.amount > $1.amount }
-            
+        
+        // Audit event
+        FinancialReportAudit.record(
+            operation: "generate",
+            period: period.rawValue,
+            totalRevenue: self.totalRevenue,
+            totalExpenses: self.totalExpenses,
+            netProfit: self.netProfit,
+            profitMargin: self.profitMargin,
+            revenueBreakdown: Dictionary(uniqueKeysWithValues: self.revenueBreakdown.map { ($0.category, $0.amount) }),
+            expenseBreakdown: Dictionary(uniqueKeysWithValues: self.expenseBreakdown.map { ($0.category, $0.amount) }),
+            tags: ["generate", period.rawValue]
+        )
+        
         isLoading = false
+    }
+
+    /// Audit export for admin/BI
+    var lastAuditSummary: String { FinancialReportAudit.accessibilitySummary }
+    var lastAuditJSON: String? { FinancialReportAudit.exportLastJSON() }
+    func recentAuditEvents(limit: Int = 5) -> [String] {
+        FinancialReportAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 
-/// The SwiftUI view that displays the financial report.
+// MARK: - FinancialReportView
+
 struct FinancialReportView: View {
     @StateObject private var viewModel = FinancialReportViewModel()
     @State private var selectedPeriod: TimePeriod = .month
-    
+
     var body: some View {
         Form {
             // MARK: - Period Picker
@@ -100,6 +201,7 @@ struct FinancialReportView: View {
                 ReportRow(label: "Total Expenses", amount: viewModel.totalExpenses, color: .red)
                 Divider()
                 ReportRow(label: "Net Profit", amount: viewModel.netProfit, color: viewModel.netProfit >= 0 ? .green : .red, isBold: true)
+                ReportRow(label: "Profit Margin", amount: viewModel.profitMargin, isBold: true, isPercent: true)
             }
             
             // MARK: - Revenue Breakdown
@@ -128,11 +230,23 @@ struct FinancialReportView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Export", systemImage: "square.and.arrow.up") {
-                    // TODO: Call ReportGenerator to create a PDF of this data
+                    FinancialReportAudit.record(
+                        operation: "export",
+                        period: selectedPeriod.rawValue,
+                        totalRevenue: viewModel.totalRevenue,
+                        totalExpenses: viewModel.totalExpenses,
+                        netProfit: viewModel.netProfit,
+                        profitMargin: viewModel.profitMargin,
+                        revenueBreakdown: Dictionary(uniqueKeysWithValues: viewModel.revenueBreakdown.map { ($0.category, $0.amount) }),
+                        expenseBreakdown: Dictionary(uniqueKeysWithValues: viewModel.expenseBreakdown.map { ($0.category, $0.amount) }),
+                        tags: ["export", selectedPeriod.rawValue],
+                        detail: "Export button tapped"
+                    )
+                    // TODO: Integrate ReportGenerator to create a PDF of this data
                 }
             }
         }
-        .task { // Use .task for async onAppear
+        .task {
             await viewModel.generateReport(for: selectedPeriod)
         }
     }
@@ -144,20 +258,28 @@ private struct ReportRow: View {
     let amount: Double
     var color: Color? = nil
     var isBold: Bool = false
+    var isPercent: Bool = false
     
     var body: some View {
         HStack {
             Text(label)
                 .fontWeight(isBold ? .bold : .regular)
             Spacer()
-            Text(amount, format: .currency(code: "USD"))
-                .foregroundStyle(color ?? .primary)
-                .fontWeight(isBold ? .bold : .regular)
+            if isPercent {
+                Text("\(amount, specifier: "%.1f")%")
+                    .foregroundStyle(color ?? .primary)
+                    .fontWeight(isBold ? .bold : .regular)
+            } else {
+                Text(amount, format: .currency(code: "USD"))
+                    .foregroundStyle(color ?? .primary)
+                    .fontWeight(isBold ? .bold : .regular)
+            }
         }
     }
 }
 
-/// Extending the TimePeriod enum to provide date ranges.
+// MARK: - TimePeriod Extension
+
 fileprivate extension TimePeriod {
     func dateRange() -> (start: Date, end: Date) {
         let now = Date()
@@ -181,7 +303,6 @@ fileprivate extension TimePeriod {
 #Preview {
     NavigationStack {
         FinancialReportView()
-            // Provide a mock expense model for the preview
             .modelContainer(for: [Charge.self, Expense.self], inMemory: true)
     }
 }

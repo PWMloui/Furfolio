@@ -2,26 +2,52 @@
 //  FurfolioAlertView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: analytics/audit–ready, token-compliant, Trust Center–ready, accessibility, preview/test–injectable.
 //
 
 import SwiftUI
 
-// MARK: - FurfolioAlert (Business Alert Model, Modular, Accessible, Localized)
+// MARK: - Analytics/Audit Protocol
 
-/// Represents a modular, accessible, and localized alert used throughout the Furfolio app,
-/// specifically designed for business management scenarios.
-/// This struct supports semantic roles, localization, accessibility features, and customization with icons,
-/// enabling clear communication of various alert types such as informational, warning, error, success, and destructive alerts.
-/// Conforms to `Codable`, `Sendable`, and `Equatable` to facilitate multi-user syncing, audit logging, and offline support,
-/// ensuring robustness in business-critical environments.
+public protocol FurfolioAlertAnalyticsLogger {
+    func log(event: String, alert: FurfolioAlert)
+}
+public struct NullFurfolioAlertAnalyticsLogger: FurfolioAlertAnalyticsLogger {
+    public init() {}
+    public func log(event: String, alert: FurfolioAlert) {}
+}
+
+// MARK: - FurfolioAlert (Business Alert Model, Modular, Accessible, Localized, Audit)
+
 struct FurfolioAlert: Identifiable, Codable, Sendable, Equatable {
-    enum Role: String, Codable, Sendable, Equatable {
+    enum Role: String, Codable, Sendable, Equatable, CaseIterable {
         case info
         case warning
         case error
         case success
         case destructive
+
+        /// Tokenized SF Symbol for each role (can be replaced per brand/theme).
+        var iconName: String {
+            switch self {
+            case .info:        return "info.circle.fill"
+            case .warning:     return "exclamationmark.triangle.fill"
+            case .error:       return "xmark.octagon.fill"
+            case .success:     return "checkmark.seal.fill"
+            case .destructive: return "trash.fill"
+            }
+        }
+
+        /// Tokenized color name (hook into theme).
+        var color: Color {
+            switch self {
+            case .info:        return AppColors.info
+            case .warning:     return AppColors.warning
+            case .error:       return AppColors.danger
+            case .success:     return AppColors.success
+            case .destructive: return AppColors.danger
+            }
+        }
     }
 
     let id = UUID()
@@ -33,17 +59,9 @@ struct FurfolioAlert: Identifiable, Codable, Sendable, Equatable {
     let iconName: String?
     let accessibilityLabel: LocalizedStringKey?
     let accessibilityHint: LocalizedStringKey?
+    let auditTag: String? // For Trust Center/audit scenarios
 
     /// Initializes a new FurfolioAlert.
-    /// - Parameters:
-    ///   - title: The visible title displayed in the alert. This should be localized to ensure clarity and usability for all users.
-    ///   - message: Optional alert message (localized).
-    ///   - primaryButton: The primary alert button, defaulting to "OK".
-    ///   - secondaryButton: Optional secondary alert button.
-    ///   - role: The semantic role of the alert for visual and accessibility purposes.
-    ///   - iconName: Optional SF Symbol name to display as an icon.
-    ///   - accessibilityLabel: Optional label for accessibility.
-    ///   - accessibilityHint: Optional hint for accessibility.
     init(
         title: LocalizedStringKey,
         message: LocalizedStringKey? = nil,
@@ -52,7 +70,8 @@ struct FurfolioAlert: Identifiable, Codable, Sendable, Equatable {
         role: Role = .info,
         iconName: String? = nil,
         accessibilityLabel: LocalizedStringKey? = nil,
-        accessibilityHint: LocalizedStringKey? = nil
+        accessibilityHint: LocalizedStringKey? = nil,
+        auditTag: String? = nil
     ) {
         self.title = title
         self.message = message
@@ -62,36 +81,69 @@ struct FurfolioAlert: Identifiable, Codable, Sendable, Equatable {
         self.iconName = iconName
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityHint = accessibilityHint
+        self.auditTag = auditTag
     }
 
-    /// Creates a simple informational alert with an "OK" button.
-    /// - Parameters:
-    ///   - title: The alert title (localized).
-    ///   - message: Optional alert message (localized).
-    /// - Returns: A FurfolioAlert configured with default OK action and info role.
-    static func defaultAction(
-        title: LocalizedStringKey,
-        message: LocalizedStringKey? = nil
-    ) -> FurfolioAlert {
+    /// Info alert shortcut (tokenized).
+    static func info(_ title: LocalizedStringKey, message: LocalizedStringKey? = nil) -> FurfolioAlert {
         FurfolioAlert(
             title: title,
             message: message,
             primaryButton: .default(Text("OK")),
-            role: .info
+            role: .info,
+            iconName: Role.info.iconName
+        )
+    }
+    /// Error alert shortcut.
+    static func error(_ title: LocalizedStringKey, message: LocalizedStringKey? = nil, auditTag: String? = nil) -> FurfolioAlert {
+        FurfolioAlert(
+            title: title,
+            message: message,
+            primaryButton: .default(Text("OK")),
+            role: .error,
+            iconName: Role.error.iconName,
+            auditTag: auditTag
+        )
+    }
+    /// Destructive alert shortcut.
+    static func destructive(
+        title: LocalizedStringKey,
+        message: LocalizedStringKey? = nil,
+        auditTag: String? = nil,
+        onDelete: @escaping () -> Void
+    ) -> FurfolioAlert {
+        FurfolioAlert(
+            title: title,
+            message: message,
+            primaryButton: .destructive(Text("Delete"), action: onDelete),
+            secondaryButton: .cancel(),
+            role: .destructive,
+            iconName: Role.destructive.iconName,
+            auditTag: auditTag
         )
     }
 }
 
+// MARK: - Analytics Logger (swap in your own for QA/Trust Center/print)
+
+extension FurfolioAlert {
+    static var analyticsLogger: FurfolioAlertAnalyticsLogger = NullFurfolioAlertAnalyticsLogger()
+}
+
+// MARK: - View Modifier (Audit/Analytics–ready)
+
 extension View {
     /// Presents a FurfolioAlert using a binding to an optional FurfolioAlert.
-    /// Passes accessibility labels and hints to the underlying Alert.
-    /// - Parameter alert: Binding to an optional FurfolioAlert.
-    /// - Returns: A view presenting the alert when non-nil.
+    /// Logs alert presents and Trust Center audit tags.
     func furfolioAlert(_ alert: Binding<FurfolioAlert?>) -> some View {
         self.alert(item: alert) { alert in
+            FurfolioAlert.analyticsLogger.log(event: "present", alert: alert)
+            if let tag = alert.auditTag {
+                FurfolioAlert.analyticsLogger.log(event: "audit_tag", alert: alert)
+                // Trust Center hook: export to audit log if tag present
+            }
             let alertTitle = Text(alert.title)
             let alertMessage = alert.message.map(Text.init)
-
             let alertView: Alert
             if let secondary = alert.secondaryButton {
                 alertView = Alert(
@@ -107,7 +159,7 @@ extension View {
                     dismissButton: alert.primaryButton
                 )
             }
-
+            // Add accessibility
             return alertView
                 .accessibilityLabel(alert.accessibilityLabel.map(Text.init))
                 .accessibilityHint(alert.accessibilityHint.map(Text.init))
@@ -115,51 +167,49 @@ extension View {
     }
 }
 
-// MARK: - Previews for onboarding, role demonstration, and icon usage
+// MARK: - Previews: demo analytics and Trust Center audit
 
 struct FurfolioAlertView_Previews: PreviewProvider {
+    struct SpyLogger: FurfolioAlertAnalyticsLogger {
+        func log(event: String, alert: FurfolioAlert) {
+            print("[FurfolioAlertAnalytics] \(event) \(alert.role.rawValue) \(alert.title) \(alert.auditTag ?? "")")
+        }
+    }
     struct Demo: View {
         @State private var alert: FurfolioAlert?
 
         var body: some View {
             VStack(spacing: 24) {
                 Button("Show Destructive Alert") {
-                    alert = FurfolioAlert(
+                    alert = FurfolioAlert.destructive(
                         title: "Delete Item",
                         message: "This action cannot be undone.",
-                        primaryButton: .destructive(Text("Delete")) {
-                            print("Item deleted")
-                        },
-                        secondaryButton: .cancel(),
-                        role: .destructive,
-                        iconName: "trash.fill",
-                        accessibilityLabel: "Delete confirmation",
-                        accessibilityHint: "Deletes the selected item permanently"
+                        auditTag: "delete_item",
+                        onDelete: {
+                            FurfolioAlert.analyticsLogger.log(event: "destructive_action", alert: FurfolioAlert.error("Deleted!"))
+                        }
                     )
                 }
-
                 Button("Show Success Alert") {
                     alert = FurfolioAlert(
                         title: "Success",
                         message: "Your changes have been saved.",
                         primaryButton: .default(Text("OK")),
                         role: .success,
-                        iconName: "checkmark.seal.fill"
+                        iconName: FurfolioAlert.Role.success.iconName
                     )
                 }
-
                 Button("Show Warning Alert") {
                     alert = FurfolioAlert(
                         title: "Warning",
                         message: "Please review the entered data.",
                         role: .warning,
-                        iconName: "exclamationmark.triangle.fill"
+                        iconName: FurfolioAlert.Role.warning.iconName
                     )
                 }
-
                 Button("Show Info Alert") {
-                    alert = FurfolioAlert.defaultAction(
-                        title: "Information",
+                    alert = FurfolioAlert.info(
+                        "Information",
                         message: "This is an informational alert."
                     )
                 }
@@ -168,9 +218,9 @@ struct FurfolioAlertView_Previews: PreviewProvider {
             .furfolioAlert($alert)
         }
     }
-
     static var previews: some View {
-        Demo()
+        FurfolioAlert.analyticsLogger = SpyLogger()
+        return Demo()
     }
 }
 

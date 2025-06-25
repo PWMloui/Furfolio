@@ -2,110 +2,56 @@
 //  User.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//  Updated & Enhanced by ChatGPT on 6/21/25
+//  Enhanced for analytics, BI, security, badge tokenization, accessibility, and export.
+//  Author: mac + ChatGPT
 //
 
 import Foundation
 import SwiftData
 import UIKit
 
-// MARK: - User (Modular, Tokenized, Auditable Multi-Role User Account Model)
-
-/// Represents a modular, auditable, tokenized multi-role user entity within Furfolio,
-/// designed to support business/staff/owner/admin roles with comprehensive audit trails,
-/// role-based access control (RBAC), analytics, compliance tracking, and UI integration
-/// (including badges and icons). This model supports multi-business environments and
-/// Trust Center features, enabling secure owner-focused dashboards, onboarding flows,
-/// and detailed reporting.
-///
-/// The User entity is central to managing identities across multiple business locations,
-/// staff members, and admin roles, ensuring transparency, traceability, and flexibility
-/// in permissions and workflows.
 @available(iOS 18.0, *)
 @Model
 final class User: Identifiable, ObservableObject {
     // MARK: - Properties
 
-    /// Unique identifier for the user.
-    /// Used for audit logging, analytics tracking, and secure referencing across systems.
-    @Attribute(.unique)
-    var id: UUID
-
-    /// Username for login and display purposes.
-    /// Supports audit trails, user activity analytics, and UI display.
+    @Attribute(.unique) var id: UUID
     var username: String
-
-    /// Optional email address.
-    /// Important for communication, audit notifications, compliance, and onboarding.
     var email: String?
-
-    /// Optional phone number.
-    /// Used for contact, multi-factor authentication, and compliance notifications.
     var phone: String?
-
-    /// Role defining user permissions and access level.
-    /// Integral to RBAC, UI role badges, analytics segmentation, and compliance scopes.
     var role: UserRole
-
-    /// Flag indicating if the user account is active.
-    /// Used for workflow gating, compliance (e.g., deactivation audits), and UI status indicators.
     var isActive: Bool
-
-    /// Timestamp when the user was created.
-    /// Essential for audit history, compliance reporting, and onboarding analytics.
+    var isArchived: Bool
+    var isSuspended: Bool
+    var mfaEnabled: Bool
+    var passwordLastChanged: Date?
+    var verified: Bool
+    var complianceAcceptedAt: Date?
+    var lastLoginAt: Date?
+    var loginStreak: Int
     var dateCreated: Date
-
-    /// Timestamp of the last modification.
-    /// Supports audit trails, change tracking, and synchronization analytics.
     var lastModified: Date
-
-    /// Optional profile picture data (stored as Data).
-    /// Enhances UI personalization and user recognition in workflows.
     var profileImageData: Data?
-
-    /// Relationship: The business this user belongs to.
-    /// Supports multi-location business management, RBAC scoping, analytics by business unit,
-    /// and UI workflows reflecting business context.
     @Relationship(deleteRule: .nullify, inverse: \Business.staff)
     var business: Business?
-
-    /// Relationship: Optional staff member record linked to this user.
-    /// Enables HR features, detailed RBAC, analytics on staff performance,
-    /// and UI workflows for staff management.
     @Relationship(deleteRule: .nullify)
     var staffRecord: StaffMember?
+    var auditTrail: [UserAuditLog]
+    var tags: [String]
+    var badgeTokens: [String]
 
-    /// Audit trail of all changes related to this user.
-    /// Critical for Trust Center transparency, compliance audits, forensic reporting,
-    /// and business accountability.
-    var auditTrail: [UserAuditLog] = []
+    // MARK: - Type-safe badge tokens for segmentation/analytics/UI
 
-    /// Tags for flexible filtering and categorization.
-    /// Used in business segmentation, analytics cohorts, UI filtering, and workflow automation.
-    var tags: [String] = []
+    enum UserBadge: String, CaseIterable, Codable {
+        case mfa, trusted, onboarding, compliance, suspended, archived, powerUser, multiBusiness, risk
+    }
+    var badges: [UserBadge] { badgeTokens.compactMap { UserBadge(rawValue: $0) } }
+    func addBadge(_ badge: UserBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
+    func removeBadge(_ badge: UserBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func hasBadge(_ badge: UserBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
 
     // MARK: - Initializer
 
-    /// Initializes a new User instance.
-    ///
-    /// - Parameters:
-    ///   - id: Unique identifier; defaults to a new UUID.
-    ///   - username: Required username for login and display.
-    ///   - email: Optional email for communication and compliance.
-    ///   - phone: Optional phone number for contact and MFA.
-    ///   - role: User role for RBAC and UI representation; defaults to `.owner`.
-    ///   - isActive: Account active status; defaults to `true`.
-    ///   - dateCreated: Creation timestamp; defaults to current date.
-    ///   - lastModified: Last modification timestamp; defaults to current date.
-    ///   - profileImageData: Optional profile image data for UI.
-    ///   - business: Optional associated business for RBAC and analytics.
-    ///   - staffRecord: Optional linked staff member for HR and workflow.
-    ///   - auditTrail: Initial audit logs; used for compliance and event logging.
-    ///   - tags: Optional tags for analytics and filtering.
-    ///
-    /// This initializer supports audit/event logging, business context assignment,
-    /// onboarding workflows, analytics segmentation, and compliance tracking.
     init(
         id: UUID = UUID(),
         username: String,
@@ -113,13 +59,22 @@ final class User: Identifiable, ObservableObject {
         phone: String? = nil,
         role: UserRole = .owner,
         isActive: Bool = true,
+        isArchived: Bool = false,
+        isSuspended: Bool = false,
+        mfaEnabled: Bool = false,
+        passwordLastChanged: Date? = nil,
+        verified: Bool = false,
+        complianceAcceptedAt: Date? = nil,
+        lastLoginAt: Date? = nil,
+        loginStreak: Int = 0,
         dateCreated: Date = Date(),
         lastModified: Date = Date(),
         profileImageData: Data? = nil,
         business: Business? = nil,
         staffRecord: StaffMember? = nil,
         auditTrail: [UserAuditLog] = [],
-        tags: [String] = []
+        tags: [String] = [],
+        badgeTokens: [String] = []
     ) {
         self.id = id
         self.username = username
@@ -127,6 +82,14 @@ final class User: Identifiable, ObservableObject {
         self.phone = phone
         self.role = role
         self.isActive = isActive
+        self.isArchived = isArchived
+        self.isSuspended = isSuspended
+        self.mfaEnabled = mfaEnabled
+        self.passwordLastChanged = passwordLastChanged
+        self.verified = verified
+        self.complianceAcceptedAt = complianceAcceptedAt
+        self.lastLoginAt = lastLoginAt
+        self.loginStreak = loginStreak
         self.dateCreated = dateCreated
         self.lastModified = lastModified
         self.profileImageData = profileImageData
@@ -134,51 +97,49 @@ final class User: Identifiable, ObservableObject {
         self.staffRecord = staffRecord
         self.auditTrail = auditTrail
         self.tags = tags
+        self.badgeTokens = badgeTokens
     }
 
     // MARK: - Computed
 
-    /// Returns a user-friendly display name.
-    /// Used throughout the UI for personalization, analytics labeling, and reporting.
-    var displayName: String {
-        username
+    var displayName: String { username }
+    var profileImage: UIImage? { profileImageData.flatMap { UIImage(data: $0) } }
+    var roleLabel: String { role.label }
+    var roleIcon: String { role.icon }
+    var isEnabled: Bool { isActive && !isSuspended && !isArchived }
+    var isVerified: Bool { verified }
+    var yearsWithBusiness: Int {
+        guard let business else { return 0 }
+        return Calendar.current.dateComponents([.year], from: business.dateCreated, to: Date()).year ?? 0
     }
-
-    /// Decodes the stored profile image data into a UIImage.
-    /// Used for UI avatar display and enhancing user recognition in workflows.
-    var profileImage: UIImage? {
-        guard let data = profileImageData else { return nil }
-        return UIImage(data: data)
+    var daysSinceLastLogin: Int? {
+        guard let last = lastLoginAt else { return nil }
+        return Calendar.current.dateComponents([.day], from: last, to: Date()).day
     }
-
-    /// Returns a user-friendly label for the user's role.
-    /// Supports UI badges, analytics segmentation, RBAC displays, and reporting.
-    var roleLabel: String {
-        role.label
+    var riskScore: Int {
+        var score = 0
+        if !mfaEnabled { score += 1 }
+        if !isVerified { score += 1 }
+        if isSuspended || isArchived { score += 2 }
+        if let pwdAge = passwordLastChanged, pwdAge < Calendar.current.date(byAdding: .month, value: -12, to: Date())! { score += 1 }
+        if hasBadge(.risk) { score += 1 }
+        return score
     }
-
-    /// Returns the SFSymbol icon name associated with the user's role.
-    /// Used in UI elements, analytics dashboards, and role-based reporting.
-    var roleIcon: String {
-        role.icon
+    var accessibilityLabel: String {
+        "\(displayName), \(roleLabel). \(isEnabled ? "Active." : "Inactive.") \(isSuspended ? "Suspended." : "") Risk score: \(riskScore)."
     }
+    var lastAuditSummary: String {
+        guard let last = auditTrail.last else { return "No audit events." }
+        return "\(last.action) on \(DateFormatter.localizedString(from: last.date, dateStyle: .short, timeStyle: .short))"
+    }
+    var isMultiBusiness: Bool { hasBadge(.multiBusiness) || tags.contains("multiBusiness") }
+    var isPowerUser: Bool { hasBadge(.powerUser) || loginStreak > 30 }
+    var isCompliant: Bool { complianceAcceptedAt != nil }
+    var isOnboarding: Bool { hasBadge(.onboarding) }
+    var isTrusted: Bool { mfaEnabled && isVerified && !isSuspended && !isArchived }
 
     // MARK: - State/Helpers
 
-    /// Indicates whether the user is currently enabled (active and not soft-deleted).
-    /// Used for gating access, compliance checks, and UI status indicators.
-    var isEnabled: Bool {
-        isActive
-    }
-
-    /// Adds an audit log entry recording a user-related change.
-    ///
-    /// - Parameters:
-    ///   - action: Description of the action performed.
-    ///   - actor: Optional user who performed the action; used for accountability.
-    ///
-    /// This method supports audit/event logging, Trust Center transparency,
-    /// business accountability, and analytics on user activity.
     func logChange(_ action: String, by actor: User? = nil) {
         let log = UserAuditLog(
             action: action,
@@ -186,40 +147,103 @@ final class User: Identifiable, ObservableObject {
             actorID: actor?.id
         )
         auditTrail.append(log)
+        lastModified = Date()
+    }
+
+    func enable() { isActive = true; isSuspended = false; logChange("User enabled") }
+    func disable() { isActive = false; logChange("User disabled") }
+    func suspend() { isSuspended = true; addBadge(.suspended); logChange("User suspended") }
+    func unsuspend() { isSuspended = false; removeBadge(.suspended); logChange("User unsuspended") }
+    func archive() { isArchived = true; addBadge(.archived); logChange("User archived") }
+    func unarchive() { isArchived = false; removeBadge(.archived); logChange("User unarchived") }
+    func escalateRole(to newRole: UserRole) { role = newRole; logChange("Role escalated to \(newRole.label)") }
+    func acceptCompliance() { complianceAcceptedAt = Date(); addBadge(.compliance); logChange("Accepted compliance agreement") }
+    func updatePassword() { passwordLastChanged = Date(); logChange("Password updated") }
+    func verify() { verified = true; logChange("User verified") }
+
+    // MARK: - Export/Reporting
+
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID
+            let username: String
+            let email: String?
+            let phone: String?
+            let role: String
+            let isActive: Bool
+            let isArchived: Bool
+            let isSuspended: Bool
+            let mfaEnabled: Bool
+            let verified: Bool
+            let complianceAcceptedAt: Date?
+            let lastLoginAt: Date?
+            let loginStreak: Int
+            let badgeTokens: [String]
+            let riskScore: Int
+        }
+        let export = Export(
+            id: id, username: username, email: email, phone: phone, role: role.rawValue,
+            isActive: isActive, isArchived: isArchived, isSuspended: isSuspended,
+            mfaEnabled: mfaEnabled, verified: verified, complianceAcceptedAt: complianceAcceptedAt,
+            lastLoginAt: lastLoginAt, loginStreak: loginStreak, badgeTokens: badgeTokens, riskScore: riskScore
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     // MARK: - Sample Data
 
-    /// Sample user instance for testing and preview purposes.
     static var sample: User {
         User(
             username: "furfolio_owner",
             email: "owner@furfolio.com",
             phone: "555-123-4567",
             role: .owner,
-            isActive: true
+            isActive: true,
+            isArchived: false,
+            isSuspended: false,
+            mfaEnabled: true,
+            verified: true,
+            complianceAcceptedAt: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
+            lastLoginAt: Calendar.current.date(byAdding: .day, value: -1, to: Date()),
+            loginStreak: 42,
+            badgeTokens: [UserBadge.mfa.rawValue, UserBadge.powerUser.rawValue]
+        )
+    }
+
+    static var suspended: User {
+        User(
+            username: "furfolio_suspended",
+            email: "suspended@furfolio.com",
+            role: .staff,
+            isActive: false,
+            isArchived: false,
+            isSuspended: true,
+            mfaEnabled: false,
+            verified: false,
+            badgeTokens: [UserBadge.suspended.rawValue, UserBadge.risk.rawValue]
+        )
+    }
+
+    static var archived: User {
+        User(
+            username: "archived_admin",
+            email: "archived@furfolio.com",
+            role: .admin,
+            isActive: false,
+            isArchived: true,
+            isSuspended: false,
+            mfaEnabled: false,
+            verified: false,
+            badgeTokens: [UserBadge.archived.rawValue]
         )
     }
 }
 
-// MARK: - UserRole Enum
-
-/// Defines user roles with associated permissions and metadata.
-/// Used extensively for role-based access control (RBAC), business logic,
-/// compliance scopes, analytics segmentation, and UI/badge integration.
-/// Roles can be expanded as needed to reflect organizational structure.
+// MARK: - UserRole Enum (same as before)
 enum UserRole: String, Codable, CaseIterable, Identifiable {
-    case owner
-    case admin
-    case groomer
-    case receptionist
-    case staff
-    case custom
-
+    case owner, admin, groomer, receptionist, staff, custom
     var id: String { rawValue }
-
-    /// Human-readable label for the role.
-    /// Used in UI elements, analytics reports, RBAC displays, and compliance documentation.
     var label: String {
         switch self {
         case .owner: return "Owner"
@@ -230,9 +254,6 @@ enum UserRole: String, Codable, CaseIterable, Identifiable {
         case .custom: return "Custom"
         }
     }
-
-    /// SFSymbol icon name representing the role.
-    /// Supports UI badges, dashboards, analytics visualization, and role-based reporting.
     var icon: String {
         switch self {
         case .owner: return "person.crop.circle.fill.badge.star"
@@ -245,12 +266,7 @@ enum UserRole: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - UserAuditLog
-
-/// Represents a single audit log entry related to user actions.
-/// Captures the action description, timestamp, and the actor's user ID (if known).
-/// Essential for audit compliance, forensic reporting, Trust Center transparency,
-/// and analytics on user behavior and changes.
+// MARK: - UserAuditLog (same as before)
 struct UserAuditLog: Codable {
     let action: String
     let date: Date

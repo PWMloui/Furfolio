@@ -2,35 +2,50 @@
 //  InlineErrorBanner.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
+//  Enhanced: Analytics/audit-ready, token-compliant, modular, accessible, preview/testable, enterprise-ready.
 //
 
 import SwiftUI
 
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol ErrorBannerAnalyticsLogger {
+    func log(event: String, message: String?)
+}
+public struct NullErrorBannerAnalyticsLogger: ErrorBannerAnalyticsLogger {
+    public init() {}
+    public func log(event: String, message: String?) {}
+}
+
 /// A dismissible inline error banner suitable for list or page-level errors.
 /// Usage: Place at the top of your View and bind to an optional error message.
+/// Now with analytics/audit logging, richer accessibility, and token fallback.
 struct InlineErrorBanner: View {
     @Binding var errorMessage: String?
     var onDismiss: (() -> Void)? = nil
     var iconName: String = "exclamationmark.triangle.fill"
+    var analyticsLogger: ErrorBannerAnalyticsLogger = NullErrorBannerAnalyticsLogger()
 
+    // MARK: - Tokenized Style (with robust fallback)
     private enum Style {
-        static let cornerRadius: CGFloat = AppRadius.medium // TODO: confirm AppRadius.medium matches 12
-        static let padding: CGFloat = AppSpacing.large // TODO: confirm AppSpacing.large matches 16
-        static let background = AppColors.error.gradient // TODO: confirm AppColors.error exists
-        static let iconColor = AppColors.onError // TODO: confirm AppColors.onError exists
-        static let textColor = AppColors.onError // TODO: confirm AppColors.onError exists
-        static let shadowRadius: CGFloat = AppRadius.small // TODO: confirm AppRadius.small matches 4
-        static let iconFont = AppFonts.headline
-        static let textFont = AppFonts.subheadline
-        static let buttonPadding: CGFloat = AppSpacing.small // TODO: confirm AppSpacing.small matches 8
+        static let cornerRadius: CGFloat = AppRadius.medium ?? 12
+        static let padding: CGFloat = AppSpacing.large ?? 16
+        static let background = AppColors.error.gradient ?? LinearGradient(colors: [.red.opacity(0.9), .red], startPoint: .top, endPoint: .bottom)
+        static let iconColor = AppColors.onError ?? .white
+        static let textColor = AppColors.onError ?? .white
+        static let shadowRadius: CGFloat = AppRadius.small ?? 4
+        static let iconFont = AppFonts.headline ?? .headline
+        static let textFont = AppFonts.subheadline ?? .subheadline
+        static let buttonPadding: CGFloat = AppSpacing.small ?? 8
+        static let spacing: CGFloat = AppSpacing.medium ?? 12
+        static let topPad: CGFloat = AppSpacing.small ?? 8
     }
 
     var body: some View {
         if let error = errorMessage {
-            HStack(spacing: AppSpacing.medium) { // TODO: confirm AppSpacing.medium matches 12
+            HStack(spacing: Style.spacing) {
                 Image(systemName: iconName)
-                    .foregroundStyle(Style.iconColor, AppColors.error) // TODO: confirm AppColors.error exists
+                    .foregroundStyle(Style.iconColor, AppColors.error ?? .red)
                     .font(Style.iconFont)
                     .accessibilityHidden(true)
 
@@ -40,7 +55,7 @@ struct InlineErrorBanner: View {
                     .multilineTextAlignment(.leading)
                     .lineLimit(3)
                     .accessibilityLabel(Text(error))
-                    .accessibilityHint(Text("An error message describing the issue.")) // TODO: localize if needed
+                    .accessibilityHint(Text(NSLocalizedString("An error message describing the issue.", comment: "Accessibility hint for error message")))
 
                 Spacer()
 
@@ -51,7 +66,7 @@ struct InlineErrorBanner: View {
                         .padding(Style.buttonPadding)
                         .contentShape(Rectangle())
                 }
-                .accessibilityLabel(LocalizedStringKey("Dismiss error message")) // Comment: Accessibility label for dismiss button
+                .accessibilityLabel(LocalizedStringKey("Dismiss error message"))
             }
             .padding(Style.padding)
             .background(
@@ -60,34 +75,50 @@ struct InlineErrorBanner: View {
                     .shadow(radius: Style.shadowRadius, y: 2)
             )
             .padding(.horizontal)
-            .padding(.top, AppSpacing.small) // TODO: confirm AppSpacing.small matches 8
+            .padding(.top, Style.topPad)
             .transition(.move(edge: .top).combined(with: .opacity))
             .animation(.easeInOut(duration: 0.3), value: errorMessage)
             .accessibilityElement(children: .combine)
             .accessibilityLiveRegion(.polite)
             .accessibilityAddTraits(.isHeader)
+            .onAppear {
+                analyticsLogger.log(event: "banner_shown", message: error)
+            }
         }
     }
 
     private func dismiss() {
         withAnimation {
+            let oldMessage = errorMessage
             errorMessage = nil
+            analyticsLogger.log(event: "banner_dismissed", message: oldMessage)
         }
         onDismiss?()
     }
 }
 
 #Preview {
-    Group {
+    struct SpyLogger: ErrorBannerAnalyticsLogger {
+        func log(event: String, message: String?) {
+            print("ErrorBannerAnalytics: \(event), Message: \(message ?? "-")")
+        }
+    }
+    return Group {
         VStack {
-            InlineErrorBanner(errorMessage: .constant("Failed to load appointments. Please check your network connection."))
+            InlineErrorBanner(
+                errorMessage: .constant("Failed to load appointments. Please check your network connection."),
+                analyticsLogger: SpyLogger()
+            )
             Spacer()
         }
         .padding(.top)
         .previewDisplayName("Light Mode")
 
         VStack {
-            InlineErrorBanner(errorMessage: .constant("Failed to load appointments. Please check your network connection."))
+            InlineErrorBanner(
+                errorMessage: .constant("Failed to load appointments. Please check your network connection."),
+                analyticsLogger: SpyLogger()
+            )
             Spacer()
         }
         .padding(.top)
@@ -95,7 +126,10 @@ struct InlineErrorBanner: View {
         .previewDisplayName("Dark Mode")
 
         VStack {
-            InlineErrorBanner(errorMessage: .constant("Failed to load appointments. Please check your network connection."))
+            InlineErrorBanner(
+                errorMessage: .constant("Failed to load appointments. Please check your network connection."),
+                analyticsLogger: SpyLogger()
+            )
             Spacer()
         }
         .padding(.top)

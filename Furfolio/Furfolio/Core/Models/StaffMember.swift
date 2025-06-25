@@ -2,83 +2,120 @@
 //  StaffMember.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: Audit, BI, tokenization, security, analytics, export, accessibility.
+//  Author: mac + ChatGPT
 //
 
 import Foundation
 import SwiftData
 
-// MARK: - StaffMember (Modular, Tokenized, Auditable, Multi-Role Staff Model)
-
-/**
- Represents a staff member within the Furfolio architecture.
-
- - Modular, auditable, and tokenized business entity supporting role-based access control, audit trails, staff analytics, compliance reporting, and UI integration.
- - Tracks core identity, contact info, role, employment, and business association.
- - Designed for multi-role, multi-user, RBAC (role-based access control), analytics, and business workflow scenarios.
- - All mutations should be logged for compliance and event/audit trails. Integrates with Trust Center, privacy controls, and dashboard analytics.
- */
 @available(iOS 18.0, *)
 @Model
 final class StaffMember: Identifiable, ObservableObject {
-
     // MARK: - Identity
-
-    /// Unique identifier for the staff member (audit/event correlation).
-    @Attribute(.unique)
-    var id: UUID
-
-    /// Full name of the staff member (UI display, analytics, reporting).
+    @Attribute(.unique) var id: UUID
     var name: String
-
-    /// The role of the staff member within the business (RBAC, audit, workflow).
     var role: StaffRole
 
     // MARK: - Contact Info
-
-    /// Email address of the staff member (compliance, notifications, UI, reporting).
     var email: String?
-
-    /// Phone number of the staff member (compliance, notifications, UI, reporting).
     var phone: String?
 
     // MARK: - Employment
-
-    /// Indicates whether the staff member is currently active (audit, business, analytics, workflow).
     var isActive: Bool
-
-    /// The date the staff member joined the business (analytics, reporting, dashboard).
     var dateJoined: Date
-
-    /// The last time the staff member was active (analytics, business workflow, audit).
     var lastActiveAt: Date?
-
-    /// Indicates if the staff member is archived (soft-deleted) (audit, compliance, analytics).
     var isArchived: Bool
 
-    // MARK: - Relationships
+    // MARK: - Access & Security
+    var lastPasswordChange: Date?
+    var mfaEnabled: Bool
+    var complianceTrainingDate: Date?
 
-    /// The business to which the staff member belongs (audit, reporting, analytics, RBAC).
+    // MARK: - Badges/Tags (Tokenization)
+    var badgeTokens: [String]
+    enum StaffBadge: String, CaseIterable, Codable {
+        case certified, bilingual, remote, firstAid, mentor, atRisk, longTerm, recentlyJoined
+    }
+    var badges: [StaffBadge] { badgeTokens.compactMap { StaffBadge(rawValue: $0) } }
+    func addBadge(_ badge: StaffBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
+    func removeBadge(_ badge: StaffBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func hasBadge(_ badge: StaffBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
+
+    // MARK: - Relationships
     @Relationship(deleteRule: .nullify, inverse: \Business.staff)
     var business: Business?
 
-    // MARK: - Init
+    // MARK: - Audit Log
+    var auditLog: [String]
 
-    /**
-     Initializes a new StaffMember instance.
-     - Parameters:
-        - id: Unique identifier, defaults to a new UUID.
-        - name: Full name of the staff member.
-        - role: Role of the staff member (see StaffRole for business logic).
-        - email: Optional email address.
-        - phone: Optional phone number.
-        - isActive: Active status, defaults to true.
-        - dateJoined: Date the member joined, defaults to current date.
-        - lastActiveAt: Last active date, optional.
-        - isArchived: Soft-delete flag, defaults to false.
-        - business: Associated business, optional.
-     - All mutations/creations should trigger audit/event logging.
-     */
+    func addAudit(_ entry: String) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(stamp)] \(entry)")
+    }
+    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+
+    // MARK: - Analytics & Business Intelligence
+
+    /// Returns true if the staff member holds an owner role (RBAC, workflow, UI badge logic).
+    var isOwner: Bool { role == .owner }
+    /// Returns true if the staff member is a groomer (analytics, business logic).
+    var isGroomer: Bool { role == .groomer }
+    /// Display-friendly role title.
+    var roleDisplayName: String { role.displayName }
+    /// Number of years with the company.
+    var yearsAtCompany: Int {
+        Calendar.current.dateComponents([.year], from: dateJoined, to: Date()).year ?? 0
+    }
+    /// Returns true if lastActiveAt is in the last 14 days (for reporting).
+    var isRecentlyActive: Bool {
+        guard let last = lastActiveAt else { return false }
+        return Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? 100 < 14
+    }
+    /// Streak (days) of continuous activity (simple demo logic).
+    var activityStreak: Int? {
+        guard let last = lastActiveAt else { return nil }
+        return Calendar.current.dateComponents([.day], from: last, to: Date()).day
+    }
+    /// Returns a short status string for dashboard badges.
+    var quickStatus: String {
+        if !isActive { return "Inactive" }
+        if isArchived { return "Archived" }
+        if isRecentlyActive { return "Active" }
+        return "Idle"
+    }
+    /// Demo: Basic risk score for BI (compliance, inactivity, etc.)
+    var riskScore: Int {
+        var score = 0
+        if !mfaEnabled { score += 1 }
+        if (lastPasswordChange == nil) || ((lastPasswordChange ?? .distantPast) < Calendar.current.date(byAdding: .month, value: -12, to: Date())!) { score += 1 }
+        if !isActive || isArchived { score += 1 }
+        if let training = complianceTrainingDate, training < Calendar.current.date(byAdding: .year, value: -1, to: Date())! { score += 1 }
+        if !isRecentlyActive { score += 1 }
+        if hasBadge(.atRisk) { score += 1 }
+        return score
+    }
+
+    // MARK: - Accessibility
+    var accessibilityLabel: String {
+        "\(name), \(roleDisplayName). \(isActive ? "Active." : "Inactive.") Risk score: \(riskScore)."
+    }
+
+    // MARK: - Export
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID, name: String, role: String, email: String?, phone: String?, isActive: Bool, dateJoined: Date, lastActiveAt: Date?, isArchived: Bool, mfaEnabled: Bool, riskScore: Int, badgeTokens: [String]
+        }
+        let export = Export(
+            id: id, name: name, role: role.rawValue, email: email, phone: phone, isActive: isActive, dateJoined: dateJoined,
+            lastActiveAt: lastActiveAt, isArchived: isArchived, mfaEnabled: mfaEnabled, riskScore: riskScore, badgeTokens: badgeTokens
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // MARK: - Initializer
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -89,7 +126,12 @@ final class StaffMember: Identifiable, ObservableObject {
         dateJoined: Date = Date(),
         lastActiveAt: Date? = nil,
         isArchived: Bool = false,
-        business: Business? = nil
+        business: Business? = nil,
+        lastPasswordChange: Date? = nil,
+        mfaEnabled: Bool = false,
+        complianceTrainingDate: Date? = nil,
+        badgeTokens: [String] = [],
+        auditLog: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -101,56 +143,41 @@ final class StaffMember: Identifiable, ObservableObject {
         self.lastActiveAt = lastActiveAt
         self.isArchived = isArchived
         self.business = business
-        // TODO: Audit logging - creation of staff member (compliance, analytics)
+        self.lastPasswordChange = lastPasswordChange
+        self.mfaEnabled = mfaEnabled
+        self.complianceTrainingDate = complianceTrainingDate
+        self.badgeTokens = badgeTokens
+        self.auditLog = auditLog
     }
 
-    /// Returns true if the staff member holds an owner role (RBAC, workflow, UI badge logic).
-    var isOwner: Bool {
-        role == .owner
-    }
+    // MARK: - Sample/Preview
 
-    /// Returns true if the staff member is a groomer (analytics, business logic).
-    var isGroomer: Bool {
-        role == .groomer
-    }
-
-    /// Returns a display-friendly role title (localization, UI, reporting).
-    var roleDisplayName: String {
-        role.displayName
-    }
-
-    /// A sample StaffMember instance for SwiftUI previews or unit tests.
-    /// - Demo/business/tokenized preview logic.
     static let sample = StaffMember(
         name: "Jane Doe",
         role: .groomer,
         email: "jane.doe@example.com",
         phone: "555-123-4567",
         isActive: true,
-        dateJoined: Date(timeIntervalSinceNow: -86400 * 365),
-        lastActiveAt: Date(),
+        dateJoined: Date(timeIntervalSinceNow: -86400 * 365 * 4),
+        lastActiveAt: Calendar.current.date(byAdding: .day, value: -2, to: Date()),
         isArchived: false,
-        business: nil
+        lastPasswordChange: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
+        mfaEnabled: true,
+        complianceTrainingDate: Calendar.current.date(byAdding: .month, value: -10, to: Date()),
+        badgeTokens: ["certified", "mentor"],
+        auditLog: ["[01/01/2022, 09:00 AM] Created profile."]
     )
 }
 
 // MARK: - StaffRole (RBAC, Tokenized, Auditable Staff Roles)
-
-/**
- Defines the various roles a staff member can have within the business.
-
- - Modular, tokenized, and auditable RBAC enum.
- - All roles should have business, analytics, UI badge, and compliance rationale.
- */
 enum StaffRole: String, Codable, Sendable, CaseIterable {
-    case owner      // Business owner or principal (full access, critical audit trail)
-    case groomer    // Groomer (service staff, key analytics/retention insights)
-    case admin      // Administrative staff (manager-level, staff/event audit)
-    case receptionist // Reception/front desk (customer-facing, scheduling)
-    case assistant  // Assistant (support, entry-level, compliance training)
-    case other      // Other/unspecified (catch-all, analytics flag)
+    case owner
+    case groomer
+    case admin
+    case receptionist
+    case assistant
+    case other
 
-    /// Returns a display/localized name for UI, badge, and analytics/reporting.
     var displayName: String {
         switch self {
         case .owner: return "Owner"

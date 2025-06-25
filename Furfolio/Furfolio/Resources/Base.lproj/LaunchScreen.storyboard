@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23727" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="LaunchScreen">
-    <device id="retina6_9" orientation="portrait" appearance="light"/>
+    <device id="retina6_5" orientation="portrait" appearance="dark"/>
     <accessibilityOverrides/>
     <dependencies>
         <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23721"/>
@@ -14,11 +14,11 @@
             <objects>
                 <viewController id="LaunchScreen" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="LaunchScreenView" userLabel="LaunchScreenView">
-                        <rect key="frame" x="0.0" y="0.0" width="440" height="956"/>
+                        <rect key="frame" x="0.0" y="0.0" width="414" height="896"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
                         <subviews>
                             <imageView userInteractionEnabled="NO" contentMode="scaleAspectFit" misplaced="YES" image="AppLogo" translatesAutoresizingMaskIntoConstraints="NO" id="logoImageView">
-                                <rect key="frame" x="162" y="387" width="98" height="106"/>
+                                <rect key="frame" x="150" y="363" width="98" height="106"/>
                             </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="safeArea"/>

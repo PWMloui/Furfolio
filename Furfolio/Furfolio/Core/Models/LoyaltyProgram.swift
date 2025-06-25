@@ -2,81 +2,65 @@
 //  LoyaltyProgram.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//  Updated, enhanced, and cleaned for unified Furfolio architecture.
+//  Enhanced for tiers, expiry, tokenization, audit, analytics, and accessibility.
 //
-
 import Foundation
 import SwiftData
 
-// MARK: - LoyaltyProgram (Modular, Tokenized, Auditable Loyalty Program Model)
-
-/// Represents a modular, auditable, and tokenized loyalty program entity tied to a dog owner.
-/// This model supports comprehensive business analytics, compliance tracking, badge/status logic,
-/// and integration with UI design systems (including badges, colors, and progress indicators).
-/// It enables detailed audit trails for multi-user environments and drives owner engagement workflows.
 @Model
 final class LoyaltyProgram: Identifiable, ObservableObject {
 
     // MARK: - Identifiers
 
-    /// Unique identifier for this loyalty program record.
-    /// Serves as the primary key for audit and data integrity purposes.
-    @Attribute(.unique)
-    var id: UUID
-
-    /// The dog owner associated with this loyalty program.
-    /// Establishes business relationship and enables owner-level analytics and segmentation.
+    @Attribute(.unique) var id: UUID
     @Relationship(deleteRule: .nullify, inverse: \DogOwner.loyaltyProgram)
     var owner: DogOwner?
 
     // MARK: - Program Data
 
-    /// Current point balance representing earned loyalty tokens.
-    /// Used for business logic on reward eligibility and analytics on engagement.
-    @Attribute(.required)
-    var points: Int
-
-    /// Total number of visits tracked for this owner.
-    /// Supports business workflows that reward visit frequency and drives compliance reporting.
-    @Attribute(.required)
-    var visitCount: Int
-
-    /// History of redeemed rewards, supporting audit trails and compliance.
-    /// Also enables UI display of past redemptions and analytics on reward utilization.
-    @Attribute(.required)
-    var rewardsRedeemed: [LoyaltyReward]
-
-    /// Date of the most recent reward redemption.
-    /// Useful for compliance auditing, business reporting, and triggering time-based workflows.
+    @Attribute(.required) var points: Int
+    @Attribute(.required) var visitCount: Int
+    @Attribute(.required) var rewardsRedeemed: [LoyaltyReward]
     var lastRewardDate: Date?
-
-    /// Optional notes or custom program details.
-    /// Supports business customization and audit annotations.
     var notes: String?
+
+    // MARK: - Tier, Badges, Expiry
+
+    /// Type-safe program segmentation, analytics & UI
+    enum LoyaltyBadge: String, CaseIterable, Codable {
+        case highEngager, atRisk, newMember, platinum, gold, silver, bronze
+    }
+    var badgeTokens: [String]
+    var badges: [LoyaltyBadge] { badgeTokens.compactMap { LoyaltyBadge(rawValue: $0) } }
+    func addBadge(_ badge: LoyaltyBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
+    func removeBadge(_ badge: LoyaltyBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func hasBadge(_ badge: LoyaltyBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
+
+    /// Loyalty tier, determined by points or visits
+    var tier: String {
+        switch points {
+        case 0..<100:  "Bronze"
+        case 100..<250: "Silver"
+        case 250..<500: "Gold"
+        default: "Platinum"
+        }
+    }
+
+    // MARK: - Reward Expiry Support
+
+    /// Optional: Expiry period in days for rewards (business rule)
+    static let rewardExpiryDays: Int = 180
+    var expiringSoonRewards: [LoyaltyReward] {
+        let soon = Calendar.current.date(byAdding: .day, value: Self.rewardExpiryDays, to: Date())!
+        return rewardsRedeemed.filter { $0.expiryDate != nil && $0.expiryDate! < soon && $0.expiryDate! > Date() }
+    }
 
     // MARK: - Audit Trail
 
-    /// Timestamp when this loyalty program record was created.
-    /// Critical for compliance, auditing, and historical analytics.
-    @Attribute(.required)
-    var dateCreated: Date
-
-    /// Timestamp when this record was last modified.
-    /// Supports audit logging, change tracking, and workflow triggers.
-    @Attribute(.required)
-    var lastModified: Date
-
-    /// Identifier for the user who created this record.
-    /// Enables multi-user audit trails and accountability.
+    @Attribute(.required) var dateCreated: Date
+    @Attribute(.required) var lastModified: Date
     var createdBy: String?
-
-    /// Identifier for the user who last modified this record.
-    /// Supports audit compliance and workflow notifications.
     var lastModifiedBy: String?
-
-    /// Change history or audit log entries capturing significant events.
-    /// Essential for compliance, troubleshooting, and business event analytics.
     var auditLog: [String]
 
     // MARK: - Init
@@ -89,6 +73,7 @@ final class LoyaltyProgram: Identifiable, ObservableObject {
         rewardsRedeemed: [LoyaltyReward] = [],
         lastRewardDate: Date? = nil,
         notes: String? = nil,
+        badgeTokens: [String] = [],
         dateCreated: Date = Date(),
         lastModified: Date = Date(),
         createdBy: String? = nil,
@@ -102,6 +87,7 @@ final class LoyaltyProgram: Identifiable, ObservableObject {
         self.rewardsRedeemed = rewardsRedeemed
         self.lastRewardDate = lastRewardDate
         self.notes = notes
+        self.badgeTokens = badgeTokens
         self.dateCreated = dateCreated
         self.lastModified = lastModified
         self.createdBy = createdBy
@@ -111,22 +97,11 @@ final class LoyaltyProgram: Identifiable, ObservableObject {
 
     // MARK: - Constants
 
-    /// Points required per reward.
-    /// This threshold reflects the loyalty program's business strategy for balancing engagement and reward frequency.
     static let pointsPerReward = 50
-
-    /// Visits required per reward (if using visit-based rewards).
-    /// Reflects business logic encouraging frequent visits to increase customer retention.
     static let visitsPerReward = 5
 
     // MARK: - Business Logic
 
-    /// Adds loyalty points and optionally increments visit count.
-    /// This method updates audit logs with event details, supporting analytics and compliance.
-    /// - Parameters:
-    ///   - newPoints: The number of points to add.
-    ///   - forVisit: Whether this addition corresponds to a visit increment.
-    ///   - user: Optional identifier of the user performing the update, for audit tracking.
     func addPoints(_ newPoints: Int, forVisit: Bool = false, user: String? = nil) {
         points += newPoints
         if forVisit { visitCount += 1 }
@@ -135,17 +110,10 @@ final class LoyaltyProgram: Identifiable, ObservableObject {
         auditLog.append("Added \(newPoints) points by \(user ?? "system") on \(DateFormatter.short.string(from: Date()))")
     }
 
-    /// Redeems a reward if the owner is eligible, updating points and redemption history.
-    /// Logs the redemption event for audit and analytics purposes, supporting business owner workflows.
-    /// - Parameters:
-    ///   - type: The type of reward to redeem.
-    ///   - notes: Optional notes associated with this redemption.
-    ///   - user: Optional user identifier performing the redemption.
-    /// - Returns: True if redemption was successful, false if not eligible.
     func redeemReward(type: LoyaltyRewardType, notes: String? = nil, user: String? = nil) -> Bool {
         guard isEligibleForReward else { return false }
         points -= LoyaltyProgram.pointsPerReward
-        let reward = LoyaltyReward(type: type, date: Date(), notes: notes)
+        let reward = LoyaltyReward(type: type, date: Date(), notes: notes, expiryDate: Calendar.current.date(byAdding: .day, value: Self.rewardExpiryDays, to: Date()))
         rewardsRedeemed.append(reward)
         lastRewardDate = reward.date
         lastModified = Date()
@@ -154,40 +122,56 @@ final class LoyaltyProgram: Identifiable, ObservableObject {
         return true
     }
 
-    /// Indicates whether the owner currently qualifies for a reward based on points.
-    /// This encapsulates business rules for reward eligibility, facilitating analytics and UI state.
-    var isEligibleForReward: Bool {
-        points >= LoyaltyProgram.pointsPerReward
-    }
-
-    /// Progress ratio towards the next reward (range 0.0 to 1.0).
-    /// Useful for UI progress bars, dashboards, and motivating owner engagement.
-    var rewardProgress: Double {
-        Double(points % LoyaltyProgram.pointsPerReward) / Double(LoyaltyProgram.pointsPerReward)
-    }
-
-    /// Display-friendly summary string for dashboards and owner-facing UI.
-    /// Summarizes points and progress, supporting quick analytics and engagement at a glance.
+    var isEligibleForReward: Bool { points >= LoyaltyProgram.pointsPerReward }
+    var rewardProgress: Double { Double(points % LoyaltyProgram.pointsPerReward) / Double(LoyaltyProgram.pointsPerReward) }
     var summary: String {
-        "Points: \(points) (\(rewardProgress * 100, specifier: "%.0f")% to reward)"
+        "Tier: \(tier) • Points: \(points) (\(rewardProgress * 100, specifier: "%.0f")% to reward)"
+    }
+
+    // MARK: - Analytics & Export
+
+    /// Time since last reward
+    var daysSinceLastReward: Int? {
+        guard let last = lastRewardDate else { return nil }
+        return Calendar.current.dateComponents([.day], from: last, to: Date()).day
+    }
+    /// Number of rewards expiring within 30 days
+    var expiringRewardsCount: Int {
+        expiringSoonRewards.count
+    }
+
+    /// Export this program as JSON for reporting/migration
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID, ownerID: UUID?, points: Int, visitCount: Int, tier: String, rewardsRedeemed: [LoyaltyReward], badges: [String], dateCreated: Date
+        }
+        let export = Export(id: id, ownerID: owner?.id, points: points, visitCount: visitCount, tier: tier, rewardsRedeemed: rewardsRedeemed, badges: badgeTokens, dateCreated: dateCreated)
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // MARK: - Audit Helpers
+
+    func addAudit(_ entry: String) {
+        let ts = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(ts)] \(entry)")
+        lastModified = Date()
+    }
+    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+
+    // MARK: - Accessibility
+
+    var accessibilityLabel: String {
+        "Loyalty tier: \(tier). \(points) points. \(rewardsRedeemed.count) rewards redeemed. \(isEligibleForReward ? "Eligible for reward." : "")"
     }
 }
 
 // MARK: - Reward Type
 
-/// Enumerates the types of rewards offered by the loyalty program.
-/// Supports business logic for reward differentiation, analytics tracking of redemption types,
-/// localization for UI display, and badge/status visualization within the app.
 enum LoyaltyRewardType: String, Codable, CaseIterable, Identifiable {
-    case freeBath
-    case discount
-    case freeNailTrim
-    case custom
+    case freeBath, discount, freeNailTrim, custom
 
     var id: String { rawValue }
-
-    /// Localized display name for UI and reporting.
-    /// Enables consistent user-facing labels and supports multi-language compliance.
     var displayName: String {
         switch self {
         case .freeBath:      return NSLocalizedString("Free Bath", comment: "")
@@ -200,28 +184,26 @@ enum LoyaltyRewardType: String, Codable, CaseIterable, Identifiable {
 
 // MARK: - Loyalty Reward
 
-/// Represents a redeemed loyalty reward instance.
-/// Captures analytics data for reward usage, supports audit trails for compliance,
-/// and provides display information for owner-facing UI elements.
 struct LoyaltyReward: Codable, Identifiable, Hashable {
     let id: UUID
     let type: LoyaltyRewardType
     let date: Date
     let notes: String?
+    /// Optional expiry date for this reward (e.g., 6 months after redemption)
+    let expiryDate: Date?
 
-    init(type: LoyaltyRewardType, date: Date = Date(), notes: String? = nil) {
+    init(type: LoyaltyRewardType, date: Date = Date(), notes: String? = nil, expiryDate: Date? = nil) {
         self.id = UUID()
         self.type = type
         self.date = date
         self.notes = notes
+        self.expiryDate = expiryDate
     }
 }
 
 // MARK: - DateFormatter Helper
 
 private extension DateFormatter {
-    /// Shared short date formatter used for audit logs and dashboard display.
-    /// Localized to respect user settings and ensure consistent date/time presentation.
     static let short: DateFormatter = {
         let df = DateFormatter()
         df.dateStyle = .short

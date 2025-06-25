@@ -2,25 +2,64 @@
 //  FilterBar.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: Tokenized, Modular, Auditable Filter/Search Bar (2025)
 //
 
 import SwiftUI
 
+// MARK: - FilterBar Audit/Event Logging
+
+fileprivate struct FilterBarAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String            // "editSearch", "clearSearch", "filterChange"
+    let searchText: String
+    let filter: String
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "\(operation.capitalized) [\(filter)] \"\(searchText)\" at \(dateStr)"
+    }
+}
+
+fileprivate final class FilterBarAudit {
+    static private(set) var log: [FilterBarAuditEvent] = []
+
+    static func record(
+        operation: String,
+        searchText: String,
+        filter: String,
+        tags: [String],
+        actor: String? = nil,
+        context: String? = nil
+    ) {
+        let event = FilterBarAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            searchText: searchText,
+            filter: filter,
+            tags: tags,
+            actor: actor,
+            context: context
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No filter/search events recorded."
+    }
+}
+
 // MARK: - FilterBar (Tokenized, Modular, Auditable Filter/Search Bar)
 
-/**
- `FilterBar` is a fully modular, tokenized, and auditable search and filter component used throughout Furfolio. It supports business analytics, accessibility, localization, and UI design system integration for search and filter scenarios across all modules including owners, dogs, appointments, and financial records.
- 
- - Features:
-   - Integrated search with clear button
-   - Optional segmented filter with icons (e.g., Dogs, Owners, Charges)
-   - Customizable for additional business modules or dev tools
-   - Modular: supports trailing buttons for dev/test features
-   - Accessible: supports identifiers for UI testing
-   - Design-system friendly with AppColors, AppFonts, AppSpacing, BorderRadius, and AppShadows tokens
-   - Ready for localization and business analytics integration
- */
 struct FilterBar: View {
     @Binding var searchText: String
     @Binding var selectedFilter: FilterOption
@@ -29,23 +68,59 @@ struct FilterBar: View {
     var accessibilityID: String? = nil
     var trailingButtons: [AnyView] = []
     var isEnabled: Bool = true
+    var actor: String? = nil
+    var context: String? = nil
+
+    // Local state to track changes for audit
+    @State private var previousSearch: String = ""
+    @State private var previousFilter: FilterOption? = nil
 
     var body: some View {
         VStack(spacing: AppSpacing.small) {
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(AppColors.secondaryText)
-                TextField(placeholder, text: $searchText)
-                    .textFieldStyle(.plain)
-                    .disableAutocorrection(true)
-                    .autocapitalization(.none)
-                    .onSubmit {
-                        // Optional: perform search
+                TextField(placeholder, text: $searchText, onEditingChanged: { _ in
+                    // Log only if changed
+                    if previousSearch != searchText {
+                        FilterBarAudit.record(
+                            operation: "editSearch",
+                            searchText: searchText,
+                            filter: selectedFilter.id,
+                            tags: ["search", "filter", "edit"],
+                            actor: actor,
+                            context: context
+                        )
+                        previousSearch = searchText
                     }
-                    .accessibilityIdentifier(accessibilityID)
-                    .disabled(!isEnabled)
+                })
+                .textFieldStyle(.plain)
+                .disableAutocorrection(true)
+                .autocapitalization(.none)
+                .onSubmit {
+                    FilterBarAudit.record(
+                        operation: "editSearch",
+                        searchText: searchText,
+                        filter: selectedFilter.id,
+                        tags: ["search", "filter", "submit"],
+                        actor: actor,
+                        context: context
+                    )
+                }
+                .accessibilityIdentifier(accessibilityID)
+                .disabled(!isEnabled)
                 if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
+                    Button(action: {
+                        searchText = ""
+                        FilterBarAudit.record(
+                            operation: "clearSearch",
+                            searchText: "",
+                            filter: selectedFilter.id,
+                            tags: ["search", "filter", "clear"],
+                            actor: actor,
+                            context: context
+                        )
+                    }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(AppColors.secondaryText)
                     }
@@ -71,17 +146,33 @@ struct FilterBar: View {
                 .font(AppFonts.body)
                 .padding(.horizontal, AppSpacing.small)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+                .onChange(of: selectedFilter) { newValue in
+                    if previousFilter?.id != newValue.id {
+                        FilterBarAudit.record(
+                            operation: "filterChange",
+                            searchText: searchText,
+                            filter: newValue.id,
+                            tags: ["search", "filter", "segment"],
+                            actor: actor,
+                            context: context
+                        )
+                        previousFilter = newValue
+                    }
+                }
             }
         }
         .padding(.horizontal, AppSpacing.medium)
         .animation(.easeInOut(duration: 0.2), value: selectedFilter)
         .disabled(!isEnabled)
+        .onAppear {
+            previousSearch = searchText
+            previousFilter = selectedFilter
+        }
     }
 }
 
 // MARK: - Filter Option Model
 
-/// Represents a single filter tab/segment in Furfolio’s filter bar, used for fast switching between business domains.
 struct FilterOption: Hashable, Identifiable {
     let id: String
     let label: String
@@ -93,12 +184,22 @@ struct FilterOption: Hashable, Identifiable {
         self.icon = icon
     }
 
-    // Examples: create presets for use in different screens
+    // Presets for different screens
     static let all = FilterOption(id: "all", label: NSLocalizedString("All", comment: "Filter label for all items"), icon: "line.3.horizontal")
     static let appointments = FilterOption(id: "appointments", label: NSLocalizedString("Appointments", comment: "Filter label for appointments"), icon: "calendar")
     static let owners = FilterOption(id: "owners", label: NSLocalizedString("Owners", comment: "Filter label for owners"), icon: "person.3.fill")
     static let dogs = FilterOption(id: "dogs", label: NSLocalizedString("Dogs", comment: "Filter label for dogs"), icon: "pawprint")
     static let charges = FilterOption(id: "charges", label: NSLocalizedString("Charges", comment: "Filter label for charges"), icon: "creditcard")
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum FilterBarAuditAdmin {
+    public static var lastSummary: String { FilterBarAudit.accessibilitySummary }
+    public static var lastJSON: String? { FilterBarAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        FilterBarAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
 }
 
 // MARK: - Preview
@@ -114,7 +215,6 @@ struct FilterBar_Previews: PreviewProvider {
 
         var body: some View {
             VStack(spacing: AppSpacing.medium) {
-                // Demo preview showcasing FilterBar with trailing dev tool button
                 FilterBar(
                     searchText: $search,
                     selectedFilter: $selected,
@@ -129,18 +229,19 @@ struct FilterBar_Previews: PreviewProvider {
                             .accessibilityLabel("Developer tool button")
                         )
                     ],
-                    isEnabled: true
+                    isEnabled: true,
+                    actor: "preview"
                 )
                 .padding(AppSpacing.medium)
 
-                // Business preview showcasing disabled state and no trailing buttons
                 FilterBar(
                     searchText: $search,
                     selectedFilter: $selected,
                     filterOptions: filters,
                     accessibilityID: "disabledFilterBar",
                     trailingButtons: [],
-                    isEnabled: false
+                    isEnabled: false,
+                    actor: "preview"
                 )
                 .padding(AppSpacing.medium)
             }

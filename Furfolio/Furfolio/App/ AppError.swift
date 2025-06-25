@@ -8,7 +8,20 @@
 import Foundation
 
 // MARK: - AppError (Centralized Error Handling for Furfolio)
+// Add at the top, after imports:
+public protocol AppErrorAnalyticsLogger {
+    func log(event: String, error: AppError)
+}
+public struct NullAppErrorAnalyticsLogger: AppErrorAnalyticsLogger {
+    public init() {}
+    public func log(event: String, error: AppError) {}
+}
 
+// MARK: - AppError Analytics Logger (DI for audit/BI/QA)
+extension AppError {
+    // Analytics logger (injectable for BI/QA/Trust Center)
+    public static var analyticsLogger: AppErrorAnalyticsLogger = NullAppErrorAnalyticsLogger()
+}
 // MARK: - Application Error Handling
 /// Defines centralized error types for Furfolio's business management operations,
 /// facilitating consistent error reporting, user feedback, and debugging across the app.
@@ -150,32 +163,33 @@ enum AppError: Error, LocalizedError, Identifiable {
         case unknown
     }
     
-    /// Returns a demo instance of AppError for the specified DemoType.
     static func demo(_ type: DemoType) -> AppError {
+        let demoErr: AppError
         switch type {
         case .dataLoadFailed:
-            return .dataLoadFailed(reason: "Demo data load failure")
+            demoErr = .dataLoadFailed(reason: "Demo data load failure")
         case .saveFailed:
-            return .saveFailed(reason: "Demo save failure")
+            demoErr = .saveFailed(reason: "Demo save failure")
         case .invalidInput:
-            return .invalidInput(reason: "Demo invalid input")
+            demoErr = .invalidInput(reason: "Demo invalid input")
         case .duplicateEntry:
-            return .duplicateEntry
+            demoErr = .duplicateEntry
         case .networkUnavailable:
-            return .networkUnavailable
+            demoErr = .networkUnavailable
         case .permissionDenied:
-            return .permissionDenied(type: "Camera Access")
+            demoErr = .permissionDenied(type: "Camera Access")
         case .unauthorizedAccess:
-            return .unauthorizedAccess(role: "Guest User")
+            demoErr = .unauthorizedAccess(role: "Guest User")
         case .tspRouteError:
-            return .tspRouteError(reason: "Demo route optimization error")
+            demoErr = .tspRouteError(reason: "Demo route optimization error")
         case .dataEncryptionFailed:
-            return .dataEncryptionFailed(reason: "Demo encryption failure")
+            demoErr = .dataEncryptionFailed(reason: "Demo encryption failure")
         case .unknown:
-            return .unknown(error: nil)
+            demoErr = .unknown(error: nil)
         }
+        AppError.analyticsLogger.log(event: "demo", error: demoErr)
+        return demoErr
     }
-}
 
 // Usage Example:
 //

@@ -2,19 +2,23 @@
 //  InteractiveTutorialView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: Fully tokenized, analytics/audit-ready, modular, previewable, and accessible.
 //
 
 import SwiftUI
 
-/// An interactive onboarding tutorial for new users of Furfolio.
-/// This view provides a swipeable, accessible, and localizable tutorial experience,
-/// guiding users through key features of the app. It includes progress indicators,
-/// navigation controls with accessibility labels and hints, and is prepared for analytics tracking.
-/// 
-/// All user-facing strings are localized using `LocalizedStringKey`.
-/// Design tokens such as `AppFonts` and `AppColors` should be integrated for consistent styling.
-/// TODO: Integrate analytics hooks on step changes and tutorial completion for business insights.
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol TutorialAnalyticsLogger {
+    func log(event: String, step: Int?)
+}
+public struct NullTutorialAnalyticsLogger: TutorialAnalyticsLogger {
+    public init() {}
+    public func log(event: String, step: Int?) {}
+}
+
+// MARK: - Tutorial Step
+
 struct TutorialStep: Identifiable {
     let id = UUID()
     let imageName: String
@@ -22,63 +26,120 @@ struct TutorialStep: Identifiable {
     let descriptionKey: LocalizedStringKey
 }
 
-/// The interactive, swipeable tutorial for onboarding new users.
-struct InteractiveTutorialView: View {
-    private static let tutorialSteps: [TutorialStep] = [
-        .init(imageName: "pawprint.fill",
-              titleKey: LocalizedStringKey("Welcome to Furfolio!"),
-              descriptionKey: LocalizedStringKey("Easily manage all your pet clients, appointments, and business metrics in one place.")),
-        .init(imageName: "calendar.badge.clock",
-              titleKey: LocalizedStringKey("Schedule Appointments"),
-              descriptionKey: LocalizedStringKey("Quickly add, view, and reschedule grooming appointments with a drag-and-drop calendar.")),
-        .init(imageName: "person.2.badge.gearshape",
-              titleKey: LocalizedStringKey("Owner & Pet Profiles"),
-              descriptionKey: LocalizedStringKey("Store detailed records, grooming history, and notes for every pet and owner.")),
-        .init(imageName: "chart.bar.doc.horizontal",
-              titleKey: LocalizedStringKey("Business Insights"),
-              descriptionKey: LocalizedStringKey("Track revenue, popular services, customer retention, and more with visual dashboards."))
-    ]
+// MARK: - InteractiveTutorialView
 
+struct InteractiveTutorialView: View {
+    // MARK: - Dependencies (Inject for test/preview)
+    let analyticsLogger: TutorialAnalyticsLogger
+
+    // MARK: - Design Tokens (with safe fallback)
+    let accent: Color
+    let secondary: Color
+    let background: Color
+    let grayLight: Color
+    let titleFont: Font
+    let bodyFont: Font
+    let spacing: CGFloat
+    let stepHeight: CGFloat
+    let capsuleWidthActive: CGFloat
+    let capsuleWidthInactive: CGFloat
+    let capsuleHeight: CGFloat
+    let cornerRadius: CGFloat
+
+    // MARK: - Steps Data
+    static let defaultSteps: [TutorialStep] = [
+        .init(imageName: "pawprint.fill",
+              titleKey: "Welcome to Furfolio!",
+              descriptionKey: "Easily manage all your pet clients, appointments, and business metrics in one place."),
+        .init(imageName: "calendar.badge.clock",
+              titleKey: "Schedule Appointments",
+              descriptionKey: "Quickly add, view, and reschedule grooming appointments with a drag-and-drop calendar."),
+        .init(imageName: "person.2.badge.gearshape",
+              titleKey: "Owner & Pet Profiles",
+              descriptionKey: "Store detailed records, grooming history, and notes for every pet and owner."),
+        .init(imageName: "chart.bar.doc.horizontal",
+              titleKey: "Business Insights",
+              descriptionKey: "Track revenue, popular services, customer retention, and more with visual dashboards.")
+    ]
+    let steps: [TutorialStep]
+
+    // MARK: - State
     @State private var currentStep = 0
     @Environment(\.dismiss) private var dismiss
+
+    // MARK: - Initializer (Dependency injection + tokenization)
+    init(
+        steps: [TutorialStep] = Self.defaultSteps,
+        analyticsLogger: TutorialAnalyticsLogger = NullTutorialAnalyticsLogger(),
+        accent: Color = AppColors.accent ?? .accentColor,
+        secondary: Color = AppColors.secondary ?? .secondary,
+        background: Color = AppColors.background ?? Color(.systemBackground),
+        grayLight: Color = AppColors.grayLight ?? Color.gray.opacity(0.3),
+        titleFont: Font = AppFonts.title2 ?? .title2.bold(),
+        bodyFont: Font = AppFonts.body ?? .body,
+        spacing: CGFloat = AppSpacing.xLarge ?? 28,
+        stepHeight: CGFloat = AppSpacing.xxxLarge ?? 380,
+        capsuleWidthActive: CGFloat = 24,
+        capsuleWidthInactive: CGFloat = 8,
+        capsuleHeight: CGFloat = 8,
+        cornerRadius: CGFloat = AppRadius.medium ?? 16
+    ) {
+        self.steps = steps
+        self.analyticsLogger = analyticsLogger
+        self.accent = accent
+        self.secondary = secondary
+        self.background = background
+        self.grayLight = grayLight
+        self.titleFont = titleFont
+        self.bodyFont = bodyFont
+        self.spacing = spacing
+        self.stepHeight = stepHeight
+        self.capsuleWidthActive = capsuleWidthActive
+        self.capsuleWidthInactive = capsuleWidthInactive
+        self.capsuleHeight = capsuleHeight
+        self.cornerRadius = cornerRadius
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // Progress indicators
-            HStack(spacing: 8) {
-                ForEach(Self.tutorialSteps.indices, id: \.self) { idx in
+            HStack(spacing: AppSpacing.xSmall ?? 8) {
+                ForEach(steps.indices, id: \.self) { idx in
                     Capsule()
-                        .fill(idx == currentStep ? AppColors.accent : Color.gray.opacity(0.3)) // TODO: Replace Color.gray with AppColors.grayLight if available
-                        .frame(width: idx == currentStep ? 24 : 8, height: 8)
+                        .fill(idx == currentStep ? accent : grayLight)
+                        .frame(width: idx == currentStep ? capsuleWidthActive : capsuleWidthInactive, height: capsuleHeight)
                         .animation(.easeInOut(duration: 0.3), value: currentStep)
-                        .accessibilityLabel(idx == currentStep ? NSLocalizedString("Current step", comment: "Accessibility label for current tutorial step") : NSLocalizedString("Step", comment: "Accessibility label for tutorial step"))
+                        .accessibilityLabel(idx == currentStep
+                            ? NSLocalizedString("Current step", comment: "Current tutorial step indicator")
+                            : NSLocalizedString("Step", comment: "Tutorial step indicator"))
                 }
             }
-            .padding(.top, 24)
+            .padding(.top, AppSpacing.xLarge ?? 24)
 
             Spacer()
 
             // Tutorial content
             TabView(selection: $currentStep) {
-                ForEach(Array(Self.tutorialSteps.enumerated()), id: \.1.id) { index, step in
-                    VStack(spacing: 28) {
+                ForEach(Array(steps.enumerated()), id: \.1.id) { index, step in
+                    VStack(spacing: spacing) {
                         Image(systemName: step.imageName)
                             .resizable()
                             .scaledToFit()
-                            .frame(height: 90)
-                            .foregroundColor(AppColors.accent) // TODO: Use design token for accent color
-                            .padding(.top, 20)
+                            .frame(height: AppSpacing.xxxLarge ?? 90)
+                            .foregroundColor(accent)
+                            .padding(.top, AppSpacing.large ?? 20)
                             .accessibilityLabel(Text(step.titleKey))
 
                         Text(step.titleKey)
-                            .font(AppFonts.title2.bold()) // TODO: Define AppFonts.title2
+                            .font(titleFont)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                             .accessibilityAddTraits(.isHeader)
 
                         Text(step.descriptionKey)
-                            .font(AppFonts.body) // TODO: Define AppFonts.body
+                            .font(bodyFont)
                             .multilineTextAlignment(.center)
+                            .foregroundColor(secondary)
                             .padding(.horizontal)
 
                         Spacer()
@@ -87,7 +148,7 @@ struct InteractiveTutorialView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 380)
+            .frame(height: stepHeight)
 
             Spacer()
 
@@ -97,74 +158,80 @@ struct InteractiveTutorialView: View {
                     Button(action: {
                         withAnimation {
                             currentStep -= 1
-                            // TODO: Analytics - log back navigation in tutorial with currentStep
+                            analyticsLogger.log(event: "tutorial_back", step: currentStep)
                         }
                     }) {
                         Text(LocalizedStringKey("Back"))
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, AppSpacing.xLarge ?? 24)
                     .accessibilityLabel(Text("Back to previous step"))
                     .accessibilityHint(Text("Navigates to the previous tutorial step"))
                 }
 
                 Spacer()
 
-                if currentStep < Self.tutorialSteps.count - 1 {
+                if currentStep < steps.count - 1 {
                     Button(action: {
                         withAnimation {
                             currentStep += 1
-                            // TODO: Analytics - log next navigation in tutorial with currentStep
+                            analyticsLogger.log(event: "tutorial_next", step: currentStep)
                         }
                     }) {
                         Text(LocalizedStringKey("Next"))
                     }
                     .buttonStyle(.borderedProminent)
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, AppSpacing.xLarge ?? 24)
                     .accessibilityLabel(Text("Next step"))
                     .accessibilityHint(Text("Navigates to the next tutorial step"))
                 } else {
                     Button(action: {
-                        dismiss.callAsFunction()
-                        // TODO: Analytics - log tutorial completion event
+                        analyticsLogger.log(event: "tutorial_complete", step: currentStep)
+                        dismiss()
                     }) {
                         Text(LocalizedStringKey("Get Started"))
                     }
                     .buttonStyle(.borderedProminent)
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, AppSpacing.xLarge ?? 24)
                     .accessibilityLabel(Text("Finish tutorial and start app"))
                     .accessibilityHint(Text("Completes the tutorial and opens the app"))
                 }
             }
-            .padding(.bottom, 28)
+            .padding(.bottom, AppSpacing.xLarge ?? 28)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, AppSpacing.large ?? 16)
         .background(
             LinearGradient(
-                gradient: Gradient(colors: [Color(.systemBackground), Color(.secondarySystemBackground)]),
+                gradient: Gradient(colors: [background, AppColors.secondaryBackground ?? Color(.secondarySystemBackground)]),
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
         )
+        .cornerRadius(cornerRadius)
         .accessibilityElement(children: .contain)
+        .onAppear { analyticsLogger.log(event: "tutorial_start", step: 0) }
     }
 }
 
-// MARK: - Preview
+// MARK: - Previews
 
-#Preview {
-    InteractiveTutorialView()
-        .previewDisplayName("Light Mode")
-}
+struct InteractiveTutorialView_Previews: PreviewProvider {
+    struct AnalyticsSpy: TutorialAnalyticsLogger {
+        func log(event: String, step: Int?) {
+            print("Analytics Event: \(event), step: \(step ?? -1)")
+        }
+    }
 
-#Preview {
-    InteractiveTutorialView()
-        .preferredColorScheme(.dark)
-        .previewDisplayName("Dark Mode")
-}
-
-#Preview {
-    InteractiveTutorialView()
-        .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
-        .previewDisplayName("Accessibility - Extra Large Text")
+    static var previews: some View {
+        Group {
+            InteractiveTutorialView(analyticsLogger: AnalyticsSpy())
+                .previewDisplayName("Light Mode")
+            InteractiveTutorialView(analyticsLogger: AnalyticsSpy())
+                .preferredColorScheme(.dark)
+                .previewDisplayName("Dark Mode")
+            InteractiveTutorialView(analyticsLogger: AnalyticsSpy())
+                .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+                .previewDisplayName("Accessibility - Extra Large Text")
+        }
+    }
 }

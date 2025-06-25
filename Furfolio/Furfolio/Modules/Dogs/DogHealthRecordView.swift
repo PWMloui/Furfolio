@@ -2,25 +2,61 @@
 //  DogHealthRecordView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//
-
-
-//
-//  DogHealthRecordView.swift
-//  Furfolio
-//
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Accessible, Extensible Health Record View
 //
 
 import SwiftUI
 
-struct VaccinationRecord: Identifiable, Equatable {
-    let id = UUID()
+// MARK: - Data Models
+
+struct VaccinationRecord: Identifiable, Equatable, Codable {
+    let id: UUID
     var vaccineName: String
     var dateGiven: Date
     var nextDueDate: Date?
+    init(id: UUID = UUID(), vaccineName: String, dateGiven: Date, nextDueDate: Date? = nil) {
+        self.id = id
+        self.vaccineName = vaccineName
+        self.dateGiven = dateGiven
+        self.nextDueDate = nextDueDate
+    }
 }
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct DogHealthAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let item: String
+    let details: String
+    var summary: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[Health] \(action) \(item): \(details) at \(dateStr)"
+    }
+}
+fileprivate final class DogHealthAudit {
+    static private(set) var log: [DogHealthAuditEvent] = []
+    static func record(action: String, item: String, details: String) {
+        let event = DogHealthAuditEvent(
+            timestamp: Date(),
+            action: action,
+            item: item,
+            details: details
+        )
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static func recentSummaries(limit: Int = 5) -> [String] {
+        log.suffix(limit).map { $0.summary }
+    }
+}
+
+// MARK: - ViewModel
 
 @MainActor
 class DogHealthRecordViewModel: ObservableObject {
@@ -29,22 +65,53 @@ class DogHealthRecordViewModel: ObservableObject {
     @Published var healthNotes: String = ""
     @Published var isEditing: Bool = false
 
+    @Published var lastDeletedVaccination: VaccinationRecord?
+    @Published var lastDeletedAllergy: String?
+
     func addVaccination(_ record: VaccinationRecord) {
         vaccinations.append(record)
+        DogHealthAudit.record(action: "Add", item: "Vaccination", details: record.vaccineName)
     }
 
     func removeVaccination(at offsets: IndexSet) {
-        vaccinations.remove(atOffsets: offsets)
+        if let idx = offsets.first {
+            lastDeletedVaccination = vaccinations[idx]
+            let record = vaccinations.remove(at: idx)
+            DogHealthAudit.record(action: "Delete", item: "Vaccination", details: record.vaccineName)
+        }
+    }
+
+    func undoVaccinationDelete() {
+        if let record = lastDeletedVaccination {
+            vaccinations.append(record)
+            DogHealthAudit.record(action: "UndoDelete", item: "Vaccination", details: record.vaccineName)
+            lastDeletedVaccination = nil
+        }
     }
 
     func addAllergy(_ allergy: String) {
         allergies.append(allergy)
+        DogHealthAudit.record(action: "Add", item: "Allergy", details: allergy)
     }
 
     func removeAllergy(at offsets: IndexSet) {
-        allergies.remove(atOffsets: offsets)
+        if let idx = offsets.first {
+            lastDeletedAllergy = allergies[idx]
+            let allergy = allergies.remove(at: idx)
+            DogHealthAudit.record(action: "Delete", item: "Allergy", details: allergy)
+        }
+    }
+
+    func undoAllergyDelete() {
+        if let allergy = lastDeletedAllergy {
+            allergies.append(allergy)
+            DogHealthAudit.record(action: "UndoDelete", item: "Allergy", details: allergy)
+            lastDeletedAllergy = nil
+        }
     }
 }
+
+// MARK: - Main View
 
 struct DogHealthRecordView: View {
     @StateObject private var viewModel = DogHealthRecordViewModel()
@@ -52,6 +119,8 @@ struct DogHealthRecordView: View {
     @State private var newDateGiven: Date = Date()
     @State private var newNextDueDate: Date = Date()
     @State private var newAllergy: String = ""
+    @State private var showUndoVaccine = false
+    @State private var showUndoAllergy = false
 
     var body: some View {
         NavigationStack {
@@ -61,10 +130,13 @@ struct DogHealthRecordView: View {
                         VStack(spacing: 8) {
                             TextField("Vaccine Name", text: $newVaccineName)
                                 .accessibilityLabel("Vaccine Name")
+                                .accessibilityIdentifier("DogHealthRecordView-VaccineNameField")
                             DatePicker("Date Given", selection: $newDateGiven, displayedComponents: .date)
                                 .accessibilityLabel("Date Given")
+                                .accessibilityIdentifier("DogHealthRecordView-DateGivenPicker")
                             DatePicker("Next Due Date", selection: $newNextDueDate, displayedComponents: .date)
                                 .accessibilityLabel("Next Due Date")
+                                .accessibilityIdentifier("DogHealthRecordView-NextDueDatePicker")
                             Button("Add Vaccination") {
                                 let record = VaccinationRecord(vaccineName: newVaccineName, dateGiven: newDateGiven, nextDueDate: newNextDueDate)
                                 viewModel.addVaccination(record)
@@ -73,6 +145,7 @@ struct DogHealthRecordView: View {
                                 newNextDueDate = Date()
                             }
                             .accessibilityLabel("Add Vaccination")
+                            .accessibilityIdentifier("DogHealthRecordView-AddVaccinationButton")
                             .disabled(newVaccineName.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
@@ -81,25 +154,43 @@ struct DogHealthRecordView: View {
                         Text("No vaccination records.")
                             .foregroundColor(.secondary)
                             .accessibilityLabel("No vaccination records")
+                            .accessibilityIdentifier("DogHealthRecordView-NoVaccinations")
                     } else {
                         ForEach(viewModel.vaccinations) { record in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(record.vaccineName)
                                     .font(.headline)
                                     .accessibilityLabel("Vaccine: \(record.vaccineName)")
-                                Text("Date Given: \(record.dateGiven, style: .date)")
+                                    .accessibilityIdentifier("DogHealthRecordView-Vaccine-\(record.vaccineName)")
+                                Text("Date Given: \(formattedDate(record.dateGiven))")
                                     .font(.subheadline)
                                     .accessibilityLabel("Date Given: \(formattedDate(record.dateGiven))")
+                                    .accessibilityIdentifier("DogHealthRecordView-DateGiven-\(record.vaccineName)")
                                 if let nextDue = record.nextDueDate {
-                                    Text("Next Due: \(nextDue, style: .date)")
+                                    Text("Next Due: \(formattedDate(nextDue))")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
                                         .accessibilityLabel("Next Due: \(formattedDate(nextDue))")
+                                        .accessibilityIdentifier("DogHealthRecordView-NextDue-\(record.vaccineName)")
                                 }
                             }
                             .padding(.vertical, 4)
                         }
-                        .onDelete(perform: viewModel.isEditing ? viewModel.removeVaccination : nil)
+                        .onDelete { indexSet in
+                            if viewModel.isEditing {
+                                viewModel.removeVaccination(at: indexSet)
+                                showUndoVaccine = true
+                            }
+                        }
+                    }
+                    if let last = viewModel.lastDeletedVaccination, showUndoVaccine {
+                        Button {
+                            viewModel.undoVaccinationDelete()
+                            showUndoVaccine = false
+                        } label: {
+                            Label("Undo delete \(last.vaccineName)", systemImage: "arrow.uturn.backward")
+                        }
+                        .accessibilityIdentifier("DogHealthRecordView-UndoVaccinationButton")
                     }
                 }
 
@@ -110,6 +201,7 @@ struct DogHealthRecordView: View {
                         HStack {
                             TextField("Add Allergy", text: $newAllergy)
                                 .accessibilityLabel("Add Allergy")
+                                .accessibilityIdentifier("DogHealthRecordView-AddAllergyField")
                             Button(action: {
                                 let trimmed = newAllergy.trimmingCharacters(in: .whitespaces)
                                 guard !trimmed.isEmpty else { return }
@@ -119,6 +211,7 @@ struct DogHealthRecordView: View {
                                 Image(systemName: "plus.circle.fill")
                             }
                             .accessibilityLabel("Add Allergy")
+                            .accessibilityIdentifier("DogHealthRecordView-AddAllergyButton")
                             .disabled(newAllergy.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
@@ -127,13 +220,29 @@ struct DogHealthRecordView: View {
                         Text("No known allergies.")
                             .foregroundColor(.secondary)
                             .accessibilityLabel("No known allergies")
+                            .accessibilityIdentifier("DogHealthRecordView-NoAllergies")
                     } else {
                         ForEach(viewModel.allergies, id: \.self) { allergy in
                             Text(allergy)
                                 .padding(.vertical, 4)
                                 .accessibilityLabel("Allergy: \(allergy)")
+                                .accessibilityIdentifier("DogHealthRecordView-Allergy-\(allergy)")
                         }
-                        .onDelete(perform: viewModel.isEditing ? viewModel.removeAllergy : nil)
+                        .onDelete { indexSet in
+                            if viewModel.isEditing {
+                                viewModel.removeAllergy(at: indexSet)
+                                showUndoAllergy = true
+                            }
+                        }
+                    }
+                    if let last = viewModel.lastDeletedAllergy, showUndoAllergy {
+                        Button {
+                            viewModel.undoAllergyDelete()
+                            showUndoAllergy = false
+                        } label: {
+                            Label("Undo delete \(last)", systemImage: "arrow.uturn.backward")
+                        }
+                        .accessibilityIdentifier("DogHealthRecordView-UndoAllergyButton")
                     }
                 }
 
@@ -144,10 +253,15 @@ struct DogHealthRecordView: View {
                         TextEditor(text: $viewModel.healthNotes)
                             .frame(minHeight: 120)
                             .accessibilityLabel("Health Notes Editor")
+                            .accessibilityIdentifier("DogHealthRecordView-HealthNotesEditor")
+                            .onChange(of: viewModel.healthNotes) { newValue in
+                                DogHealthAudit.record(action: "Edit", item: "HealthNotes", details: newValue)
+                            }
                     } else {
                         Text(viewModel.healthNotes.isEmpty ? "No health notes." : viewModel.healthNotes)
                             .foregroundColor(viewModel.healthNotes.isEmpty ? .secondary : .primary)
                             .accessibilityLabel(viewModel.healthNotes.isEmpty ? "No health notes" : "Health Notes: \(viewModel.healthNotes)")
+                            .accessibilityIdentifier("DogHealthRecordView-HealthNotesLabel")
                     }
                 }
             }
@@ -160,6 +274,7 @@ struct DogHealthRecordView: View {
                         }
                     }
                     .accessibilityLabel(viewModel.isEditing ? "Done Editing" : "Edit Health Records")
+                    .accessibilityIdentifier("DogHealthRecordView-EditButton")
                 }
             }
         }
@@ -186,6 +301,16 @@ struct DogHealthRecordView: View {
         return formatter.string(from: date)
     }
 }
+
+// MARK: - Audit/Admin Accessors
+
+public enum DogHealthAuditAdmin {
+    public static func lastSummary() -> String { DogHealthAudit.log.last?.summary ?? "No health events yet." }
+    public static func lastJSON() -> String? { DogHealthAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] { DogHealthAudit.recentSummaries(limit: limit) }
+}
+
+// MARK: - Preview
 
 #if DEBUG
 struct DogHealthRecordView_Previews: PreviewProvider {

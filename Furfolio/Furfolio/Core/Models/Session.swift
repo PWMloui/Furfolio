@@ -2,111 +2,157 @@
 //  Session.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced for auditing, security analytics, compliance, and extensibility.
 //
 
 import Foundation
 import SwiftData
 
-// MARK: - Session (Modular, Tokenized, Auditable Session/Activity Model)
-
-/// Session model representing user or staff login/activity tracking in Furfolio.
-/// This is a modular, tokenized, auditable session/activity entity designed to support security, analytics, compliance, role-based access control (RBAC), and UI integration.
-/// It facilitates comprehensive tracking and management of sessions across business, staff, device, and automation contexts.
-/// The model supports detailed audit trails, session lifecycle management, and role-based permissions to enhance compliance and operational workflows.
 @available(iOS 18.0, *)
 @Model
 final class Session: Identifiable, ObservableObject {
     
-    // MARK: - Identity
-    
-    /// Unique identifier for the session.
-    /// Used for audit trails, session correlation in analytics, and ensuring entity uniqueness in business workflows.
+    // MARK: - Identity & User
+
     @Attribute(.unique)
     var id: UUID
-    
-    /// Username, staff, or user identifier associated with this session.
-    /// Critical for user-level audit, analytics segmentation, and enforcing business rules.
     var userID: String
-    
-    /// Staff role for RBAC (owner, assistant, admin, unknown).
-    /// Defines access permissions and enforces role-based compliance policies.
-    /// Essential for audit logging, security reviews, and analytics on staff activities.
+
+    // MARK: - Role-based Access
+
     enum StaffRole: String, Codable, Sendable, CaseIterable {
-        /// Owner role with highest privileges, typically for audit and compliance oversight.
-        case owner
-        /// Assistant role with limited permissions; tracked for role-based access and analytics.
-        case assistant
-        /// Admin role with elevated permissions; important for security audits and compliance.
-        case admin
-        /// Unknown or undefined role; flagged for audit and potential compliance review.
-        case unknown
+        case owner, assistant, admin, unknown
     }
-    /// Role of the staff member associated with this session.
-    /// Supports RBAC enforcement, audit trail classification, and compliance reporting.
     var staffRole: StaffRole?
-    
-    // MARK: - Metadata
-    
-    /// Device or platform information where the session originated.
-    /// Used for security audits, device-based analytics, and compliance tracking.
+
+    // MARK: - Session Metadata & Security
+
     var deviceInfo: String?
-    
-    /// IP address associated with the session.
-    /// Critical for security audits, anomaly detection, and regulatory compliance.
     var ipAddress: String?
-    
-    /// Location information tied to the session.
-    /// Supports compliance with regional regulations, audit trails, and geo-analytics.
     var location: String?
-    
-    /// Optional session token or credential for local session identification.
-    /// Facilitates secure session management, token-based authentication, and audit event correlation.
     var sessionToken: String?
-    
-    /// Notes or additional metadata related to the session.
-    /// Useful for audit annotations, business workflow comments, and incident tracking.
     var notes: String?
-    
-    /// Type of session (e.g., device, user, automation).
-    /// Enables segmentation in analytics, business logic branching, and compliance categorization.
-    var sessionType: String?
-    
-    // MARK: - Session State
-    
-    /// Session start time.
-    /// Key for audit timelines, session duration analytics, and compliance reporting.
-    var startedAt: Date
-    
-    /// Session end time; nil if session is active.
-    /// Used to determine session lifecycle, audit completeness, and compliance status.
-    var endedAt: Date?
-    
-    /// Timestamp of the last activity within this session.
-    /// Supports real-time analytics, session timeout enforcement, and security monitoring.
-    var lastActivityAt: Date?
-    
-    /// Computed property indicating if the session is currently active.
-    /// Used in UI workflows, security checks, and session management logic.
-    var isActive: Bool {
-        endedAt == nil
+
+    // Strongly-typed session context
+    enum SessionType: String, Codable, CaseIterable {
+        case device, user, automation, api, unknown
     }
-    
-    /// Initializes a new Session.
-    /// - Parameters:
-    ///   - id: Unique session identifier, ensuring audit traceability and entity uniqueness.
-    ///   - userID: User or staff identifier, critical for audit, analytics, and business logic.
-    ///   - staffRole: Role of the staff member, enabling RBAC enforcement and compliance.
-    ///   - deviceInfo: Device or platform info for security audits and analytics.
-    ///   - startedAt: Session start time for audit timelines and compliance.
-    ///   - endedAt: Session end time to mark session lifecycle completion.
-    ///   - sessionToken: Local session token for secure session management.
-    ///   - ipAddress: IP address for security and compliance auditing.
-    ///   - location: Location info to support geo-compliance and analytics.
-    ///   - notes: Additional notes for audit annotations and business workflows.
-    ///   - sessionType: Session type to classify session context in analytics and compliance.
-    ///   - lastActivityAt: Last activity timestamp to monitor session activity and security.
-    /// This initializer supports comprehensive audit logging, analytics tracking, and business process integration.
+    var sessionType: SessionType = .user
+
+    // Session status for analytics
+    enum Status: String, Codable, CaseIterable {
+        case active, expired, ended, locked, revoked
+    }
+    var status: Status {
+        if let endedAt { return .ended }
+        if isExpired(maxDuration: Self.defaultSessionTimeout) { return .expired }
+        return .active
+    }
+
+    // Trusted device flag (biometrics/known device)
+    var isTrustedDevice: Bool = false
+
+    // 2FA Method (for audit/security review)
+    enum TwoFactorMethod: String, Codable, CaseIterable {
+        case none, sms, email, authenticator, hardwareKey
+    }
+    var twoFactorMethod: TwoFactorMethod = .none
+
+    // Session security risk score (simple demo—expand with ML as needed)
+    var riskScore: Int {
+        var score = 0
+        if !isTrustedDevice { score += 1 }
+        if twoFactorMethod == .none { score += 1 }
+        if staffRole == .unknown { score += 2 }
+        if badges.contains(.highRisk) { score += 2 }
+        return score
+    }
+
+    // MARK: - Session State
+
+    var startedAt: Date
+    var endedAt: Date?
+    var lastActivityAt: Date?
+
+    // MARK: - Tokenized/Segmented Badges
+
+    enum SessionBadge: String, CaseIterable, Codable {
+        case remote, privileged, mobile, automation, highRisk, complianceReview, expired
+    }
+    var badgeTokens: [String] = []
+    var badges: [SessionBadge] { badgeTokens.compactMap { SessionBadge(rawValue: $0) } }
+    func addBadge(_ badge: SessionBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
+    func removeBadge(_ badge: SessionBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func hasBadge(_ badge: SessionBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
+
+    // MARK: - Audit Trail
+
+    var auditLog: [String] = []
+    func addAudit(_ entry: String) {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        auditLog.append("[\(stamp)] \(entry)")
+    }
+    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+
+    // MARK: - Session Control
+
+    var isActive: Bool { endedAt == nil && !isExpired(maxDuration: Self.defaultSessionTimeout) }
+    static let defaultSessionTimeout: TimeInterval = 3600 * 8
+
+    func endSession(note: String? = nil) {
+        objectWillChange.send()
+        self.endedAt = Date()
+        self.lastActivityAt = self.endedAt
+        addAudit("Session ended" + (note != nil ? ": \(note!)" : ""))
+    }
+
+    func isExpired(maxDuration: TimeInterval) -> Bool {
+        guard let ended = endedAt else {
+            return Date().timeIntervalSince(startedAt) > maxDuration
+        }
+        return ended.timeIntervalSince(startedAt) > maxDuration
+    }
+
+    // MARK: - Export
+
+    func exportJSON() -> String? {
+        struct Export: Codable {
+            let id: UUID
+            let userID: String
+            let staffRole: String?
+            let sessionType: String
+            let status: String
+            let startedAt: Date
+            let endedAt: Date?
+            let lastActivityAt: Date?
+            let ipAddress: String?
+            let location: String?
+            let isTrustedDevice: Bool
+            let twoFactorMethod: String
+            let badgeTokens: [String]
+            let riskScore: Int
+            let notes: String?
+        }
+        let export = Export(
+            id: id, userID: userID, staffRole: staffRole?.rawValue,
+            sessionType: sessionType.rawValue, status: status.rawValue,
+            startedAt: startedAt, endedAt: endedAt, lastActivityAt: lastActivityAt,
+            ipAddress: ipAddress, location: location, isTrustedDevice: isTrustedDevice,
+            twoFactorMethod: twoFactorMethod.rawValue, badgeTokens: badgeTokens, riskScore: riskScore,
+            notes: notes
+        )
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(export)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // MARK: - Accessibility
+
+    var accessibilityLabel: String {
+        "Session for \(userID). Status: \(status.rawValue). Role: \(staffRole?.rawValue ?? "unknown"). Started at \(DateFormatter.localizedString(from: startedAt, dateStyle: .medium, timeStyle: .short)). \(isTrustedDevice ? "Trusted device." : "Untrusted device."). Risk score: \(riskScore)."
+    }
+
+    // MARK: - Initializer
+
     init(
         id: UUID = UUID(),
         userID: String,
@@ -118,8 +164,12 @@ final class Session: Identifiable, ObservableObject {
         ipAddress: String? = nil,
         location: String? = nil,
         notes: String? = nil,
-        sessionType: String? = nil,
-        lastActivityAt: Date? = nil
+        sessionType: SessionType = .user,
+        lastActivityAt: Date? = nil,
+        isTrustedDevice: Bool = false,
+        twoFactorMethod: TwoFactorMethod = .none,
+        badgeTokens: [String] = [],
+        auditLog: [String] = []
     ) {
         self.id = id
         self.userID = userID
@@ -133,46 +183,27 @@ final class Session: Identifiable, ObservableObject {
         self.notes = notes
         self.sessionType = sessionType
         self.lastActivityAt = lastActivityAt
+        self.isTrustedDevice = isTrustedDevice
+        self.twoFactorMethod = twoFactorMethod
+        self.badgeTokens = badgeTokens
+        self.auditLog = auditLog
     }
-    
-    /// Ends the session, updates the end time, optional note, and last activity timestamp.
-    /// - Parameter note: Optional note to append to the session notes.
-    /// This method is critical for audit/event logging, marking session completion for analytics,
-    /// and ensuring security/compliance by formally closing the session lifecycle.
-    func endSession(note: String? = nil) {
-        objectWillChange.send()
-        self.endedAt = Date()
-        self.lastActivityAt = self.endedAt
-        if let note = note, !note.isEmpty {
-            if let existingNotes = self.notes, !existingNotes.isEmpty {
-                self.notes = existingNotes + "\n" + note
-            } else {
-                self.notes = note
-            }
-        }
-    }
-    
-    /// Checks if the session has exceeded a maximum allowed duration.
-    /// - Parameter maxDuration: Maximum duration allowed for the session.
-    /// - Returns: True if the session is expired, false otherwise.
-    /// This method supports security and compliance policies by identifying stale or expired sessions,
-    /// and assists in analytics on session durations and user behavior.
-    func isExpired(maxDuration: TimeInterval) -> Bool {
-        guard let ended = endedAt else {
-            return Date().timeIntervalSince(startedAt) > maxDuration
-        }
-        return ended.timeIntervalSince(startedAt) > maxDuration
-    }
-    
-    /// A static test/dummy session for previews or unit testing.
-    /// Designed for demo, unit-test, business logic validation, and audit/preview purposes.
-    /// Enables UI previews and test scenarios with realistic session data.
-    static let testSession = Session(
-        userID: "testUser",
-        staffRole: .unknown,
-        deviceInfo: "iPhone 14 Pro",
-        startedAt: Date().addingTimeInterval(-3600),
-        notes: "Test session for unit testing",
-        sessionType: "user"
-    )
+
+    // MARK: - Preview/Test
+
+    static let preview: Session = {
+        let s = Session(
+            userID: "demoUser",
+            staffRole: .admin,
+            deviceInfo: "iPad Pro",
+            startedAt: Date().addingTimeInterval(-3000),
+            ipAddress: "192.168.1.5",
+            sessionType: .user,
+            isTrustedDevice: true,
+            twoFactorMethod: .authenticator,
+            badgeTokens: [SessionBadge.privileged.rawValue]
+        )
+        s.addAudit("Session started.")
+        return s
+    }()
 }

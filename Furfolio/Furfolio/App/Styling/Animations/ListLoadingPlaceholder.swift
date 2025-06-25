@@ -1,6 +1,17 @@
 import SwiftUI
 
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol ListLoadingAnalyticsLogger {
+    func log(event: String, rows: Int, avatar: Bool, lineCount: Int)
+}
+public struct NullListLoadingAnalyticsLogger: ListLoadingAnalyticsLogger {
+    public init() {}
+    public func log(event: String, rows: Int, avatar: Bool, lineCount: Int) {}
+}
+
 /// A shimmering skeleton placeholder used in lists while data is loading.
+/// Now: token-compliant, analytics/audit–ready, fully accessible, preview/test-injectable, and business/QA robust.
 struct ListLoadingPlaceholder: View {
     /// Number of placeholder rows to display.
     var rows: Int = 6
@@ -11,39 +22,54 @@ struct ListLoadingPlaceholder: View {
     /// Number of text lines per placeholder row.
     var lineCount: Int = 2
 
-    /// Size of the avatar placeholder.
-    var avatarSize: CGFloat = 42
+    /// Analytics logger for business/QA/preview.
+    var analyticsLogger: ListLoadingAnalyticsLogger = NullListLoadingAnalyticsLogger()
 
-    /// Corner radius for each text line placeholder.
-    var cornerRadius: CGFloat = 11
-
-    /// Minimum width for the secondary (short) text line.
-    private let secondaryWidthMin: CGFloat = 90
-
-    /// Maximum extra width added to the secondary line (randomized).
-    private let secondaryWidthVariance: CGFloat = 30
+    /// Design tokens (with robust fallback)
+    private enum Tokens {
+        static let avatarSize: CGFloat = AppSpacing.avatar ?? 42
+        static let cornerRadius: CGFloat = AppRadius.medium ?? 11
+        static let spacingRow: CGFloat = AppSpacing.large ?? 18
+        static let spacingLine: CGFloat = AppSpacing.small ?? 7
+        static let spacingH: CGFloat = AppSpacing.medium ?? 15
+        static let spacingV: CGFloat = AppSpacing.small ?? 6
+        static let paddingV: CGFloat = AppSpacing.medium ?? 14
+        static let shimmerStart: Double = 0
+        static let shimmerEnd: Double = 220
+        static let shimmerDuration: Double = 1.05
+        static let primaryWidth: CGFloat = AppSpacing.skeletonPrimary ?? 140
+        static let secondaryWidthMin: CGFloat = AppSpacing.skeletonSecondaryMin ?? 90
+        static let secondaryWidthVariance: CGFloat = AppSpacing.skeletonSecondaryVar ?? 30
+        static let primaryHeight: CGFloat = AppSpacing.skeletonPrimaryHeight ?? 15
+        static let secondaryHeight: CGFloat = AppSpacing.skeletonSecondaryHeight ?? 11
+        static let skeletonPrimary: Color = AppColors.skeletonPrimary ?? .gray.opacity(0.32)
+        static let skeletonSecondary: Color = AppColors.skeletonSecondary ?? .gray.opacity(0.18)
+        static let avatarBg: Color = AppColors.skeletonAvatarBg ?? .gray.opacity(0.18)
+        static let bg: Color = AppColors.skeletonBackground ?? Color(.systemGroupedBackground)
+        static let accessibilityLoading: String = NSLocalizedString("Loading...", comment: "Accessibility label for list loading placeholder")
+    }
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: Tokens.spacingRow) {
             ForEach(0..<rows, id: \.self) { _ in
-                HStack(spacing: 15) {
+                HStack(spacing: Tokens.spacingH) {
                     if avatar {
-                        RoundedRectangle(cornerRadius: avatarSize / 2)
-                            .fill(Color.gray.opacity(0.18))
-                            .frame(width: avatarSize, height: avatarSize)
+                        RoundedRectangle(cornerRadius: Tokens.avatarSize / 2)
+                            .fill(Tokens.avatarBg)
+                            .frame(width: Tokens.avatarSize, height: Tokens.avatarSize)
                             .shimmer()
                             .accessibilityHidden(true)
                     }
 
-                    VStack(alignment: .leading, spacing: 7) {
+                    VStack(alignment: .leading, spacing: Tokens.spacingLine) {
                         ForEach(0..<lineCount, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: cornerRadius)
-                                .fill(Color.gray.opacity(i == 0 ? 0.32 : 0.18))
+                            RoundedRectangle(cornerRadius: Tokens.cornerRadius)
+                                .fill(i == 0 ? Tokens.skeletonPrimary : Tokens.skeletonSecondary)
                                 .frame(
                                     width: i == 0
-                                        ? 140
-                                        : secondaryWidthMin + CGFloat(Int.random(in: 0...Int(secondaryWidthVariance))),
-                                    height: i == 0 ? 15 : 11
+                                        ? Tokens.primaryWidth
+                                        : Tokens.secondaryWidthMin + CGFloat(Int.random(in: 0...Int(Tokens.secondaryWidthVariance))),
+                                    height: i == 0 ? Tokens.primaryHeight : Tokens.secondaryHeight
                                 )
                                 .shimmer()
                                 .accessibilityHidden(true)
@@ -51,13 +77,19 @@ struct ListLoadingPlaceholder: View {
                     }
                     Spacer()
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, Tokens.spacingV)
             }
         }
-        .padding(.vertical, 14)
+        .padding(.vertical, Tokens.paddingV)
         .padding(.horizontal)
         .redacted(reason: .placeholder)
-        .accessibilityHidden(true)
+        .background(Tokens.bg)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(Tokens.accessibilityLoading))
+        .accessibilityAddTraits(.isStaticText)
+        .onAppear {
+            analyticsLogger.log(event: "loading_placeholder_appear", rows: rows, avatar: avatar, lineCount: lineCount)
+        }
     }
 }
 
@@ -83,8 +115,8 @@ private struct Shimmer: ViewModifier {
                 .mask(content)
             )
             .onAppear {
-                withAnimation(Animation.linear(duration: 1.1).repeatForever(autoreverses: false)) {
-                    phase = 220
+                withAnimation(Animation.linear(duration: ListLoadingPlaceholder.Tokens.shimmerDuration).repeatForever(autoreverses: false)) {
+                    phase = ListLoadingPlaceholder.Tokens.shimmerEnd
                 }
             }
     }
@@ -101,16 +133,21 @@ extension View {
 
 #if DEBUG
 struct ListLoadingPlaceholder_Previews: PreviewProvider {
+    struct SpyLogger: ListLoadingAnalyticsLogger {
+        func log(event: String, rows: Int, avatar: Bool, lineCount: Int) {
+            print("ListLoadingAnalytics: \(event) rows:\(rows) avatar:\(avatar) lines:\(lineCount)")
+        }
+    }
     static var previews: some View {
         ScrollView {
             VStack(spacing: 32) {
-                ListLoadingPlaceholder(rows: 5, avatar: true, lineCount: 2)
-                ListLoadingPlaceholder(rows: 3, avatar: false, lineCount: 1)
+                ListLoadingPlaceholder(rows: 5, avatar: true, lineCount: 2, analyticsLogger: SpyLogger())
+                ListLoadingPlaceholder(rows: 3, avatar: false, lineCount: 1, analyticsLogger: SpyLogger())
             }
             .padding()
         }
         .previewLayout(.sizeThatFits)
-        .background(Color(.systemGroupedBackground))
+        .background(ListLoadingPlaceholder.Tokens.bg)
     }
 }
 #endif

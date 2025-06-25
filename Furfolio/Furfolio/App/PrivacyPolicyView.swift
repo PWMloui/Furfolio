@@ -2,15 +2,28 @@
 //  PrivacyPolicyView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: analytics/audit–ready, token-compliant, Trust Center–compliant, accessibility, preview/test–injectable.
 //
 
 import SwiftUI
 
-// MARK: - PrivacyPolicyView (Business Privacy, Modular Token Styling)
+// MARK: - Analytics/Audit Protocol
+
+public protocol PrivacyPolicyAnalyticsLogger {
+    func log(event: String, info: String?)
+}
+public struct NullPrivacyPolicyAnalyticsLogger: PrivacyPolicyAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: String?) {}
+}
+
+// MARK: - PrivacyPolicyView (Business Privacy, Modular Token Styling, Audit/Analytics Ready)
 
 struct PrivacyPolicyView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var showTrustCenter = false
+
+    static var analyticsLogger: PrivacyPolicyAnalyticsLogger = NullPrivacyPolicyAnalyticsLogger()
 
     private let policyText = """
     **Privacy Policy**
@@ -58,6 +71,7 @@ struct PrivacyPolicyView: View {
                     Text("Your privacy matters to us")
                         .font(AppFonts.subheadline)
                         .foregroundStyle(AppColors.secondary)
+                        .accessibilityLabel("Privacy statement subtitle")
 
                     Divider()
 
@@ -70,10 +84,11 @@ struct PrivacyPolicyView: View {
                                 .fill(AppColors.card)
                         )
                         .appShadow(AppShadows.card)
-                        .accessibilityLabel("Privacy policy details")
+                        .accessibilityLabel("Privacy policy details. " + policyText.replacingOccurrences(of: "**", with: ""))
 
                     Button {
-                        // Placeholder action for Trust Center
+                        showTrustCenter = true
+                        Self.analyticsLogger.log(event: "tap_trust_center", info: nil)
                     } label: {
                         Label("View Trust Center", systemImage: "lock.shield")
                             .font(AppFonts.headline)
@@ -86,6 +101,13 @@ struct PrivacyPolicyView: View {
                             )
                     }
                     .accessibilityLabel("View Trust Center")
+                    .accessibilityHint("Opens the Furfolio Trust Center for more privacy information.")
+                    .sheet(isPresented: $showTrustCenter) {
+                        TrustCenterView()
+                            .onAppear {
+                                Self.analyticsLogger.log(event: "trust_center_view_presented", info: nil)
+                            }
+                    }
                 }
                 .padding(AppSpacing.medium)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -95,21 +117,47 @@ struct PrivacyPolicyView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
                         dismiss()
+                        Self.analyticsLogger.log(event: "close_privacy_policy", info: nil)
                     } label: {
                         Label("Close", systemImage: "xmark.circle")
                     }
                     .accessibilityLabel("Close Privacy Policy")
                 }
             }
+            .onAppear {
+                Self.analyticsLogger.log(event: "privacy_policy_view_appear", info: nil)
+            }
         }
     }
 }
 
-#Preview {
-    PrivacyPolicyView()
+// MARK: - Trust Center View Stub (for demo, unchanged)
+struct TrustCenterView: View {
+    var body: some View {
+        VStack(spacing: AppSpacing.large) {
+            Text("Trust Center")
+                .font(AppFonts.title)
+                .foregroundStyle(AppColors.primary)
+            Text("Data Security & Audit Log features will be implemented here.")
+                .font(AppFonts.body)
+                .foregroundStyle(AppColors.secondary)
+            Spacer()
+        }
+        .padding(AppSpacing.large)
+        .background(AppColors.card)
+        .cornerRadius(BorderRadius.large)
+        .appShadow(AppShadows.card)
+        .accessibilityElement(children: .combine)
+    }
 }
 
-// TODO:
-// - Link the “View Trust Center” button to the actual Trust Center page when available.
-// - Customize the privacy policy text further based on legal review and real business practices.
-// - Ensure .furfolio color and font extensions are implemented or adjust fallback colors/fonts accordingly.
+// MARK: - Preview with analytics print logger
+#Preview {
+    struct SpyLogger: PrivacyPolicyAnalyticsLogger {
+        func log(event: String, info: String?) {
+            print("[PrivacyPolicyAnalytics] \(event): \(info ?? "")")
+        }
+    }
+    PrivacyPolicyView.analyticsLogger = SpyLogger()
+    return PrivacyPolicyView()
+}

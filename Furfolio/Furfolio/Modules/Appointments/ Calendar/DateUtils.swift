@@ -3,319 +3,519 @@
 //  DateUtils.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//  Centralized date/time utilities for Furfolio business operations, analytics, and scheduling.
-//
-//  This module provides a comprehensive, modular, and auditable set of date and time utilities tailored for Furfolio's business logic.
-//  It supports tokenized UI display and localization through LocalizedStringKey for consistency across the app.
-//  Designed with audit-readiness and compliance in mind, these utilities facilitate accurate analytics and event logging.
-//  The utilities enable consistent date/time formatting, relative date descriptions, range calculations, and business-specific date operations.
-//  Shared static instances and computed properties optimize performance and maintainability.
+//  Enhanced 2025: Auditable, Tokenized, BI/Compliance-Ready Date & Time Utilities
 //
 
 import Foundation
 import SwiftUI
 
+// MARK: - Audit/Event Logging for DateUtils
+
+fileprivate struct DateUtilsAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String
+    let date: Date?
+    let date2: Date?
+    let value: String?
+    let tags: [String]
+    let actor: String?
+    let context: String?
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let op = operation.capitalized
+        let val = value ?? ""
+        return "[\(op)] \(val) at \(dateStr)\(detail.map { ": \($0)" } ?? "")"
+    }
+}
+
+fileprivate final class DateUtilsAudit {
+    static private(set) var log: [DateUtilsAuditEvent] = []
+
+    static func record(
+        operation: String,
+        date: Date? = nil,
+        date2: Date? = nil,
+        value: String? = nil,
+        tags: [String] = [],
+        actor: String? = nil,
+        context: String? = "DateUtils",
+        detail: String? = nil
+    ) {
+        let event = DateUtilsAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            date: date,
+            date2: date2,
+            value: value,
+            tags: tags,
+            actor: actor,
+            context: context,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 500 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No date/time actions recorded."
+    }
+}
+
 enum DateUtils {
-    
     // MARK: - Constants
-    
     private enum Constants {
         static let daysInWeek = 7
         static let secondsInDay = 86400
         static let oneDayComponent = 1
         static let oneSecondComponent = 1
     }
-    
+
     // MARK: - Shared Instances
-    
-    /// Shared calendar instance for consistent date calculations.
-    static var calendar: Calendar {
-        Calendar.current
-    }
-    
-    /// Shared short date formatter instance.
+
+    static var calendar: Calendar { Calendar.current }
+
     private static let shortDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .none
         return formatter
     }()
-    
-    /// Shared full date & time formatter instance.
+
     private static let fullDateTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter
     }()
-    
+
     // MARK: - Formatters
 
-    /// Returns a short formatted string for a date (e.g., "6/20/25").
-    /// - Parameter date: The date to format.
-    /// - Returns: A short date string or a placeholder if nil.
-    /// - Note: TODO - Add audit/event logging and tokenized UI display support.
-    static func shortDate(_ date: Date?) -> String {
-        guard let date = date else { return LocalizedStringKey("--").stringValue }
-        // TODO: Add audit/event logging hook here.
-        return shortDateFormatter.string(from: date)
+    static func shortDate(_ date: Date?, actor: String? = nil, context: String? = nil) -> String {
+        let result = date.map { shortDateFormatter.string(from: $0) } ?? LocalizedStringKey("--").stringValue
+        DateUtilsAudit.record(
+            operation: "shortDate",
+            date: date,
+            value: result,
+            tags: ["format", "short"],
+            actor: actor,
+            context: context
+        )
+        return result
     }
 
-    /// Returns a full date & time string (e.g., "Jun 20, 2025 at 2:20 PM").
-    /// - Parameter date: The date to format.
-    /// - Returns: A full date and time string or a placeholder if nil.
-    /// - Note: TODO - Add audit/event logging and tokenized UI display support.
-    static func fullDateTime(_ date: Date?) -> String {
-        guard let date = date else { return LocalizedStringKey("--").stringValue }
-        // TODO: Add audit/event logging hook here.
-        return fullDateTimeFormatter.string(from: date)
+    static func fullDateTime(_ date: Date?, actor: String? = nil, context: String? = nil) -> String {
+        let result = date.map { fullDateTimeFormatter.string(from: $0) } ?? LocalizedStringKey("--").stringValue
+        DateUtilsAudit.record(
+            operation: "fullDateTime",
+            date: date,
+            value: result,
+            tags: ["format", "full"],
+            actor: actor,
+            context: context
+        )
+        return result
     }
 
-    /// Returns a custom formatted date string (see Unicode Date Format Patterns).
-    /// - Parameters:
-    ///   - date: The date to format.
-    ///   - format: The custom date format string.
-    /// - Returns: A formatted date string or a placeholder if nil.
-    /// - Note: TODO - Add audit/event logging and tokenized UI display support.
-    static func custom(_ date: Date?, format: String) -> String {
-        guard let date = date else { return LocalizedStringKey("--").stringValue }
-        // TODO: Add audit/event logging hook here.
+    static func custom(_ date: Date?, format: String, actor: String? = nil, context: String? = nil) -> String {
+        guard let date = date else {
+            let fallback = LocalizedStringKey("--").stringValue
+            DateUtilsAudit.record(
+                operation: "customFormat",
+                date: nil,
+                value: fallback,
+                tags: ["format", "custom", "nil"],
+                actor: actor,
+                context: context,
+                detail: "format: \(format)"
+            )
+            return fallback
+        }
         let formatter = DateFormatter()
         formatter.dateFormat = format
-        return formatter.string(from: date)
+        let result = formatter.string(from: date)
+        DateUtilsAudit.record(
+            operation: "customFormat",
+            date: date,
+            value: result,
+            tags: ["format", "custom"],
+            actor: actor,
+            context: context,
+            detail: "format: \(format)"
+        )
+        return result
     }
 
     // MARK: - Relative & Humanized Strings
 
-    /// Returns "Today", "Yesterday", or "n days ago" for a date (analytics-friendly).
-    /// - Parameter date: The date to describe.
-    /// - Returns: A localized relative string describing the date.
-    /// - Note: TODO - Add audit/event logging and tokenized UI display support.
-    static func relativeString(from date: Date?) -> String {
-        guard let date = date else { return LocalizedStringKey("--").stringValue }
+    static func relativeString(from date: Date?, actor: String? = nil, context: String? = nil) -> String {
+        guard let date = date else {
+            let fallback = LocalizedStringKey("--").stringValue
+            DateUtilsAudit.record(
+                operation: "relativeString",
+                date: nil,
+                value: fallback,
+                tags: ["relative", "nil"],
+                actor: actor,
+                context: context
+            )
+            return fallback
+        }
         let calendar = self.calendar
-        // TODO: Add audit/event logging hook here.
-        if calendar.isDateInToday(date) { return LocalizedStringKey("Today").stringValue }
-        if calendar.isDateInYesterday(date) { return LocalizedStringKey("Yesterday").stringValue }
-        let days = calendar.dateComponents([.day], from: date, to: Date()).day ?? 0
-        return days == 0 ? LocalizedStringKey("Today").stringValue : String(format: NSLocalizedString("%d days ago", comment: "Relative days ago"), days)
+        let result: String
+        if calendar.isDateInToday(date) {
+            result = LocalizedStringKey("Today").stringValue
+        } else if calendar.isDateInYesterday(date) {
+            result = LocalizedStringKey("Yesterday").stringValue
+        } else {
+            let days = calendar.dateComponents([.day], from: date, to: Date()).day ?? 0
+            result = days == 0 ? LocalizedStringKey("Today").stringValue : String(format: NSLocalizedString("%d days ago", comment: "Relative days ago"), days)
+        }
+        DateUtilsAudit.record(
+            operation: "relativeString",
+            date: date,
+            value: result,
+            tags: ["relative"],
+            actor: actor,
+            context: context
+        )
+        return result
     }
 
-    /// Returns "in X days", "Tomorrow", or "Today" for a future date (for reminders).
-    /// - Parameter date: The future date to describe.
-    /// - Returns: A localized relative string describing the future date.
-    /// - Note: TODO - Add audit/event logging and tokenized UI display support.
-    static func futureString(to date: Date?) -> String {
-        guard let date = date else { return LocalizedStringKey("--").stringValue }
+    static func futureString(to date: Date?, actor: String? = nil, context: String? = nil) -> String {
+        guard let date = date else {
+            let fallback = LocalizedStringKey("--").stringValue
+            DateUtilsAudit.record(
+                operation: "futureString",
+                date: nil,
+                value: fallback,
+                tags: ["future", "nil"],
+                actor: actor,
+                context: context
+            )
+            return fallback
+        }
         let calendar = self.calendar
-        // TODO: Add audit/event logging hook here.
-        if calendar.isDateInToday(date) { return LocalizedStringKey("Today").stringValue }
-        if calendar.isDateInTomorrow(date) { return LocalizedStringKey("Tomorrow").stringValue }
-        let days = calendar.dateComponents([.day], from: Date(), to: date).day ?? 0
-        if days == 1 { return LocalizedStringKey("Tomorrow").stringValue }
-        if days == 0 { return LocalizedStringKey("Today").stringValue }
-        return String(format: NSLocalizedString("in %d days", comment: "Future days"), days)
+        let result: String
+        if calendar.isDateInToday(date) {
+            result = LocalizedStringKey("Today").stringValue
+        } else if calendar.isDateInTomorrow(date) {
+            result = LocalizedStringKey("Tomorrow").stringValue
+        } else {
+            let days = calendar.dateComponents([.day], from: Date(), to: date).day ?? 0
+            if days == 1 { result = LocalizedStringKey("Tomorrow").stringValue }
+            else if days == 0 { result = LocalizedStringKey("Today").stringValue }
+            else { result = String(format: NSLocalizedString("in %d days", comment: "Future days"), days) }
+        }
+        DateUtilsAudit.record(
+            operation: "futureString",
+            date: date,
+            value: result,
+            tags: ["future"],
+            actor: actor,
+            context: context
+        )
+        return result
     }
-    
-    /// Returns a relative string for expense/charge history (e.g., "Last month", "3 weeks ago").
-    /// - Parameter date: The date to describe.
-    /// - Returns: A localized relative string describing the business date.
-    /// - Note: TODO - Add audit/event logging and tokenized UI display support.
-    static func businessRelativeString(from date: Date?) -> String {
-        guard let date = date else { return LocalizedStringKey("--").stringValue }
+
+    static func businessRelativeString(from date: Date?, actor: String? = nil, context: String? = nil) -> String {
+        guard let date = date else {
+            let fallback = LocalizedStringKey("--").stringValue
+            DateUtilsAudit.record(
+                operation: "businessRelativeString",
+                date: nil,
+                value: fallback,
+                tags: ["businessRelative", "nil"],
+                actor: actor,
+                context: context
+            )
+            return fallback
+        }
         let calendar = self.calendar
         let now = Date()
-        // TODO: Add audit/event logging hook here.
         let days = calendar.dateComponents([.day], from: date, to: now).day ?? 0
         let weeks = days / Constants.daysInWeek
         let months = calendar.dateComponents([.month], from: date, to: now).month ?? 0
-        if days < 1 { return LocalizedStringKey("Today").stringValue }
-        if days == 1 { return LocalizedStringKey("Yesterday").stringValue }
-        if weeks < 1 { return String(format: NSLocalizedString("%d days ago", comment: "Relative days ago"), days) }
-        if weeks == 1 { return LocalizedStringKey("Last week").stringValue }
-        if months < 1 { return String(format: NSLocalizedString("%d weeks ago", comment: "Relative weeks ago"), weeks) }
-        if months == 1 { return LocalizedStringKey("Last month").stringValue }
-        return String(format: NSLocalizedString("%d months ago", comment: "Relative months ago"), months)
+        let result: String
+        if days < 1 { result = LocalizedStringKey("Today").stringValue }
+        else if days == 1 { result = LocalizedStringKey("Yesterday").stringValue }
+        else if weeks < 1 { result = String(format: NSLocalizedString("%d days ago", comment: "Relative days ago"), days) }
+        else if weeks == 1 { result = LocalizedStringKey("Last week").stringValue }
+        else if months < 1 { result = String(format: NSLocalizedString("%d weeks ago", comment: "Relative weeks ago"), weeks) }
+        else if months == 1 { result = LocalizedStringKey("Last month").stringValue }
+        else { result = String(format: NSLocalizedString("%d months ago", comment: "Relative months ago"), months) }
+        DateUtilsAudit.record(
+            operation: "businessRelativeString",
+            date: date,
+            value: result,
+            tags: ["businessRelative"],
+            actor: actor,
+            context: context
+        )
+        return result
     }
 
     // MARK: - Range & Math Utilities
 
-    /// Returns true if date is in the future.
-    /// - Parameter date: The date to check.
-    /// - Returns: Boolean indicating if date is in the future.
-    /// - Note: TODO - Add audit/event logging support.
-    static func isFuture(_ date: Date?) -> Bool {
-        guard let date = date else { return false }
-        // TODO: Add audit/event logging hook here.
-        return date > Date()
+    static func isFuture(_ date: Date?, actor: String? = nil, context: String? = nil) -> Bool {
+        let isFuture = date.map { $0 > Date() } ?? false
+        DateUtilsAudit.record(
+            operation: "isFuture",
+            date: date,
+            value: "\(isFuture)",
+            tags: ["check", "future"],
+            actor: actor,
+            context: context
+        )
+        return isFuture
     }
 
-    /// Returns true if date is today.
-    /// - Parameter date: The date to check.
-    /// - Returns: Boolean indicating if date is today.
-    /// - Note: TODO - Add audit/event logging support.
-    static func isToday(_ date: Date?) -> Bool {
-        guard let date = date else { return false }
-        // TODO: Add audit/event logging hook here.
-        return calendar.isDateInToday(date)
+    static func isToday(_ date: Date?, actor: String? = nil, context: String? = nil) -> Bool {
+        let isToday = date.map { calendar.isDateInToday($0) } ?? false
+        DateUtilsAudit.record(
+            operation: "isToday",
+            date: date,
+            value: "\(isToday)",
+            tags: ["check", "today"],
+            actor: actor,
+            context: context
+        )
+        return isToday
     }
 
-    /// Returns true if date is in the past.
-    /// - Parameter date: The date to check.
-    /// - Returns: Boolean indicating if date is in the past.
-    /// - Note: TODO - Add audit/event logging support.
-    static func isPast(_ date: Date?) -> Bool {
-        guard let date = date else { return false }
-        // TODO: Add audit/event logging hook here.
-        return date < Date()
+    static func isPast(_ date: Date?, actor: String? = nil, context: String? = nil) -> Bool {
+        let isPast = date.map { $0 < Date() } ?? false
+        DateUtilsAudit.record(
+            operation: "isPast",
+            date: date,
+            value: "\(isPast)",
+            tags: ["check", "past"],
+            actor: actor,
+            context: context
+        )
+        return isPast
     }
 
-    /// Returns the number of days between two dates.
-    /// - Parameters:
-    ///   - from: The start date.
-    ///   - to: The end date.
-    /// - Returns: Number of days between from and to.
-    /// - Note: TODO - Add audit/event logging support.
-    static func daysBetween(_ from: Date, _ to: Date) -> Int {
-        // TODO: Add audit/event logging hook here.
-        calendar.dateComponents([.day], from: from, to: to).day ?? 0
+    static func daysBetween(_ from: Date, _ to: Date, actor: String? = nil, context: String? = nil) -> Int {
+        let days = calendar.dateComponents([.day], from: from, to: to).day ?? 0
+        DateUtilsAudit.record(
+            operation: "daysBetween",
+            date: from,
+            date2: to,
+            value: "\(days)",
+            tags: ["range", "daysBetween"],
+            actor: actor,
+            context: context
+        )
+        return days
     }
 
-    /// Returns the start of the day for a given date.
-    /// - Parameter date: The date to evaluate.
-    /// - Returns: The date at the start of the day.
-    /// - Note: TODO - Add audit/event logging support.
-    static func startOfDay(_ date: Date) -> Date {
-        // TODO: Add audit/event logging hook here.
-        calendar.startOfDay(for: date)
-    }
-
-    /// Returns the end of the day for a given date.
-    /// - Parameter date: The date to evaluate.
-    /// - Returns: The date at the end of the day.
-    /// - Note: TODO - Add audit/event logging support.
-    static func endOfDay(_ date: Date) -> Date {
-        let calendar = self.calendar
+    static func startOfDay(_ date: Date, actor: String? = nil, context: String? = nil) -> Date {
         let start = calendar.startOfDay(for: date)
-        // TODO: Add audit/event logging hook here.
-        return calendar.date(byAdding: DateComponents(day: Constants.oneDayComponent, second: -Constants.oneSecondComponent), to: start) ?? date
+        DateUtilsAudit.record(
+            operation: "startOfDay",
+            date: date,
+            value: shortDate(start),
+            tags: ["boundary", "startOfDay"],
+            actor: actor,
+            context: context
+        )
+        return start
+    }
+
+    static func endOfDay(_ date: Date, actor: String? = nil, context: String? = nil) -> Date {
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.date(byAdding: DateComponents(day: Constants.oneDayComponent, second: -Constants.oneSecondComponent), to: start) ?? date
+        DateUtilsAudit.record(
+            operation: "endOfDay",
+            date: date,
+            value: shortDate(end),
+            tags: ["boundary", "endOfDay"],
+            actor: actor,
+            context: context
+        )
+        return end
     }
 
     // MARK: - Week & Month Helpers
 
-    /// Returns the first date of the month for a given date.
-    /// - Parameter date: The date to evaluate.
-    /// - Returns: The first date of the month.
-    /// - Note: TODO - Add audit/event logging support.
-    static func startOfMonth(_ date: Date) -> Date {
-        let calendar = self.calendar
+    static func startOfMonth(_ date: Date, actor: String? = nil, context: String? = nil) -> Date {
         let comps = calendar.dateComponents([.year, .month], from: date)
-        // TODO: Add audit/event logging hook here.
-        return calendar.date(from: comps) ?? date
+        let start = calendar.date(from: comps) ?? date
+        DateUtilsAudit.record(
+            operation: "startOfMonth",
+            date: date,
+            value: shortDate(start),
+            tags: ["boundary", "startOfMonth"],
+            actor: actor,
+            context: context
+        )
+        return start
     }
 
-    /// Returns the last date of the month for a given date.
-    /// - Parameter date: The date to evaluate.
-    /// - Returns: The last date of the month.
-    /// - Note: TODO - Add audit/event logging support.
-    static func endOfMonth(_ date: Date) -> Date {
-        let calendar = self.calendar
+    static func endOfMonth(_ date: Date, actor: String? = nil, context: String? = nil) -> Date {
         if let range = calendar.range(of: .day, in: .month, for: date),
            let start = calendar.date(from: calendar.dateComponents([.year, .month], from: date)) {
-            // TODO: Add audit/event logging hook here.
-            return calendar.date(byAdding: .day, value: range.count - Constants.oneDayComponent, to: start) ?? date
+            let end = calendar.date(byAdding: .day, value: range.count - Constants.oneDayComponent, to: start) ?? date
+            DateUtilsAudit.record(
+                operation: "endOfMonth",
+                date: date,
+                value: shortDate(end),
+                tags: ["boundary", "endOfMonth"],
+                actor: actor,
+                context: context
+            )
+            return end
         }
+        DateUtilsAudit.record(
+            operation: "endOfMonth",
+            date: date,
+            value: shortDate(date),
+            tags: ["boundary", "endOfMonth", "fail"],
+            actor: actor,
+            context: context
+        )
         return date
     }
 
-    /// Returns the start of the week (Sunday) for a given date.
-    /// - Parameter date: The date to evaluate.
-    /// - Returns: The start date of the week (Sunday).
-    /// - Note: TODO - Add audit/event logging support.
-    static func startOfWeek(_ date: Date) -> Date {
-        let calendar = self.calendar
+    static func startOfWeek(_ date: Date, actor: String? = nil, context: String? = nil) -> Date {
         let weekday = calendar.component(.weekday, from: date)
-        // TODO: Add audit/event logging hook here.
-        return calendar.date(byAdding: .day, value: -(weekday - Constants.oneDayComponent), to: startOfDay(date)) ?? date
+        let start = calendar.date(byAdding: .day, value: -(weekday - Constants.oneDayComponent), to: startOfDay(date)) ?? date
+        DateUtilsAudit.record(
+            operation: "startOfWeek",
+            date: date,
+            value: shortDate(start),
+            tags: ["boundary", "startOfWeek"],
+            actor: actor,
+            context: context
+        )
+        return start
     }
 
-    /// Returns the end of the week (Saturday) for a given date.
-    /// - Parameter date: The date to evaluate.
-    /// - Returns: The end date of the week (Saturday).
-    /// - Note: TODO - Add audit/event logging support.
-    static func endOfWeek(_ date: Date) -> Date {
-        let calendar = self.calendar
+    static func endOfWeek(_ date: Date, actor: String? = nil, context: String? = nil) -> Date {
         let weekday = calendar.component(.weekday, from: date)
-        // TODO: Add audit/event logging hook here.
-        return calendar.date(byAdding: .day, value: Constants.daysInWeek - weekday, to: startOfDay(date)) ?? date
+        let end = calendar.date(byAdding: .day, value: Constants.daysInWeek - weekday, to: startOfDay(date)) ?? date
+        DateUtilsAudit.record(
+            operation: "endOfWeek",
+            date: date,
+            value: shortDate(end),
+            tags: ["boundary", "endOfWeek"],
+            actor: actor,
+            context: context
+        )
+        return end
     }
 
     // MARK: - Birthday, Anniversary, Age
 
-    /// Returns age in years for a given birthday.
-    /// - Parameter birthday: The birth date.
-    /// - Returns: The age in years.
-    /// - Note: TODO - Add audit/event logging support.
-    static func age(from birthday: Date?) -> Int {
-        guard let birthday = birthday else { return 0 }
-        let calendar = self.calendar
-        // TODO: Add audit/event logging hook here.
+    static func age(from birthday: Date?, actor: String? = nil, context: String? = nil) -> Int {
+        guard let birthday = birthday else {
+            DateUtilsAudit.record(
+                operation: "age",
+                date: nil,
+                value: "0",
+                tags: ["age", "nil"],
+                actor: actor,
+                context: context
+            )
+            return 0
+        }
         let components = calendar.dateComponents([.year], from: birthday, to: Date())
-        return components.year ?? 0
+        let age = components.year ?? 0
+        DateUtilsAudit.record(
+            operation: "age",
+            date: birthday,
+            value: "\(age)",
+            tags: ["age"],
+            actor: actor,
+            context: context
+        )
+        return age
     }
-    
-    /// Returns true if today is the anniversary of a date (e.g., pet birthday, join date).
-    /// - Parameter date: The date to check.
-    /// - Returns: Boolean indicating if today is the anniversary.
-    /// - Note: TODO - Add audit/event logging support.
-    static func isAnniversary(_ date: Date?) -> Bool {
-        guard let date = date else { return false }
-        let calendar = self.calendar
+
+    static func isAnniversary(_ date: Date?, actor: String? = nil, context: String? = nil) -> Bool {
+        guard let date = date else {
+            DateUtilsAudit.record(
+                operation: "isAnniversary",
+                date: nil,
+                value: "false",
+                tags: ["anniversary", "nil"],
+                actor: actor,
+                context: context
+            )
+            return false
+        }
         let today = calendar.dateComponents([.month, .day], from: Date())
         let anniversary = calendar.dateComponents([.month, .day], from: date)
-        // TODO: Add audit/event logging hook here.
-        return today.month == anniversary.month && today.day == anniversary.day
+        let isAnniv = today.month == anniversary.month && today.day == anniversary.day
+        DateUtilsAudit.record(
+            operation: "isAnniversary",
+            date: date,
+            value: "\(isAnniv)",
+            tags: ["anniversary"],
+            actor: actor,
+            context: context
+        )
+        return isAnniv
     }
-    
+
     // MARK: - Business Week Helpers
-    
-    /// Returns all dates for a week, given a reference date (Sunday-Saturday).
-    /// - Parameter date: The reference date.
-    /// - Returns: Array of dates representing the week.
-    /// - Note: TODO - Add audit/event logging support.
-    static func daysOfWeek(for date: Date) -> [Date] {
+
+    static func daysOfWeek(for date: Date, actor: String? = nil, context: String? = nil) -> [Date] {
         let start = startOfWeek(date)
-        // TODO: Add audit/event logging hook here.
-        return (0..<Constants.daysInWeek).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+        let days = (0..<Constants.daysInWeek).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+        DateUtilsAudit.record(
+            operation: "daysOfWeek",
+            date: date,
+            value: "\(days.map { shortDate($0) })",
+            tags: ["week", "dates"],
+            actor: actor,
+            context: context
+        )
+        return days
     }
-    
-    /// Returns all dates for a month, given a reference date (full weeks for calendar grids).
-    /// - Parameter date: The reference date.
-    /// - Returns: Array of dates covering the full month grid.
-    /// - Note: TODO - Add audit/event logging support.
-    static func daysOfMonthGrid(for date: Date) -> [Date] {
+
+    static func daysOfMonthGrid(for date: Date, actor: String? = nil, context: String? = nil) -> [Date] {
         let start = startOfWeek(startOfMonth(date))
         let end = endOfWeek(endOfMonth(date))
         var dates: [Date] = []
         var current = start
-        // TODO: Add audit/event logging hook here.
         while current <= end {
             dates.append(current)
             current = calendar.date(byAdding: .day, value: Constants.oneDayComponent, to: current)!
         }
+        DateUtilsAudit.record(
+            operation: "daysOfMonthGrid",
+            date: date,
+            value: "\(dates.map { shortDate($0) })",
+            tags: ["monthGrid", "dates"],
+            actor: actor,
+            context: context
+        )
         return dates
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum DateUtilsAuditAdmin {
+    public static var lastSummary: String { DateUtilsAudit.accessibilitySummary }
+    public static var lastJSON: String? { DateUtilsAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        DateUtilsAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 
 // MARK: - LocalizedStringKey Extension
 
 private extension LocalizedStringKey {
-    /// Helper to convert LocalizedStringKey to String for internal usage.
-    /// Note: This is a workaround; in SwiftUI views, LocalizedStringKey should be used directly.
     var stringValue: String {
-        // This is a simplified placeholder implementation.
-        // In production, localization should be handled by SwiftUI views directly.
         Mirror(reflecting: self).children.first(where: { $0.label == "key" })?.value as? String ?? ""
     }
 }

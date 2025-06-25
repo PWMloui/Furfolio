@@ -2,126 +2,130 @@
 //  OnboardingProgressIndicator.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//  Updated for clarity, accessibility, and extensibility.
+//  Enhanced: Analytics/audit-ready, token-compliant, modular, accessible, testable, business/enterprise-ready.
 //
-
-/**
- OnboardingProgressIndicator.swift
-
- This file defines the onboarding progress indicator component, which visually represents the user's progression through the onboarding steps.
-
- Features:
- - Fully accessible with descriptive labels and values for assistive technologies.
- - Compliant with design tokens for colors and spacing.
- - Localized strings for all accessibility elements.
- - Prepared for audit and analytics integration with TODO placeholders for future logging of progress changes.
- - Handles edge cases gracefully to prevent UI breakage.
-*/
 
 import SwiftUI
 
-/// A visual step-based indicator for the onboarding flow.
-/// Displays capsules to represent each onboarding step and highlights the active one.
-///
-/// - Parameters:
-///   - currentStep: The zero-based index of the current onboarding step.
-///   - totalSteps: Total number of steps in the onboarding sequence.
-///   - onProgressChange: Optional closure called whenever currentStep changes.
-/// 
-/// Edge Case Handling:
-/// - If totalSteps is zero or negative, the view renders empty.
-/// - currentStep is clamped to valid range 0..<totalSteps to prevent UI issues.
-/// - Runtime assertions ensure parameters are valid during development.
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol ProgressAnalyticsLogger {
+    func log(event: String, currentStep: Int, totalSteps: Int)
+}
+public struct NullProgressAnalyticsLogger: ProgressAnalyticsLogger {
+    public init() {}
+    public func log(event: String, currentStep: Int, totalSteps: Int) {}
+}
+
+// MARK: - Main Indicator
+
 struct OnboardingProgressIndicator: View {
     let currentStep: Int
     let totalSteps: Int
     var onProgressChange: ((Int) -> Void)? = nil
+    let analyticsLogger: ProgressAnalyticsLogger
+    // Tokens (with safe fallback)
+    let accent: Color
+    let inactive: Color
+    let spacing: CGFloat
+    let widthActive: CGFloat
+    let widthInactive: CGFloat
+    let capsuleHeight: CGFloat
+    let paddingY: CGFloat
 
-    // Clamped current step to valid range, or zero if totalSteps <= 0
+    // MARK: - Dependency Injection for modular/test/preview
+    init(
+        currentStep: Int,
+        totalSteps: Int,
+        onProgressChange: ((Int) -> Void)? = nil,
+        analyticsLogger: ProgressAnalyticsLogger = NullProgressAnalyticsLogger(),
+        accent: Color = AppColors.accent ?? .accentColor,
+        inactive: Color = AppColors.inactive ?? .gray.opacity(0.3),
+        spacing: CGFloat = AppSpacing.medium ?? 8,
+        widthActive: CGFloat = 28,
+        widthInactive: CGFloat = 10,
+        capsuleHeight: CGFloat = 10,
+        paddingY: CGFloat = AppSpacing.medium ?? 8
+    ) {
+        self.currentStep = currentStep
+        self.totalSteps = totalSteps
+        self.onProgressChange = onProgressChange
+        self.analyticsLogger = analyticsLogger
+        self.accent = accent
+        self.inactive = inactive
+        self.spacing = spacing
+        self.widthActive = widthActive
+        self.widthInactive = widthInactive
+        self.capsuleHeight = capsuleHeight
+        self.paddingY = paddingY
+    }
+
+    // Defensive clamping for safe rendering
     private var safeCurrentStep: Int {
         guard totalSteps > 0 else { return 0 }
         return min(max(currentStep, 0), totalSteps - 1)
     }
 
-    init(currentStep: Int, totalSteps: Int, onProgressChange: ((Int) -> Void)? = nil) {
-        self.currentStep = currentStep
-        self.totalSteps = totalSteps
-        self.onProgressChange = onProgressChange
-
-        // Assert currentStep is within valid range for debug builds
-        assert(totalSteps >= 0, "totalSteps should not be negative")
-        if totalSteps > 0 {
-            assert((0..<totalSteps).contains(currentStep), "currentStep is out of valid range")
-        }
-    }
-
     var body: some View {
-        // If totalSteps is zero or negative, show empty view to prevent UI issues
         if totalSteps <= 0 {
             EmptyView()
         } else {
-            HStack(spacing: {
-                #if canImport(AppSpacing)
-                AppSpacing.medium
-                #else
-                8 // Fallback spacing if AppSpacing is missing
-                #endif
-            }()) {
+            HStack(spacing: spacing) {
                 ForEach(0..<totalSteps, id: \.self) { idx in
                     Capsule()
-                        .fill({
-                            #if canImport(AppColors)
-                            idx == safeCurrentStep ? AppColors.accent : AppColors.inactive.opacity(0.3)
-                            #else
-                            (idx == safeCurrentStep ? Color.accentColor : Color.gray.opacity(0.3))
-                            #endif
-                        }())
-                        .frame(width: idx == safeCurrentStep ? 28 : 10, height: 10)
-                        .accessibilityLabel(
-                            LocalizedStringKey("Step \(idx + 1) of \(totalSteps)")
-                        )
+                        .fill(idx == safeCurrentStep ? accent : inactive)
+                        .frame(width: idx == safeCurrentStep ? widthActive : widthInactive, height: capsuleHeight)
+                        .accessibilityElement()
+                        .accessibilityLabel(Text("Step \(idx + 1) of \(totalSteps)"))
                         .accessibilityValue(
                             idx == safeCurrentStep
-                            ? LocalizedStringKey("Current step")
-                            : LocalizedStringKey("Not current step")
+                            ? Text("Current step")
+                            : Text("Not current step")
                         )
+                        .accessibilityAddTraits(idx == safeCurrentStep ? .isSelected : [])
                 }
             }
-            .padding(.vertical, {
-                #if canImport(AppSpacing)
-                AppSpacing.medium
-                #else
-                8 // Fallback vertical padding if AppSpacing is missing
-                #endif
-            }())
+            .padding(.vertical, paddingY)
             .frame(maxWidth: .infinity)
             .animation(.easeInOut(duration: 0.25), value: safeCurrentStep)
-            .accessibilityElement(children: .combine)
-            .accessibilityHint(LocalizedStringKey("Indicates your progress through the onboarding steps."))
+            .accessibilityElement(children: .contain)
+            .accessibilityHint(Text("Indicates your progress through the onboarding steps."))
             .onChange(of: safeCurrentStep) { newValue in
                 onProgressChange?(newValue)
-                // TODO: Add analytics/audit logging for progress changes here
+                analyticsLogger.log(event: "progress_changed", currentStep: newValue, totalSteps: totalSteps)
             }
         }
     }
 }
 
-// MARK: - Preview
+// MARK: - Previews
 
 #Preview {
-    Group {
+    struct SpyLogger: ProgressAnalyticsLogger {
+        func log(event: String, currentStep: Int, totalSteps: Int) {
+            print("Analytics: \(event), Step: \(currentStep + 1)/\(totalSteps)")
+        }
+    }
+    return Group {
         VStack {
-            OnboardingProgressIndicator(currentStep: 2, totalSteps: 5)
-                .padding()
+            OnboardingProgressIndicator(
+                currentStep: 2,
+                totalSteps: 5,
+                analyticsLogger: SpyLogger()
+            )
+            .padding()
             Text("Example step content goes here.")
                 .padding(.bottom, 40)
         }
         .previewDisplayName("Light Mode")
 
         VStack {
-            OnboardingProgressIndicator(currentStep: 2, totalSteps: 5)
-                .padding()
+            OnboardingProgressIndicator(
+                currentStep: 2,
+                totalSteps: 5,
+                analyticsLogger: SpyLogger()
+            )
+            .padding()
             Text("Example step content goes here.")
                 .padding(.bottom, 40)
         }
@@ -129,8 +133,12 @@ struct OnboardingProgressIndicator: View {
         .previewDisplayName("Dark Mode")
 
         VStack {
-            OnboardingProgressIndicator(currentStep: 2, totalSteps: 5)
-                .padding()
+            OnboardingProgressIndicator(
+                currentStep: 2,
+                totalSteps: 5,
+                analyticsLogger: SpyLogger()
+            )
+            .padding()
             Text("Example step content goes here.")
                 .padding(.bottom, 40)
         }
@@ -138,16 +146,24 @@ struct OnboardingProgressIndicator: View {
         .previewDisplayName("Accessibility Extra Large Font")
 
         VStack {
-            OnboardingProgressIndicator(currentStep: 0, totalSteps: 0)
-                .padding()
+            OnboardingProgressIndicator(
+                currentStep: 0,
+                totalSteps: 0,
+                analyticsLogger: SpyLogger()
+            )
+            .padding()
             Text("No steps to display (totalSteps = 0).")
                 .padding(.bottom, 40)
         }
         .previewDisplayName("Zero Steps")
 
         VStack {
-            OnboardingProgressIndicator(currentStep: 10, totalSteps: 5)
-                .padding()
+            OnboardingProgressIndicator(
+                currentStep: 10,
+                totalSteps: 5,
+                analyticsLogger: SpyLogger()
+            )
+            .padding()
             Text("currentStep out of bounds (clamped to valid range).")
                 .padding(.bottom, 40)
         }

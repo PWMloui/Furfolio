@@ -2,10 +2,22 @@
 //  WhatsNewView.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
+//  Enhanced: Analytics/audit-ready, token-compliant, modular, preview/test-injectable, accessible, and enterprise-ready.
 //
 
 import SwiftUI
+
+// MARK: - Analytics/Audit Logger Protocol
+
+public protocol WhatsNewAnalyticsLogger {
+    func log(event: String, feature: String?)
+}
+public struct NullWhatsNewAnalyticsLogger: WhatsNewAnalyticsLogger {
+    public init() {}
+    public func log(event: String, feature: String?) {}
+}
+
+// MARK: - Data Model
 
 /// A data model representing a single new feature to be displayed.
 struct NewFeature: Identifiable {
@@ -15,75 +27,138 @@ struct NewFeature: Identifiable {
     let description: LocalizedStringKey
 }
 
-/// A view that is presented once after an app update to highlight new features.
-/// It is designed to be shown as a sheet or full-screen cover.
+// MARK: - Main WhatsNewView
+
 struct WhatsNewView: View {
     @Environment(\.dismiss) private var dismiss
 
-    /// The list of new features for the current update. This would typically be populated
-    /// from a remote config or a local JSON file to be easily updatable.
-    let features: [NewFeature] = [
-        NewFeature(
-            imageName: "person.crop.circle.badge.plus",
-            title: LocalizedStringKey("Staff Management"),
-            description: LocalizedStringKey("You can now add team members, assign roles, and track performance.")
+    /// The list of new features for the current update.
+    let features: [NewFeature]
+    let analyticsLogger: WhatsNewAnalyticsLogger
+
+    // Tokens (with fallback)
+    let accentGradient: LinearGradient
+    let background: Color
+    let primary: Color
+    let secondary: Color
+    let textSecondary: Color
+    let spacingXS: CGFloat
+    let spacingM: CGFloat
+    let spacingL: CGFloat
+    let fontLargeTitle: Font
+    let fontTitle: Font
+    let fontHeadline: Font
+    let fontBody: Font
+    let fontCaption: Font
+    let fontButton: Font
+
+    // MARK: - DI Init (prod, preview, or test)
+    init(
+        features: [NewFeature] = [
+            NewFeature(
+                imageName: "person.crop.circle.badge.plus",
+                title: LocalizedStringKey("Staff Management"),
+                description: LocalizedStringKey("You can now add team members, assign roles, and track performance.")
+            ),
+            NewFeature(
+                imageName: "shippingbox.fill",
+                title: LocalizedStringKey("Inventory Tracking"),
+                description: LocalizedStringKey("Track your product stock levels and get alerts when supplies are low.")
+            ),
+            NewFeature(
+                imageName: "map.fill",
+                title: LocalizedStringKey("Route Optimization"),
+                description: LocalizedStringKey("For mobile groomers, automatically plan the most efficient route for your day's appointments.")
+            )
+        ],
+        analyticsLogger: WhatsNewAnalyticsLogger = NullWhatsNewAnalyticsLogger(),
+        accentGradient: LinearGradient = LinearGradient(
+            colors: [AppTheme.Colors.purple, AppTheme.Colors.blue],
+            startPoint: .topLeading, endPoint: .bottomTrailing
         ),
-        NewFeature(
-            imageName: "shippingbox.fill",
-            title: LocalizedStringKey("Inventory Tracking"),
-            description: LocalizedStringKey("Track your product stock levels and get alerts when supplies are low.")
-        ),
-        NewFeature(
-            imageName: "map.fill",
-            title: LocalizedStringKey("Route Optimization"),
-            description: LocalizedStringKey("For mobile groomers, automatically plan the most efficient route for your day's appointments.")
-        )
-    ]
+        background: Color = AppTheme.Colors.background,
+        primary: Color = AppTheme.Colors.primary,
+        secondary: Color = AppTheme.Colors.secondary,
+        textSecondary: Color = AppTheme.Colors.textSecondary,
+        spacingXS: CGFloat = AppTheme.Spacing.xs,
+        spacingM: CGFloat = AppTheme.Spacing.medium,
+        spacingL: CGFloat = AppTheme.Spacing.large,
+        fontLargeTitle: Font = AppTheme.Fonts.largeTitle,
+        fontTitle: Font = AppTheme.Fonts.title,
+        fontHeadline: Font = AppTheme.Fonts.headline,
+        fontBody: Font = AppTheme.Fonts.body,
+        fontCaption: Font = AppTheme.Fonts.caption,
+        fontButton: Font = AppTheme.Fonts.button
+    ) {
+        self.features = features
+        self.analyticsLogger = analyticsLogger
+        self.accentGradient = accentGradient
+        self.background = background
+        self.primary = primary
+        self.secondary = secondary
+        self.textSecondary = textSecondary
+        self.spacingXS = spacingXS
+        self.spacingM = spacingM
+        self.spacingL = spacingL
+        self.fontLargeTitle = fontLargeTitle
+        self.fontTitle = fontTitle
+        self.fontHeadline = fontHeadline
+        self.fontBody = fontBody
+        self.fontCaption = fontCaption
+        self.fontButton = fontButton
+    }
 
     var body: some View {
-        VStack(spacing: AppTheme.Spacing.none) {
+        VStack(spacing: 0) {
             // MARK: - Header
-            VStack(spacing: AppTheme.Spacing.medium) {
+            VStack(spacing: spacingM) {
                 Image(systemName: "sparkles")
-                    .font(AppTheme.Fonts.largeTitle) // TODO: Confirm largeTitle matches 48pt bold
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [AppTheme.Colors.purple, AppTheme.Colors.blue],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .font(fontLargeTitle)
+                    .foregroundStyle(accentGradient)
                     .accessibilityLabel(LocalizedStringKey("Sparkles icon"))
                     .accessibilityHint(LocalizedStringKey("Indicates new features"))
 
                 Text(LocalizedStringKey("What's New in Furfolio"))
-                    .font(AppTheme.Fonts.title)
+                    .font(fontTitle)
                     .accessibilityAddTraits(.isHeader)
 
                 Text(LocalizedStringKey("Here are the latest features we've added to help you grow your business."))
-                    .font(AppTheme.Fonts.body)
-                    .foregroundStyle(AppTheme.Colors.textSecondary)
+                    .font(fontBody)
+                    .foregroundStyle(textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
             }
-            .padding(.vertical, AppTheme.Spacing.large)
+            .padding(.vertical, spacingL)
 
             // MARK: - Feature List
             ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.large) {
+                VStack(alignment: .leading, spacing: spacingL) {
                     ForEach(features) { feature in
-                        NewFeatureRowView(feature: feature)
+                        NewFeatureRowView(
+                            feature: feature,
+                            primary: primary,
+                            textSecondary: textSecondary,
+                            spacingM: spacingM,
+                            spacingXS: spacingXS,
+                            fontHeadline: fontHeadline,
+                            fontCaption: fontCaption,
+                            analyticsLogger: analyticsLogger
+                        )
+                        .onAppear {
+                            analyticsLogger.log(event: "feature_view", feature: String(localized: feature.title))
+                        }
                     }
                 }
-                .padding()
+                .padding(.horizontal)
             }
 
             // MARK: - Continue Button
             Button(action: {
+                analyticsLogger.log(event: "continue_tap", feature: nil)
                 dismiss()
             }) {
                 Text(LocalizedStringKey("Continue"))
-                    .font(AppTheme.Fonts.button)
+                    .font(fontButton)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -91,27 +166,40 @@ struct WhatsNewView: View {
             .accessibilityLabel(LocalizedStringKey("Continue"))
             .accessibilityHint(LocalizedStringKey("Dismiss this screen and continue to the app"))
         }
-        .background(AppTheme.Colors.background.ignoresSafeArea())
+        .background(background.ignoresSafeArea())
+        .accessibilityElement(children: .contain)
+        .onAppear {
+            analyticsLogger.log(event: "whats_new_appear", feature: nil)
+        }
     }
 }
 
 /// A private subview to display a single feature row.
 private struct NewFeatureRowView: View {
     let feature: NewFeature
+    let primary: Color
+    let textSecondary: Color
+    let spacingM: CGFloat
+    let spacingXS: CGFloat
+    let fontHeadline: Font
+    let fontCaption: Font
+    let analyticsLogger: WhatsNewAnalyticsLogger
 
     var body: some View {
-        HStack(spacing: AppTheme.Spacing.medium) {
+        HStack(spacing: spacingM) {
             Image(systemName: feature.imageName)
-                .font(AppTheme.Fonts.title)
-                .foregroundStyle(AppTheme.Colors.primary)
+                .font(fontHeadline)
+                .foregroundStyle(primary)
                 .frame(width: 44)
+                .accessibilityLabel(feature.title)
+                .accessibilityHint(feature.description)
 
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            VStack(alignment: .leading, spacing: spacingXS) {
                 Text(feature.title)
-                    .font(AppTheme.Fonts.headline)
+                    .font(fontHeadline)
                 Text(feature.description)
-                    .font(AppTheme.Fonts.caption)
-                    .foregroundStyle(AppTheme.Colors.textSecondary)
+                    .font(fontCaption)
+                    .foregroundStyle(textSecondary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -119,17 +207,23 @@ private struct NewFeatureRowView: View {
 }
 
 // MARK: - Preview
+
 #Preview {
-    Group {
-        WhatsNewView()
+    struct SpyLogger: WhatsNewAnalyticsLogger {
+        func log(event: String, feature: String?) {
+            print("Analytics Event: \(event), Feature: \(feature ?? "-")")
+        }
+    }
+    return Group {
+        WhatsNewView(analyticsLogger: SpyLogger())
             .previewDisplayName("Light Mode")
             .environment(\.colorScheme, .light)
 
-        WhatsNewView()
+        WhatsNewView(analyticsLogger: SpyLogger())
             .previewDisplayName("Dark Mode")
             .environment(\.colorScheme, .dark)
 
-        WhatsNewView()
+        WhatsNewView(analyticsLogger: SpyLogger())
             .previewDisplayName("Accessibility Large Text")
             .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
     }

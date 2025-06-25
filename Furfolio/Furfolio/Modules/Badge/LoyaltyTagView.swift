@@ -2,16 +2,57 @@
 //  LoyaltyTagView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular Loyalty Badge View
 //
-
-// MARK: - LoyaltyTagView (Tokenized, Modular, Auditable Loyalty Badge View)
 
 import SwiftUI
 
-/// A modular, tokenized, and auditable view for displaying loyalty badges based on a client's visit and spending history.
-/// This view uses design tokens for colors, fonts, spacing, and shadows to ensure consistency and maintainability.
-/// Customize thresholds and tags as needed.
+// MARK: - Audit/Event Logging
+
+fileprivate struct LoyaltyTagAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String      // "appear"
+    let badgeType: String
+    let context: String
+    let tags: [String]
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[Appear] \(badgeType) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class LoyaltyTagAudit {
+    static private(set) var log: [LoyaltyTagAuditEvent] = []
+
+    static func record(
+        badgeType: String,
+        context: String,
+        tags: [String] = []
+    ) {
+        let event = LoyaltyTagAuditEvent(
+            timestamp: Date(),
+            operation: "appear",
+            badgeType: badgeType,
+            context: context,
+            tags: tags
+        )
+        log.append(event)
+        if log.count > 200 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No loyalty tag audit events recorded."
+    }
+}
+
+// MARK: - LoyaltyTagView (Tokenized, Modular, Auditable Loyalty Badge View)
+
 struct LoyaltyTagView: View {
     /// Number of completed visits
     let visitCount: Int
@@ -32,31 +73,53 @@ struct LoyaltyTagView: View {
             if isLoyalty || visitCount >= loyaltyThreshold {
                 TagLabel(text: "Loyalty Star", icon: "star.fill", color: AppColors.loyalty)
                     .accessibilityLabel("Loyalty Star Tag")
-                    // Accessibility role: static text representing a loyalty badge
                     .accessibilityAddTraits(.isStaticText)
+                    .onAppear {
+                        LoyaltyTagAudit.record(
+                            badgeType: "Loyalty Star",
+                            context: "LoyaltyTagView",
+                            tags: ["loyalty", "star"]
+                        )
+                    }
             }
             if visitCount >= vipThreshold {
                 TagLabel(text: "VIP", icon: "crown.fill", color: AppColors.vip)
                     .accessibilityLabel("VIP Client Tag")
-                    // Accessibility role: static text representing VIP status
                     .accessibilityAddTraits(.isStaticText)
+                    .onAppear {
+                        LoyaltyTagAudit.record(
+                            badgeType: "VIP",
+                            context: "LoyaltyTagView",
+                            tags: ["vip"]
+                        )
+                    }
             }
             if isTopSpender {
                 TagLabel(text: "Top Spender", icon: "dollarsign.circle.fill", color: AppColors.topSpender)
                     .accessibilityLabel("Top Spender Tag")
-                    // Accessibility role: static text representing top spender badge
                     .accessibilityAddTraits(.isStaticText)
+                    .onAppear {
+                        LoyaltyTagAudit.record(
+                            badgeType: "Top Spender",
+                            context: "LoyaltyTagView",
+                            tags: ["topSpender"]
+                        )
+                    }
             }
             if visitCount < newClientThreshold {
                 TagLabel(text: "New Client", icon: "sparkles", color: AppColors.newClient)
                     .accessibilityLabel("New Client Tag")
-                    // Accessibility role: static text representing new client badge
                     .accessibilityAddTraits(.isStaticText)
+                    .onAppear {
+                        LoyaltyTagAudit.record(
+                            badgeType: "New Client",
+                            context: "LoyaltyTagView",
+                            tags: ["newClient"]
+                        )
+                    }
             }
-            // Additional custom tags can be added here.
         }
         .padding(.vertical, 6)
-        // Group all tags as a single accessibility element for better screen reader experience
         .accessibilityElement(children: .contain)
     }
 
@@ -69,24 +132,28 @@ struct LoyaltyTagView: View {
         var body: some View {
             Label {
                 Text(text)
-                    // Use app's caption font token for consistency
                     .font(AppFonts.caption)
-                    // Use app's primary text color token for maintainability
                     .foregroundColor(AppColors.textPrimary)
             } icon: {
                 Image(systemName: icon)
-                    // Use the passed color token for icon color
                     .foregroundColor(color)
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 14)
-            // Use app's secondary background color token for consistent backgrounds
             .background(AppColors.backgroundSecondary)
-            // Use app's medium border radius token for consistent corner rounding
             .cornerRadius(BorderRadius.medium)
-            // Use app's small shadow token with opacity for consistent shadows
             .shadow(color: color.opacity(0.3), radius: AppShadows.small.radius, x: 0, y: AppShadows.small.y)
         }
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum LoyaltyTagAuditAdmin {
+    public static var lastSummary: String { LoyaltyTagAudit.accessibilitySummary }
+    public static var lastJSON: String? { LoyaltyTagAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        LoyaltyTagAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
 
@@ -100,6 +167,5 @@ struct LoyaltyTagView: View {
         LoyaltyTagView(visitCount: 8, totalSpent: 200, isLoyalty: false, isTopSpender: false)
     }
     .padding()
-    // Use app's background color token for consistent background styling
     .background(AppColors.background)
 }

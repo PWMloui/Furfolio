@@ -2,95 +2,160 @@
 //  ChargeListViewModel.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
+//  Enhanced 2025: Auditable, Tokenized, Modular Charge List ViewModel
 //
 
 import Foundation
 import Combine
 
+// MARK: - Audit/Event Logging
+
+fileprivate struct ChargeListViewModelAuditEvent: Codable {
+    let timestamp: Date
+    let operation: String      // "fetch", "search", "delete"
+    let chargeID: UUID?
+    let type: String?
+    let amount: Double?
+    let searchText: String?
+    let tags: [String]
+    let detail: String?
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        var parts = [operation.capitalized]
+        if let t = type { parts.append("Type: \(t)") }
+        if let a = amount { parts.append("Amount: $\(String(format: "%.2f", a))") }
+        if let s = searchText, !s.isEmpty { parts.append("Search: \(s)") }
+        if let id = chargeID { parts.append("ID: \(id.uuidString.prefix(8))") }
+        if !tags.isEmpty { parts.append("[\(tags.joined(separator: ","))]") }
+        parts.append("at \(dateStr)")
+        if let d = detail, !d.isEmpty { parts.append(": \(d)") }
+        return parts.joined(separator: " ")
+    }
+}
+
+fileprivate final class ChargeListViewModelAudit {
+    static private(set) var log: [ChargeListViewModelAuditEvent] = []
+
+    static func record(
+        operation: String,
+        charge: Charge? = nil,
+        searchText: String? = nil,
+        tags: [String] = [],
+        detail: String? = nil
+    ) {
+        let event = ChargeListViewModelAuditEvent(
+            timestamp: Date(),
+            operation: operation,
+            chargeID: charge?.id,
+            type: charge?.type.displayName,
+            amount: charge?.amount,
+            searchText: searchText,
+            tags: tags,
+            detail: detail
+        )
+        log.append(event)
+        if log.count > 150 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No charge list events recorded."
+    }
+}
+
 // MARK: - ChargeListViewModel (Modular, Tokenized, Auditable Charge List ViewModel)
 
-/// ViewModel responsible for managing the list of charges in a reactive manner.
-/// Supports modular, tokenized business logic, audit trails, filtering capabilities,
-/// and seamless UI binding. Designed to facilitate owner-focused workflows and analytics,
-/// ensuring that all data interactions are traceable and maintainable.
 @MainActor
 final class ChargeListViewModel: ObservableObject {
-    /// The complete list of charges fetched from the data store.
-    /// Published for UI binding and audit trail tracking of data state changes.
     @Published var charges: [Charge] = []
-    
-    /// Indicates whether the ViewModel is currently loading data.
-    /// Useful for UI loading indicators and analytics on data fetch performance.
     @Published var isLoading = false
-    
-    /// The current search text used to filter charges.
-    /// Changes to this property trigger reactive filtering and are tracked for audit and analytics.
-    @Published var searchText = ""
-    
-    // Injected dependency for testability and modularity.
+    @Published var searchText = "" {
+        didSet {
+            if oldValue != searchText {
+                ChargeListViewModelAudit.record(
+                    operation: "search",
+                    searchText: searchText,
+                    tags: ["search"],
+                    detail: "User searched"
+                )
+            }
+        }
+    }
+
     private let dataStore: DataStoreService
-    
-    // Store Combine cancellables to manage subscriptions and memory.
     private var cancellables = Set<AnyCancellable>()
-    
-    /// Computed property that returns charges filtered by the current search text
-    /// and sorted by date descending. This supports audit-relevant filtering and
-    /// ensures the UI reflects the current query state reactively.
+
     var filteredCharges: [Charge] {
         if searchText.isEmpty {
-            // Return all charges sorted by most recent date
             return charges.sorted { $0.date > $1.date }
         } else {
-            // Filter charges by type display name matching search text, then sort by date
             return charges
                 .filter { $0.type.displayName.localizedCaseInsensitiveContains(searchText) }
                 .sorted { $0.date > $1.date }
         }
     }
-    
-    /// Initializes the ViewModel with an optional injected data store dependency.
-    /// Sets up reactive Combine pipeline to debounce and remove duplicate search text inputs,
-    /// supporting modular reactive search filtering and auditability.
-    /// - Parameter dataStore: The data store service to fetch and manage charges.
+
     init(dataStore: DataStoreService = .shared) {
         self.dataStore = dataStore
-        
-        // Reactive pipeline: debounce and remove duplicates from searchText to optimize filtering
+
+        // Debounced reactive search audit (Combine pipeline)
         $searchText
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .removeDuplicates()
-            .assign(to: \.searchText, on: self) // Corrected assignment key path
+            .sink { [weak self] text in
+                guard let self else { return }
+                if !text.isEmpty {
+                    ChargeListViewModelAudit.record(
+                        operation: "search",
+                        searchText: text,
+                        tags: ["search", "debounced"],
+                        detail: "Debounced search"
+                    )
+                }
+            }
             .store(in: &cancellables)
     }
-    
-    /// Asynchronously fetches all charges from the data store.
-    /// Updates the loading state and charges list accordingly.
-    /// This method supports audit logging of fetch operations and ensures UI updates occur on the main thread.
+
+    /// Fetches all charges from the data store, with audit logging.
     func fetchCharges() async {
-        isLoading = true // Signal UI to show loading state
-        
-        // Fetch all charges asynchronously from the data store
+        isLoading = true
         charges = await dataStore.fetchAll(Charge.self)
-        
-        isLoading = false // Signal UI to hide loading state
+        isLoading = false
+        ChargeListViewModelAudit.record(
+            operation: "fetch",
+            tags: ["fetch"],
+            detail: "Fetched \(charges.count) charges"
+        )
     }
-    
-    /// Deletes charges at the specified offsets from the filtered charges list.
-    /// Performs deletion asynchronously with audit trail support and refreshes the charges list upon completion.
-    /// - Parameter offsets: The set of indices representing charges to delete.
+
+    /// Deletes charges at offsets from the filtered charges list, with audit trail.
     func deleteCharge(at offsets: IndexSet) {
-        // Map offsets to actual charges in the filtered list to maintain consistent UI state
         let chargesToDelete = offsets.map { filteredCharges[$0] }
-        
         for charge in chargesToDelete {
             Task {
-                // Perform asynchronous deletion with audit logging in data store
                 await dataStore.delete(charge)
-                
-                // Refresh charges list after deletion to update UI reactively
+                ChargeListViewModelAudit.record(
+                    operation: "delete",
+                    charge: charge,
+                    tags: ["delete"],
+                    detail: "Charge deleted"
+                )
                 await fetchCharges()
             }
         }
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum ChargeListViewModelAuditAdmin {
+    public static var lastSummary: String { ChargeListViewModelAudit.accessibilitySummary }
+    public static var lastJSON: String? { ChargeListViewModelAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        ChargeListViewModelAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }

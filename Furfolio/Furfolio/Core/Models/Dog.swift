@@ -3,7 +3,7 @@
 //  Furfolio
 //
 //  Created by mac on 6/19/25.
-//  Updated & enhanced for architectural unification, business intelligence, and UX.
+//  Updated & enhanced for business intelligence, modularity, accessibility, and export.
 //  Author: senpai + ChatGPT
 //
 
@@ -11,109 +11,178 @@ import Foundation
 import SwiftData
 import SwiftUI
 
-// MARK: - Dog (Modular, Tokenized, Auditable Business Pet Entity)
-
-/// Represents a modular, auditable, tokenized pet entity (dog) in the Furfolio system.
-/// This class supports comprehensive business analytics, compliance auditing, badge/status logic,
-/// and seamless UI integration including badges, icons, and color coding.
-/// Designed to unify pet data for workflows, reporting, and user experience enhancements.
 @Model
 final class Dog: Identifiable, ObservableObject {
     // MARK: - Core Properties
 
-    /// Unique identifier for audit trails, data integrity, and tokenization across systems.
     @Attribute(.unique)
-    @Published
-    var id: UUID
+    @Published var id: UUID
 
-    /// Dog's name, used in UI display, search, and business workflows.
     @Attribute(.required)
-    @Published
-    var name: String
+    @Published var name: String
 
-    /// Optional breed information for analytics, breed-specific care recommendations, and UI badges.
-    @Published
-    var breed: String?
-
-    /// Birthdate used for age calculation, birthday badges, and lifecycle analytics.
-    @Published
-    var birthdate: Date?
-
-    /// Color attribute supports UI customization and breed/color-based analytics.
-    @Published
-    var color: String?
-
-    /// Gender information for demographic analytics and personalized care workflows.
-    @Published
-    var gender: String?
-
-    /// Notes field for freeform audit comments, behavior observations, or medical details.
-    @Published
-    var notes: String?
-
-    /// Active status flag used in business logic, UI status indicators, and retention analysis.
-    @Published
-    var isActive: Bool
+    @Published var breed: String?
+    @Published var birthdate: Date?
+    @Published var color: String?
+    @Published var gender: String?
+    @Published var notes: String?
+    @Published var isActive: Bool
 
     // MARK: - Relationships
 
-    /// The owner this dog belongs to.
-    /// Business and analytics intent: link pet to client profiles for billing, communication, and loyalty tracking.
     @Relationship(deleteRule: .nullify, inverse: \DogOwner.dogs)
-    @Published
-    var owner: DogOwner?
+    @Published var owner: DogOwner?
 
-    /// All appointments for this dog.
-    /// Used for scheduling workflows, service analytics, and tracking visit history.
     @Relationship(deleteRule: .cascade, inverse: \Appointment.dog)
-    @Published
-    var appointments: [Appointment]
+    @Published var appointments: [Appointment]
 
-    /// All charges associated with this dog.
-    /// Supports billing workflows, revenue analytics, and financial auditing.
     @Relationship(deleteRule: .nullify, inverse: \Charge.dog)
-    @Published
-    var charges: [Charge]
+    @Published var charges: [Charge]
 
-    /// Vaccination records for this dog.
-    /// Critical for compliance auditing, health analytics, and vaccination reminders.
     @Relationship(deleteRule: .cascade)
-    @Published
-    var vaccinationRecords: [VaccinationRecord]
+    @Published var vaccinationRecords: [VaccinationRecord]
 
-    /// Behavior logs for this dog.
-    /// Used for behavioral analytics, risk assessment, and personalized care planning.
     @Relationship(deleteRule: .cascade)
-    @Published
-    var behaviorLogs: [BehaviorLog]
+    @Published var behaviorLogs: [BehaviorLog]
 
-    /// Pet gallery: list of images (as Data).
-    /// Supports UI display, marketing, and engagement analytics.
-    @Published
-    var imageGallery: [Data]
-
-    /// Tags (behavioral, medical, UX/analytics, etc.)
-    /// Used extensively for badge displays, filtering, segmentation, and analytics.
-    @Published
-    var tags: [String]
+    @Published var imageGallery: [Data]
+    @Published var tags: [String]
 
     // MARK: - Metadata & Audit
 
-    /// Date the dog was added to the system.
-    /// Used for lifecycle analytics, retention tracking, and auditing.
-    @Published
-    var dateAdded: Date
+    @Published var dateAdded: Date
+    @Published var lastModified: Date
+    @Published var lastModifiedBy: String?
 
-    /// Timestamp of the last modification for audit trails and sync operations.
-    @Published
-    var lastModified: Date
+    // MARK: - Tag Tokenization
 
-    // MARK: - Security / Auditing
+    enum BusinessTag: String, CaseIterable, Codable {
+        case loyal, aggressive, overdueVaccination, senior, puppy, birthdayThisMonth, specialNeeds, frequent, firstVisit
+    }
 
-    /// For audit logs, tracks the last user or role who modified this record.
-    /// Enables multi-user accountability and compliance reporting.
-    @Published
-    var lastModifiedBy: String? // (e.g., "Owner", "Assistant", or user ID)
+    var businessTags: [BusinessTag] {
+        tags.compactMap { BusinessTag(rawValue: $0) }
+    }
+
+    func addTag(_ tag: BusinessTag) {
+        if !tags.contains(tag.rawValue) { tags.append(tag.rawValue) }
+    }
+    func removeTag(_ tag: BusinessTag) {
+        tags.removeAll { $0 == tag.rawValue }
+    }
+    func hasTag(_ tag: BusinessTag) -> Bool {
+        tags.contains(tag.rawValue)
+    }
+
+    // MARK: - Business Intelligence
+
+    /// Calculate dog's age in years (rounded down)
+    var age: Int? {
+        guard let birthdate else { return nil }
+        return Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year
+    }
+
+    /// Calculate dog's lifetime value (LTV) based on charges
+    var lifetimeValue: Double {
+        charges.reduce(0) { $0 + ($1.amount ?? 0) }
+    }
+
+    /// Average appointment frequency in months
+    var appointmentFrequencyMonths: Double? {
+        guard appointments.count > 1 else { return nil }
+        let sorted = appointments.compactMap { $0.date }.sorted()
+        guard let first = sorted.first, let last = sorted.last, last > first else { return nil }
+        let months = Double(Calendar.current.dateComponents([.month], from: first, to: last).month ?? 0)
+        return months / Double(sorted.count - 1)
+    }
+
+    /// Loyalty score (simple heuristic for demo)
+    var loyaltyScore: Double {
+        var score = 0.0
+        if hasTag(.loyal) { score += 1 }
+        if let freq = appointmentFrequencyMonths, freq < 2.0 { score += 1 }
+        if lifetimeValue > 500 { score += 1 }
+        return score
+    }
+
+    // MARK: - Status & UI Convenience
+
+    var thumbnailImage: Image? {
+        guard let data = imageGallery.first, let uiImage = UIImage(data: data) else { return nil }
+        return Image(uiImage: uiImage)
+    }
+
+    var isBirthdayMonth: Bool {
+        guard let birthdate else { return false }
+        return Calendar.current.component(.month, from: birthdate) == Calendar.current.component(.month, from: Date())
+    }
+
+    var tagSummary: String {
+        tags.joined(separator: ", ")
+    }
+
+    var isOverdueForVaccination: Bool {
+        vaccinationRecords.contains { $0.isOverdue }
+    }
+
+    var hasRecentAggression: Bool {
+        behaviorLogs.suffix(3).contains { $0.isAggressive }
+    }
+
+    var statusLabel: String {
+        isActive ? (tags.first ?? "Active") : "Inactive"
+    }
+
+    // MARK: - Audit & Accessibility
+
+    var auditSummary: String {
+        "Last edited by \(lastModifiedBy ?? "unknown") on \(lastModified.formatted(.dateTime.month().day().year()))"
+    }
+
+    var accessibilityLabel: String {
+        "Dog profile for \(name). \(isActive ? "Active." : "Inactive.") Age: \(age.map { String($0) } ?? "Unknown"). Breed: \(breed ?? "Unknown"). Loyalty score: \(loyaltyScore)."
+    }
+
+    // MARK: - Data Export
+
+    func exportJSON() -> String? {
+        struct DogExport: Codable {
+            let id: UUID
+            let name: String
+            let breed: String?
+            let age: Int?
+            let color: String?
+            let gender: String?
+            let tags: [String]
+            let isActive: Bool
+            let dateAdded: Date
+            let lastModified: Date
+        }
+        let export = DogExport(
+            id: id, name: name, breed: breed, age: age, color: color, gender: gender,
+            tags: tags, isActive: isActive, dateAdded: dateAdded, lastModified: lastModified
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        if let data = try? encoder.encode(export) {
+            return String(data: data, encoding: .utf8)
+        }
+        return nil
+    }
+
+    // MARK: - Snapshot for History/Undo
+
+    struct Snapshot: Codable {
+        let date: Date
+        let name: String
+        let breed: String?
+        let color: String?
+        let isActive: Bool
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(date: lastModified, name: name, breed: breed, color: color, isActive: isActive)
+    }
 
     // MARK: - Initialization
 
@@ -157,55 +226,8 @@ final class Dog: Identifiable, ObservableObject {
         self.lastModifiedBy = lastModifiedBy
     }
 
-    // MARK: - Computed Properties
+    // MARK: - Profile Description
 
-    /// Calculate dog's age in years (rounded down).
-    /// Used for lifecycle analytics, UI age display, and care planning workflows.
-    var age: Int? {
-        guard let birthdate else { return nil }
-        return Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year
-    }
-
-    /// Get the first image (thumbnail) as SwiftUI Image, if available.
-    /// Supports UI thumbnails, galleries, and marketing visuals.
-    var thumbnailImage: Image? {
-        guard let data = imageGallery.first, let uiImage = UIImage(data: data) else { return nil }
-        return Image(uiImage: uiImage)
-    }
-
-    /// Returns true if the dog's birthday is this month (for dashboard badge).
-    /// Supports birthday badges, notifications, and engagement campaigns.
-    var isBirthdayMonth: Bool {
-        guard let birthdate else { return false }
-        return Calendar.current.component(.month, from: birthdate) == Calendar.current.component(.month, from: Date())
-    }
-
-    /// Returns a string summary of key tags (for badges/analytics).
-    /// Used in UI badges, filtering, segmentation, and business intelligence.
-    var tagSummary: String {
-        tags.joined(separator: ", ")
-    }
-
-    /// Returns true if the dog is overdue for vaccination (for retention/risk engine).
-    /// Supports compliance alerts, retention workflows, and health risk analytics.
-    var isOverdueForVaccination: Bool {
-        vaccinationRecords.contains { $0.isOverdue }
-    }
-
-    /// Returns true if behavioral log contains recent aggression flags (for risk dashboard).
-    /// Used in risk management, behavior intervention workflows, and alerting.
-    var hasRecentAggression: Bool {
-        behaviorLogs.suffix(3).contains { $0.isAggressive }
-    }
-
-    /// Quick status for dashboard (active/inactive + main tag).
-    /// Used in UI status indicators, filtering, and business workflows.
-    var statusLabel: String {
-        isActive ? (tags.first ?? "Active") : "Inactive"
-    }
-
-    /// Returns dog's full profile as a formatted string (for debug or export).
-    /// Supports reporting, export, and audit review workflows.
     var fullProfileDescription: String {
         """
         Name: \(name)
@@ -219,6 +241,8 @@ final class Dog: Identifiable, ObservableObject {
         Tags: \(tagSummary)
         Appointments: \(appointments.count)
         Charges: \(charges.count)
+        LTV: $\(lifetimeValue)
+        Loyalty Score: \(loyaltyScore)
         Vaccinations: \(vaccinationRecords.count)
         Behaviors: \(behaviorLogs.count)
         Added: \(dateAdded.formatted(.dateTime.month().day().year()))
@@ -230,8 +254,6 @@ final class Dog: Identifiable, ObservableObject {
 // MARK: - Example Usage (for preview/testing)
 #if DEBUG
 extension Dog {
-    /// Demo/business/preview instance used for UI previews and logic validation.
-    /// Illustrates tokenized intent by including tags and key business attributes.
     static var preview: Dog {
         Dog(
             name: "Baxter",
@@ -240,8 +262,32 @@ extension Dog {
             color: "Golden",
             gender: "Male",
             notes: "Friendly, loves water.",
-            tags: ["Loyal", "BirthdayThisMonth"],
+            tags: [BusinessTag.loyal.rawValue, BusinessTag.birthdayThisMonth.rawValue],
             imageGallery: [],
+            isActive: true
+        )
+    }
+    static var previewSenior: Dog {
+        Dog(
+            name: "Sasha",
+            breed: "Poodle",
+            birthdate: Calendar.current.date(byAdding: .year, value: -12, to: Date()),
+            color: "White",
+            gender: "Female",
+            notes: "Needs special attention. Senior client.",
+            tags: [BusinessTag.senior.rawValue, BusinessTag.specialNeeds.rawValue],
+            isActive: true
+        )
+    }
+    static var previewAggressive: Dog {
+        Dog(
+            name: "Rocky",
+            breed: "Bulldog",
+            birthdate: Calendar.current.date(byAdding: .year, value: -5, to: Date()),
+            color: "Brown",
+            gender: "Male",
+            notes: "Recent aggression reported.",
+            tags: [BusinessTag.aggressive.rawValue],
             isActive: true
         )
     }

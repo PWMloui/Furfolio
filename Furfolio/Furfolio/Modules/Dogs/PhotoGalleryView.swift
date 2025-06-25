@@ -2,7 +2,7 @@
 //  PhotoGalleryView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Accessible, Extensible Photo Gallery
 //
 
 import SwiftUI
@@ -12,6 +12,9 @@ struct PhotoGalleryView: View {
     @State private var photos: [UIImage] = []
     @State private var selectedItems: [PhotosPickerItem] = []
     @State private var isLoading: [PhotosPickerItem: Bool] = [:]
+    @State private var lastDeletedPhoto: (image: UIImage, index: Int)?
+    @State private var showUndo = false
+    @State private var errorMessage: String?
 
     private let columns = [
         GridItem(.flexible()),
@@ -20,7 +23,7 @@ struct PhotoGalleryView: View {
     ]
 
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             PhotosPicker(
                 selection: $selectedItems,
                 maxSelectionCount: 10,
@@ -32,6 +35,7 @@ struct PhotoGalleryView: View {
                         .frame(maxWidth: .infinity)
                         .background(Color.accentColor.opacity(0.2))
                         .cornerRadius(12)
+                        .accessibilityIdentifier("PhotoGalleryView-AddPhotosButton")
                 }
                 .padding(.horizontal)
                 .onChange(of: selectedItems) { newItems in
@@ -41,6 +45,13 @@ struct PhotoGalleryView: View {
                     }
                     selectedItems.removeAll()
                 }
+
+            if let error = errorMessage {
+                Text(error)
+                    .foregroundColor(.red)
+                    .padding(.top, 6)
+                    .accessibilityIdentifier("PhotoGalleryView-Error")
+            }
 
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 10) {
@@ -55,13 +66,17 @@ struct PhotoGalleryView: View {
                             .contextMenu {
                                 Button(role: .destructive) {
                                     withAnimation {
+                                        lastDeletedPhoto = (image, index)
                                         photos.remove(at: index)
+                                        showUndo = true
+                                        PhotoGalleryAudit.record(action: "Delete", index: index)
                                     }
                                 } label: {
                                     Label("Delete Photo", systemImage: "trash")
                                 }
                             }
                             .accessibilityLabel("Photo \(index + 1) of \(photos.count)")
+                            .accessibilityIdentifier("PhotoGalleryView-Photo-\(index)")
                             .accessibilityAddTraits(.isImage)
                     }
                     // Show placeholders for loading photos
@@ -73,6 +88,7 @@ struct PhotoGalleryView: View {
                                 .background(Color.gray.opacity(0.2))
                                 .cornerRadius(8)
                                 .accessibilityLabel("Loading photo")
+                                .accessibilityIdentifier("PhotoGalleryView-LoadingPhoto")
                         }
                     }
                 }
@@ -80,6 +96,22 @@ struct PhotoGalleryView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Photo gallery with \(photos.count) photos")
+
+            if showUndo, let last = lastDeletedPhoto {
+                Button {
+                    withAnimation {
+                        photos.insert(last.image, at: last.index)
+                        PhotoGalleryAudit.record(action: "UndoDelete", index: last.index)
+                        showUndo = false
+                        lastDeletedPhoto = nil
+                    }
+                } label: {
+                    Label("Undo delete photo", systemImage: "arrow.uturn.backward")
+                        .foregroundColor(.accentColor)
+                        .padding(.vertical, 5)
+                }
+                .accessibilityIdentifier("PhotoGalleryView-UndoDeleteButton")
+            }
         }
     }
 
@@ -90,11 +122,12 @@ struct PhotoGalleryView: View {
                 case .success(let image?):
                     withAnimation {
                         photos.append(image)
+                        PhotoGalleryAudit.record(action: "Add", index: photos.count - 1)
                     }
                 case .success(nil):
-                    print("No image found in item.")
+                    errorMessage = "No image found in item."
                 case .failure(let error):
-                    print("Failed to load image: \(error.localizedDescription)")
+                    errorMessage = "Failed to load image: \(error.localizedDescription)"
                 }
                 isLoading[item] = false
             }
@@ -102,19 +135,48 @@ struct PhotoGalleryView: View {
     }
 }
 
+// MARK: - Audit/Event Logging
+
+fileprivate struct PhotoGalleryAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let index: Int?
+    var summary: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        return "[PhotoGallery] \(action) index: \(index.map { "\($0)" } ?? "-") at \(dateStr)"
+    }
+}
+fileprivate final class PhotoGalleryAudit {
+    static private(set) var log: [PhotoGalleryAuditEvent] = []
+    static func record(action: String, index: Int?) {
+        let event = PhotoGalleryAuditEvent(timestamp: Date(), action: action, index: index)
+        log.append(event)
+        if log.count > 50 { log.removeFirst() }
+    }
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static func recentSummaries(limit: Int = 6) -> [String] {
+        log.suffix(limit).map { $0.summary }
+    }
+}
+
+// MARK: - Admin/Audit Accessors
+
+public enum PhotoGalleryAuditAdmin {
+    public static func lastSummary() -> String { PhotoGalleryAudit.log.last?.summary ?? "No photo events yet." }
+    public static func lastJSON() -> String? { PhotoGalleryAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 6) -> [String] { PhotoGalleryAudit.recentSummaries(limit: limit) }
+}
+
+// MARK: - Preview
+
 #if DEBUG
 struct PhotoGalleryView_Previews: PreviewProvider {
     static var previews: some View {
         PhotoGalleryView()
-            .onAppear {
-                // Add sample photos for preview
-                if let sampleImage = UIImage(systemName: "photo") {
-                    for _ in 0..<6 {
-                        // Add multiple sample images
-                        // Note: Using system image for preview
-                    }
-                }
-            }
     }
 }
 #endif

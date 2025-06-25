@@ -1,82 +1,136 @@
 //
-//   OnboardingCompletionView.swift
+//  OnboardingCompletionView.swift
 //  Furfolio
 //
-//  Created by mac on 6/21/25.
+//  Enhanced: Fully tokenized, analytics/audit–ready, modular, accessible, preview/testable, robust.
 //
 
 import SwiftUI
 
+/// Protocol for audit/analytics logging; inject for compliance and business BI.
+public protocol OnboardingAnalyticsLogger {
+    func log(event: String)
+}
+
+/// Default no-op logger for previews/tests.
+public struct NullOnboardingAnalyticsLogger: OnboardingAnalyticsLogger {
+    public init() {}
+    public func log(event: String) {}
+}
+
 /// The final screen displayed at the end of the onboarding flow.
-/// This view is fully accessible, supports localization, and is prepared for integration with business analytics and audit logging.
-/// 
-/// - Accessibility:
-///   - The main title is marked as a header for assistive technologies.
-///   - The "Get Started" button includes accessibility labels and hints.
-/// 
-/// - Localization:
-///   - All user-facing strings are localized.
-/// 
-/// - Design Tokens:
-///   - Fonts, colors, and other style elements use design tokens where available.
-/// 
-/// - Analytics:
-///   - The "Get Started" action is a hook for business analytics and audit logs.
+/// Now fully tokenized, modular, analytics/audit–ready, and accessible.
 struct OnboardingCompletionView: View {
     let onGetStarted: () -> Void
+    let analyticsLogger: OnboardingAnalyticsLogger
+    // Design tokens with safe fallback
+    let accent: Color
+    let secondary: Color
+    let background: Color
+    let titleFont: Font
+    let bodyFont: Font
+    let cornerRadius: CGFloat
+    let padding: CGFloat
+    let spacing: CGFloat
+
+    /// Dependency-injectable initializer for test, preview, or production.
+    init(
+        onGetStarted: @escaping () -> Void,
+        analyticsLogger: OnboardingAnalyticsLogger = NullOnboardingAnalyticsLogger(),
+        accent: Color = AppColors.accent ?? .accentColor,
+        secondary: Color = AppColors.secondary ?? .secondary,
+        background: Color = AppColors.background ?? Color(UIColor.systemBackground),
+        titleFont: Font = AppFonts.titleBold ?? .title.bold(),
+        bodyFont: Font = AppFonts.body ?? .body,
+        cornerRadius: CGFloat = AppRadius.large ?? 24,
+        padding: CGFloat = AppSpacing.large ?? 24,
+        spacing: CGFloat = AppSpacing.xxLarge ?? 32
+    ) {
+        self.onGetStarted = onGetStarted
+        self.analyticsLogger = analyticsLogger
+        self.accent = accent
+        self.secondary = secondary
+        self.background = background
+        self.titleFont = titleFont
+        self.bodyFont = bodyFont
+        self.cornerRadius = cornerRadius
+        self.padding = padding
+        self.spacing = spacing
+    }
 
     var body: some View {
-        VStack(spacing: 32) {
+        VStack(spacing: spacing) {
             Image(systemName: "checkmark.seal.fill")
                 .resizable()
                 .scaledToFit()
-                .frame(height: 80)
-                .foregroundColor(AppColors.accent) // Using design token for accent color
+                .frame(height: padding * 3)
+                .foregroundColor(accent)
                 .accessibilityLabel(LocalizedStringKey("Onboarding complete"))
 
             Text(LocalizedStringKey("You're all set!"))
-                .font(AppFonts.titleBold) // Using design token for title bold font
+                .font(titleFont)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
 
             Text(LocalizedStringKey("Start using Furfolio to grow and simplify your grooming business."))
-                .font(AppFonts.body) // Using design token for body font
+                .font(bodyFont)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(AppColors.secondary) // Using design token for secondary color
+                .foregroundStyle(secondary)
 
             Button(action: {
-                // TODO: Call business analytics/audit log here before proceeding
+                analyticsLogger.log(event: "onboarding_get_started_tap")
                 onGetStarted()
             }) {
                 Text(LocalizedStringKey("Get Started"))
+                    .frame(maxWidth: .infinity)
+                    .font(titleFont)
+                    .padding(padding * 0.5)
             }
             .buttonStyle(.borderedProminent)
-            .padding(.top, 20)
+            .tint(accent)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .padding(.top, padding * 0.5)
             .accessibilityLabel(LocalizedStringKey("Get Started"))
             .accessibilityHint(LocalizedStringKey("Begin using the app and complete onboarding"))
-
-            // Note: The padding and spacing values are currently hardcoded and should be replaced with design tokens in the future.
         }
-        .padding()
+        .padding(padding)
+        .background(background.ignoresSafeArea())
+        .cornerRadius(cornerRadius)
         .accessibilityElement(children: .combine)
-        .background(AppColors.background) // Using design token for background color
     }
 }
 
+// MARK: - Previews
+
 struct OnboardingCompletionView_Previews: PreviewProvider {
+    struct AnalyticsLoggerSpy: OnboardingAnalyticsLogger {
+        func log(event: String) {
+            print("Analytics Event: \(event)")
+        }
+    }
+
     static var previews: some View {
         Group {
-            OnboardingCompletionView(onGetStarted: {})
-                .previewDisplayName("Light Mode")
-                .environment(\.colorScheme, .light)
+            OnboardingCompletionView(
+                onGetStarted: {},
+                analyticsLogger: AnalyticsLoggerSpy()
+            )
+            .previewDisplayName("Light Mode")
+            .environment(\.colorScheme, .light)
 
-            OnboardingCompletionView(onGetStarted: {})
-                .previewDisplayName("Dark Mode")
-                .environment(\.colorScheme, .dark)
+            OnboardingCompletionView(
+                onGetStarted: {},
+                analyticsLogger: AnalyticsLoggerSpy()
+            )
+            .previewDisplayName("Dark Mode")
+            .environment(\.colorScheme, .dark)
 
-            OnboardingCompletionView(onGetStarted: {})
-                .previewDisplayName("Accessibility Large Text")
-                .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+            OnboardingCompletionView(
+                onGetStarted: {},
+                analyticsLogger: AnalyticsLoggerSpy()
+            )
+            .previewDisplayName("Accessibility Large Text")
+            .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         }
     }
 }

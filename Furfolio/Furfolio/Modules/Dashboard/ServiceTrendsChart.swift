@@ -2,11 +2,58 @@
 //  ServiceTrendsChart.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Accessible, Modular Service Trends Chart
 //
 
 import SwiftUI
 import Charts
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct ServiceTrendsChartAuditEvent: Codable {
+    let timestamp: Date
+    let services: [String]
+    let pointCount: Int
+    let dateRange: String
+    let tags: [String]
+    var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let serviceList = services.joined(separator: ", ")
+        return "[Appear] Service Trends Chart: \(pointCount) points, services: [\(serviceList)], range: \(dateRange) [\(tags.joined(separator: ","))] at \(dateStr)"
+    }
+}
+
+fileprivate final class ServiceTrendsChartAudit {
+    static private(set) var log: [ServiceTrendsChartAuditEvent] = []
+
+    static func record(
+        services: [String],
+        pointCount: Int,
+        dateRange: String,
+        tags: [String] = ["serviceTrendsChart"]
+    ) {
+        let event = ServiceTrendsChartAuditEvent(
+            timestamp: Date(),
+            services: services,
+            pointCount: pointCount,
+            dateRange: dateRange,
+            tags: tags
+        )
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static var accessibilitySummary: String {
+        log.last?.accessibilityLabel ?? "No service trends chart events recorded."
+    }
+}
+
+// MARK: - Model
 
 struct ServiceTrendPoint: Identifiable {
     var id = UUID()
@@ -14,6 +61,8 @@ struct ServiceTrendPoint: Identifiable {
     var date: Date
     var count: Int
 }
+
+// MARK: - ServiceTrendsChart
 
 struct ServiceTrendsChart: View {
     let data: [ServiceTrendPoint]
@@ -28,22 +77,27 @@ struct ServiceTrendsChart: View {
         .blue, .green, .orange, .purple, .pink, .red, .yellow, .teal
     ]
 
+    // Find date range for summary/audit
+    private var dateRangeString: String {
+        guard let minDate = data.map(\.date).min(),
+              let maxDate = data.map(\.date).max() else { return "n/a" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM yyyy"
+        return "\(formatter.string(from: minDate)) – \(formatter.string(from: maxDate))"
+    }
+
     var body: some View {
         VStack(alignment: .leading) {
             Text("Service Popularity Trends")
                 .font(.headline)
                 .padding(.bottom, 8)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("ServiceTrendsChart-Header")
 
             Chart {
                 ForEach(services.indices, id: \.self) { index in
                     let service = services[index]
                     let serviceData = data.filter { $0.service == service }
-
-                    LineMark(
-                        x: .value("Date", serviceData.map { $0.date }),
-                        y: .value("Count", serviceData.map { $0.count })
-                    )
-
                     ForEach(serviceData) { point in
                         LineMark(
                             x: .value("Date", point.date),
@@ -58,6 +112,8 @@ struct ServiceTrendsChart: View {
                                 .font(.caption2)
                                 .foregroundColor(colors[index % colors.count])
                         }
+                        .accessibilityLabel("\(service), \(point.count) on \(point.date.formatted(.dateTime.year().month()))")
+                        .accessibilityIdentifier("ServiceTrendsChart-\(service)-\(point.date.timeIntervalSince1970)")
                     }
                 }
             }
@@ -79,6 +135,8 @@ struct ServiceTrendsChart: View {
                 }
             }
             .frame(height: 240)
+            .accessibilityLabel("Service trends by month")
+            .accessibilityIdentifier("ServiceTrendsChart-MainChart")
 
             // Legend
             HStack(spacing: 12) {
@@ -87,12 +145,17 @@ struct ServiceTrendsChart: View {
                         Circle()
                             .fill(colors[index % colors.count])
                             .frame(width: 14, height: 14)
+                            .accessibilityHidden(true)
                         Text(services[index])
                             .font(.footnote)
+                            .accessibilityIdentifier("ServiceTrendsChart-Legend-\(services[index])")
                     }
                 }
             }
             .padding(.top, 8)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Chart legend: " + services.joined(separator: ", "))
+            .accessibilityIdentifier("ServiceTrendsChart-Legend")
         }
         .padding()
         .background(
@@ -100,8 +163,30 @@ struct ServiceTrendsChart: View {
                 .fill(Color(.systemBackground))
                 .shadow(radius: 6)
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Service popularity trends chart, showing trends for \(services.joined(separator: ", ")), over \(dateRangeString)")
+        .accessibilityIdentifier("ServiceTrendsChart-Container")
+        .onAppear {
+            ServiceTrendsChartAudit.record(
+                services: services,
+                pointCount: data.count,
+                dateRange: dateRangeString
+            )
+        }
     }
 }
+
+// MARK: - Audit/Admin Accessors
+
+public enum ServiceTrendsChartAuditAdmin {
+    public static var lastSummary: String { ServiceTrendsChartAudit.accessibilitySummary }
+    public static var lastJSON: String? { ServiceTrendsChartAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        ServiceTrendsChartAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+}
+
+// MARK: - Preview
 
 #if DEBUG
 struct ServiceTrendsChart_Previews: PreviewProvider {

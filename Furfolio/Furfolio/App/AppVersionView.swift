@@ -2,14 +2,22 @@
 //  AppVersionView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced: token-compliant, analytics/audit-ready, fully accessible, preview/test-injectable.
 //
 
 import SwiftUI
 
-// MARK: - AppVersionView (App Version Info, Modular Token Styling)
+// MARK: - Audit/Analytics Protocol
 
-// MARK: - Reusable InfoCard Component for consistent design
+public protocol AppVersionAnalyticsLogger {
+    func log(event: String, info: String?)
+}
+public struct NullAppVersionAnalyticsLogger: AppVersionAnalyticsLogger {
+    public init() {}
+    public func log(event: String, info: String?) {}
+}
+
+// MARK: - Reusable InfoCard Component (Unchanged)
 struct InfoCard<Content: View>: View {
     let title: LocalizedStringKey
     let content: Content
@@ -36,9 +44,10 @@ struct InfoCard<Content: View>: View {
     }
 }
 
+// MARK: - AppVersionView (Enhanced)
 struct AppVersionView: View {
-    // Optional user role for role-based info section (multi-user context)
     var userRole: String? = nil
+    static var analyticsLogger: AppVersionAnalyticsLogger = NullAppVersionAnalyticsLogger()
     
     var body: some View {
         ScrollView {
@@ -51,13 +60,17 @@ struct AppVersionView: View {
                     .padding(.top, AppSpacing.xLarge)
                     .accessibilityHidden(true)
                 
-                // Version Info Section
                 InfoCard(title: "App Version") {
-                    Text(Bundle.appVersionDisplay)
-                        .accessibilityLabel(Text("App version \(Bundle.appVersionDisplay)"))
+                    VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                        Text(Bundle.appVersionDisplay)
+                            .accessibilityLabel(Text("App version \(Bundle.appVersionDisplay)"))
+                        Text("Build Channel: Production")
+                            .font(AppFonts.caption)
+                            .foregroundStyle(AppColors.secondary)
+                            .accessibilityLabel(Text("Build channel: Production"))
+                    }
                 }
                 
-                // Role-based Info Section (conditionally shown)
                 if let role = userRole, !role.isEmpty {
                     InfoCard(title: "User Role") {
                         Text(role)
@@ -65,10 +78,9 @@ struct AppVersionView: View {
                     }
                 }
                 
-                // Release Notes Section Placeholder with future link
                 InfoCard(title: "Release Notes") {
-                    // Accessibility: Button with descriptive label
                     Button {
+                        Self.analyticsLogger.log(event: "release_notes_tap", info: nil)
                         // TODO: Implement navigation to Release Notes view or website
                     } label: {
                         HStack {
@@ -79,12 +91,15 @@ struct AppVersionView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint(Text("Opens the release notes"))
+                    .accessibilityHint(Text("Opens the release notes in Safari"))
                 }
                 
                 Spacer(minLength: AppSpacing.xLarge)
             }
             .padding(.horizontal, AppSpacing.medium)
+            .onAppear {
+                Self.analyticsLogger.log(event: "version_view_appear", info: userRole)
+            }
         }
         .background(AppColors.background.ignoresSafeArea())
         .navigationTitle(Text("App Version"))
@@ -103,23 +118,21 @@ extension Bundle {
     }
 }
 
-// MARK: - Preview with multiple scenarios including dark mode and user roles
+// MARK: - Preview with all analytics injected and multiple scenarios
 #Preview {
-    Group {
-        NavigationStack {
-            AppVersionView(userRole: "Owner")
+    struct SpyLogger: AppVersionAnalyticsLogger {
+        func log(event: String, info: String?) {
+            print("[AppVersionAnalytics] \(event): \(info ?? "")")
         }
-        .previewDisplayName("Light Mode - Owner")
-        
-        NavigationStack {
-            AppVersionView(userRole: "Assistant")
-        }
-        .preferredColorScheme(.dark)
-        .previewDisplayName("Dark Mode - Assistant")
-        
-        NavigationStack {
-            AppVersionView()
-        }
-        .previewDisplayName("Light Mode - No Role")
+    }
+    AppVersionView.analyticsLogger = SpyLogger()
+    return Group {
+        NavigationStack { AppVersionView(userRole: "Owner") }
+            .previewDisplayName("Light Mode - Owner")
+        NavigationStack { AppVersionView(userRole: "Assistant") }
+            .preferredColorScheme(.dark)
+            .previewDisplayName("Dark Mode - Assistant")
+        NavigationStack { AppVersionView() }
+            .previewDisplayName("Light Mode - No Role")
     }
 }
