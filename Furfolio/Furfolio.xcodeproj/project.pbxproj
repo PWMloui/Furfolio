@@ -31,6 +31,7 @@
 			membershipExceptions = (
 				App/OnboardingFlowManager/OnboardingFlowManager.swift,
 				App/Styling/Packages/enums,
+				Core/Services/Untitled.swift,
 			);
 			target = 04562C432E051E2900FDC0A2 /* Furfolio */;
 		};
