@@ -29,9 +29,8 @@
 		04562C852E05226E00FDC0A2 /* Exceptions for "Furfolio" folder in "Furfolio" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				App/OnboardingFlowManager/OnboardingFlowManager.swift,
 				App/Styling/Packages/enums,
-				Core/Services/Untitled.swift,
+				Core/Models/OnboardingFlowManager/OnboardingFlowManager.swift,
 			);
 			target = 04562C432E051E2900FDC0A2 /* Furfolio */;
 		};
@@ -42,7 +41,7 @@
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = 04562C422E051E2900FDC0A2 /* Resources */;
 			membershipExceptions = (
-				App/OnboardingFlowManager/OnboardingFlowManager.swift,
+				Core/Models/OnboardingFlowManager/OnboardingFlowManager.swift,
 			);
 		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
