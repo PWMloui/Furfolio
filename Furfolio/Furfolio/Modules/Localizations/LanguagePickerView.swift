@@ -2,12 +2,12 @@
 //  LanguagePickerView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Accessible, Enterprise-Grade Language Picker
 //
 
 import SwiftUI
 
-struct LanguageOption: Identifiable {
+struct LanguageOption: Identifiable, Codable {
     let id: String    // Locale identifier, e.g., "en", "es"
     let displayName: String
     let flag: String
@@ -22,12 +22,15 @@ struct LanguagePickerView: View {
         // Add more languages here
     ]
 
+    @State private var showExportAlert = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 22) {
             Text("Choose App Language")
-                .font(.title2)
-                .bold()
-                .padding(.bottom)
+                .font(.title2.bold())
+                .accessibilityAddTraits(.isHeader)
+                .padding(.bottom, 2)
+                .accessibilityIdentifier("LanguagePickerView-Header")
 
             Picker("Language", selection: $selectedLanguage) {
                 ForEach(options) { option in
@@ -36,22 +39,47 @@ struct LanguagePickerView: View {
                         Text(option.displayName)
                     }
                     .tag(option.id)
+                    .accessibilityLabel(option.displayName)
+                    .accessibilityIdentifier("LanguagePickerView-Option-\(option.id)")
                 }
             }
             .pickerStyle(.inline)
-            .accessibilityIdentifier("LanguagePicker")
+            .accessibilityIdentifier("LanguagePickerView-Picker")
 
             Text("Current language: \(displayName(for: selectedLanguage))")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("LanguagePickerView-Current")
+
+            Button {
+                showExportAlert = true
+            } label: {
+                Label("Export Language Audit Log", systemImage: "square.and.arrow.up")
+                    .font(.caption)
+            }
+            .padding(.top, 4)
+            .accessibilityIdentifier("LanguagePickerView-ExportButton")
+            .alert("Language Change Audit Log", isPresented: $showExportAlert, actions: {
+                Button("OK", role: .cancel) { }
+            }, message: {
+                ScrollView {
+                    Text(LanguagePickerAuditAdmin.recentEvents(limit: 10).joined(separator: "\n"))
+                        .font(.caption2)
+                        .multilineTextAlignment(.leading)
+                }
+            })
 
             Spacer()
         }
         .padding()
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Language")
-        .onChange(of: selectedLanguage) { _ in
+        .onAppear {
+            LanguagePickerAudit.record(action: "Appear", language: selectedLanguage)
+        }
+        .onChange(of: selectedLanguage) { newLang in
             updateAppLanguage()
+            LanguagePickerAudit.record(action: "Change", language: newLang)
         }
     }
 
@@ -62,15 +90,31 @@ struct LanguagePickerView: View {
 
     // Update language at runtime (works if your app supports dynamic language switching)
     private func updateAppLanguage() {
-        // Here, you would trigger your app's logic to reload strings/bundle
-        // This can involve NotificationCenter, AppState, or custom logic
-        // For many apps, a restart or relaunch of the root view is needed
-        // For advanced use: LocalizationManager.shared.setLanguage(selectedLanguage)
+        // Your app's localization logic would go here
+        // e.g., LocalizationManager.shared.setLanguage(selectedLanguage)
     }
 }
 
-#Preview {
-    NavigationStack {
-        LanguagePickerView()
+// MARK: - Audit/Event Logging
+
+fileprivate struct LanguagePickerAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let language: String
+    var summary: String {
+        let df = DateFormatter()
+        df.dateStyle = .short; df.timeStyle = .short
+        return "[LanguagePicker] \(action): \(language) at \(df.string(from: timestamp))"
     }
 }
+fileprivate final class LanguagePickerAudit {
+    static private(set) var log: [LanguagePickerAuditEvent] = []
+    static func record(action: String, language: String) {
+        let event = LanguagePickerAuditEvent(timestamp: Date(), action: action, language: language)
+        log.append(event)
+        if log.count > 30 { log.removeFirst() }
+    }
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0

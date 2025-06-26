@@ -2,18 +2,12 @@
 //  StaffListView.swift
 //  Furfolio
 //
-//  Created by Your Name on 6/22/25.
-//
-//  This view is fully modular, tokenized, and auditable, aligning with the
-//  Furfolio application's architecture. It displays a list of all staff members,
-//  providing navigation to detail views and options for management.
+//  Enhanced 2025: Auditable, Accessible, Enterprise-Grade Staff List View
 //
 
 import SwiftUI
 import SwiftData
 
-/// A view that displays a list of all staff members in the business.
-/// It supports searching, adding, and deleting staff, and navigates to a detailed view for each member.
 @available(iOS 18.0, *)
 struct StaffListView: View {
     @Environment(\.modelContext) private var modelContext
@@ -25,25 +19,39 @@ struct StaffListView: View {
         animation: .default
     ) private var staffMembers: [StaffMember]
 
-    // State for managing the presentation of the "Add Staff" sheet.
     @State private var showingAddStaffSheet = false
-    
+    @State private var showAuditLog = false
+    @State private var animateAddBadge = false
+    @State private var appearedOnce = false
+
     var body: some View {
         NavigationStack {
             List {
-                // Check if there are any staff members to display.
                 if staffMembers.isEmpty {
-                    // Use a standard content unavailable view for the empty state.
                     ContentUnavailableView(
                         "No Staff Members",
                         systemImage: "person.3.sequence.fill",
                         description: Text("Tap the plus button to add your first staff member.")
                     )
+                    .accessibilityIdentifier("StaffListView-EmptyState")
+                    .overlay(
+                        Button {
+                            showAuditLog = true
+                        } label: {
+                            Label("View Audit Log", systemImage: "doc.text.magnifyingglass")
+                                .font(.caption)
+                        }
+                        .accessibilityIdentifier("StaffListView-AuditLogButton"),
+                        alignment: .bottomTrailing
+                    )
                 } else {
-                    // Iterate over the fetched staff members to create a row for each.
                     ForEach(staffMembers) { member in
                         NavigationLink(destination: StaffDetailView(staffMember: member)) {
                             StaffRowView(staffMember: member)
+                        }
+                        .accessibilityIdentifier("StaffListView-Row-\(member.name)")
+                        .onTapGesture {
+                            StaffListAudit.record(action: "NavigateToDetail", staffName: member.name)
                         }
                     }
                     .onDelete(perform: deleteStaffMembers)
@@ -52,37 +60,85 @@ struct StaffListView: View {
             .navigationTitle("Staff")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: { showingAddStaffSheet = true }) {
-                        Image(systemName: "plus")
+                    Button(action: {
+                        showingAddStaffSheet = true
+                        animateAddBadge = true
+                        StaffListAudit.record(action: "ShowAddStaff", staffName: "")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { animateAddBadge = false }
+                    }) {
+                        ZStack {
+                            if animateAddBadge {
+                                Circle()
+                                    .fill(Color.accentColor.opacity(0.19))
+                                    .frame(width: 46, height: 46)
+                                    .scaleEffect(1.08)
+                                    .animation(.spring(response: 0.32, dampingFraction: 0.55), value: animateAddBadge)
+                            }
+                            Image(systemName: "plus")
+                                .font(.title2)
+                        }
                     }
                     .accessibilityLabel("Add new staff member")
+                    .accessibilityIdentifier("StaffListView-AddButton")
+                }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showAuditLog = true
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                    }
+                    .accessibilityLabel("View Audit Log")
+                    .accessibilityIdentifier("StaffListView-AuditLogButton")
                 }
             }
             .sheet(isPresented: $showingAddStaffSheet) {
-                // This would present the AddUserView or a dedicated AddStaffView
-                // to create a new User and linked StaffMember record.
-                // Using a placeholder for now as per our previous discussion.
+                // This would present the AddStaffView or similar.
                 Text("Add Staff / User View Placeholder")
                     .presentationDetents([.medium])
+                    .onAppear {
+                        StaffListAudit.record(action: "AppearAddStaffSheet", staffName: "")
+                    }
+            }
+            .sheet(isPresented: $showAuditLog) {
+                NavigationStack {
+                    List {
+                        ForEach(StaffListAuditAdmin.recentEvents(limit: 24), id: \.self) { summary in
+                            Text(summary)
+                                .font(.caption)
+                                .padding(.vertical, 2)
+                        }
+                    }
+                    .navigationTitle("Staff Audit Log")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Copy") {
+                                UIPasteboard.general.string = StaffListAuditAdmin.recentEvents(limit: 24).joined(separator: "\n")
+                            }
+                            .accessibilityIdentifier("StaffListView-CopyAuditLogButton")
+                        }
+                    }
+                }
+            }
+            .onAppear {
+                if !appearedOnce {
+                    StaffListAudit.record(action: "Appear", staffName: "")
+                    appearedOnce = true
+                }
             }
         }
     }
     
     /// Deletes staff members from the list at the given offsets.
-    /// This function is called by the `.onDelete` modifier on the ForEach view.
     private func deleteStaffMembers(at offsets: IndexSet) {
-        // In a real app, you would likely "soft delete" by setting isArchived = true,
-        // but for this example, we perform a hard delete.
         for index in offsets {
             let memberToDelete = staffMembers[index]
+            StaffListAudit.record(action: "Delete", staffName: memberToDelete.name)
             modelContext.delete(memberToDelete)
-            // TODO: Add audit log entry for staff deletion for compliance.
         }
     }
 }
 
 /// A reusable view that displays a single staff member in a list row.
-/// It uses design system tokens for consistent styling.
 @available(iOS 18.0, *)
 private struct StaffRowView: View {
     let staffMember: StaffMember
@@ -102,10 +158,12 @@ private struct StaffRowView: View {
                 Text(staffMember.name)
                     .font(AppTheme.Fonts.headline)
                     .foregroundColor(AppTheme.Colors.textPrimary)
+                    .accessibilityIdentifier("StaffListView-Name-\(staffMember.name)")
                 
                 Text(staffMember.role.displayName)
                     .font(AppTheme.Fonts.caption)
                     .foregroundColor(AppTheme.Colors.textSecondary)
+                    .accessibilityIdentifier("StaffListView-Role-\(staffMember.name)")
             }
 
             Spacer()
@@ -119,6 +177,7 @@ private struct StaffRowView: View {
                     .padding(.vertical, AppTheme.Spacing.xs)
                     .background(AppTheme.Colors.danger.opacity(0.15))
                     .clipShape(Capsule())
+                    .accessibilityIdentifier("StaffListView-Status-\(staffMember.name)")
             }
         }
         .padding(.vertical, AppTheme.Spacing.small)
@@ -127,23 +186,45 @@ private struct StaffRowView: View {
     }
 }
 
+// MARK: - Audit/Event Logging
+
+fileprivate struct StaffListAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let staffName: String
+    var summary: String {
+        let df = DateFormatter(); df.dateStyle = .short; df.timeStyle = .short
+        let staffPart = staffName.isEmpty ? "" : " [\(staffName)]"
+        return "[StaffListView] \(action)\(staffPart) at \(df.string(from: timestamp))"
+    }
+}
+fileprivate final class StaffListAudit {
+    static private(set) var log: [StaffListAuditEvent] = []
+    static func record(action: String, staffName: String) {
+        let event = StaffListAuditEvent(timestamp: Date(), action: action, staffName: staffName)
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+    static func recentSummaries(limit: Int = 10) -> [String] {
+        log.suffix(limit).map { $0.summary }
+    }
+}
+public enum StaffListAuditAdmin {
+    public static func recentEvents(limit: Int = 10) -> [String] { StaffListAudit.recentSummaries(limit: limit) }
+}
 
 // MARK: - SwiftUI Preview
 @available(iOS 18.0, *)
 #Preview {
-    // This preview sets up an in-memory SwiftData container
-    // and populates it with sample data to test the view.
     let container: ModelContainer = {
         let schema = Schema([
             StaffMember.self,
-            Business.self, // Include related models in the schema
-            // Add other necessary models here
+            Business.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         return try! ModelContainer(for: schema, configurations: [config])
     }()
     
-    // Add sample data to the context
     let sampleAdmin = StaffMember(name: "Alex Admin", role: .admin)
     let sampleGroomer = StaffMember(name: "Casey Groomer", role: .groomer)
     let sampleInactive = StaffMember(name: "Inactive User", role: .assistant, isActive: false)
@@ -152,6 +233,5 @@ private struct StaffRowView: View {
     container.mainContext.insert(sampleGroomer)
     container.mainContext.insert(sampleInactive)
     
-    return StaffListView()
-        .modelContainer(container)
+    return StaffListView().modelContainer(container)
 }

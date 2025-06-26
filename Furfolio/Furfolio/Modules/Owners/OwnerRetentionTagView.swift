@@ -2,11 +2,7 @@
 //  OwnerRetentionTagView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//
-//  ENHANCED: Refactored to be a 'dumb' view that relies on the
-//  CustomerRetentionAnalyzer for all business logic, ensuring a single
-//  source of truth for retention status.
+//  Enhanced 2025: Auditable, Accessible, Animated, Enterprise-Grade Retention Tag
 //
 
 import SwiftUI
@@ -19,28 +15,71 @@ struct OwnerRetentionTagView: View {
     /// The single source of truth for retention logic.
     private let analyzer = CustomerRetentionAnalyzer.shared
 
+    // Animate badge on status change
+    @State private var animate: Bool = false
+    @State private var lastStatus: String?
+
     var body: some View {
-        // Calculate the retention tag using the centralized analyzer.
         let tag = analyzer.retentionTag(for: owner)
 
-        // The view now simply renders the tag provided by the analyzer.
-        // All styling uses design system tokens.
         Label {
             Text(tag.label)
                 .font(AppFonts.caption)
+                .accessibilityIdentifier("OwnerRetentionTagView-Label-\(tag.label)")
         } icon: {
             Image(systemName: tag.icon.symbol)
+                .accessibilityIdentifier("OwnerRetentionTagView-Icon-\(tag.icon.symbol)")
         }
         .foregroundColor(tag.color)
         .padding(.horizontal, AppSpacing.medium)
         .padding(.vertical, AppSpacing.small)
         .background(tag.color.opacity(0.13))
         .clipShape(Capsule())
+        .scaleEffect(animate ? 1.13 : 1.0)
+        .shadow(color: tag.color.opacity(0.11), radius: animate ? 6 : 2)
+        .animation(.spring(response: 0.36, dampingFraction: 0.52), value: animate)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Retention Status: \(tag.label)")
+        .accessibilityIdentifier("OwnerRetentionTagView-Root-\(tag.label)")
+        .onAppear {
+            if lastStatus != tag.label {
+                animate = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    withAnimation { animate = false }
+                }
+                OwnerRetentionTagAudit.record(ownerName: owner.ownerName, status: tag.label)
+                lastStatus = tag.label
+            }
+        }
     }
 }
 
+// MARK: - Audit/Event Logging
+
+fileprivate struct OwnerRetentionTagAuditEvent: Codable {
+    let timestamp: Date
+    let ownerName: String
+    let status: String
+    var summary: String {
+        let df = DateFormatter(); df.dateStyle = .short; df.timeStyle = .short
+        return "[OwnerRetentionTagView] \(ownerName): \(status) at \(df.string(from: timestamp))"
+    }
+}
+fileprivate final class OwnerRetentionTagAudit {
+    static private(set) var log: [OwnerRetentionTagAuditEvent] = []
+    static func record(ownerName: String, status: String) {
+        let event = OwnerRetentionTagAuditEvent(timestamp: Date(), ownerName: ownerName, status: status)
+        log.append(event)
+        if log.count > 36 { log.removeFirst() }
+    }
+    static func recentSummaries(limit: Int = 6) -> [String] {
+        log.suffix(limit).map { $0.summary }
+    }
+}
+public enum OwnerRetentionTagAuditAdmin {
+    public static func lastSummary() -> String { OwnerRetentionTagAudit.log.last?.summary ?? "No events yet." }
+    public static func recentEvents(limit: Int = 6) -> [String] { OwnerRetentionTagAudit.recentSummaries(limit: limit) }
+}
 
 // MARK: - Preview
 
@@ -79,4 +118,3 @@ struct OwnerRetentionTagView_Previews: PreviewProvider {
     }
 }
 #endif
-

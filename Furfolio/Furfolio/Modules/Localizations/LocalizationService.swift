@@ -1,9 +1,8 @@
-
 //
 //  LocalizationService.swift
 //  Furfolio
 //
-//  Created by senpai on 6/23/25.
+//  Enhanced 2025: Auditable, Enterprise-Grade Localization Service
 //
 
 import Foundation
@@ -31,23 +30,72 @@ final class LocalizationService: ObservableObject {
         } else {
             self.currentLanguage = Locale.preferredLanguages.first?.components(separatedBy: "-").first ?? "en"
         }
-        setLanguage(currentLanguage)
+        Bundle.setLanguage(currentLanguage)
+        LocalizationServiceAudit.record(action: "Init", language: currentLanguage)
     }
 
     /// Changes the current language, saves preference, and reloads bundles.
     func setLanguage(_ language: String) {
         guard language != currentLanguage else { return }
+        let previousLanguage = currentLanguage
         currentLanguage = language
         UserDefaults.standard.set(language, forKey: userDefaultsKey)
         Bundle.setLanguage(language)
         languageChanged.send(language)
         objectWillChange.send()
+        LocalizationServiceAudit.record(action: "SetLanguage", language: language, previous: previousLanguage)
     }
 
     /// Returns a localized string for a given key (from Localizable.strings).
     func localizedString(forKey key: String, comment: String = "") -> String {
         NSLocalizedString(key, bundle: Bundle.main, comment: comment)
     }
+    
+    /// Returns the identifier for accessibility or analytics.
+    var accessibilityIdentifier: String { "LocalizationService-\(currentLanguage)" }
+}
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct LocalizationServiceAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let language: String
+    let previous: String?
+    var summary: String {
+        let df = DateFormatter()
+        df.dateStyle = .short
+        df.timeStyle = .short
+        let prev = previous != nil ? " (from: \(previous!))" : ""
+        return "[LocalizationService] \(action): \(language)\(prev) at \(df.string(from: timestamp))"
+    }
+}
+fileprivate final class LocalizationServiceAudit {
+    static private(set) var log: [LocalizationServiceAuditEvent] = []
+    static func record(action: String, language: String, previous: String? = nil) {
+        let event = LocalizationServiceAuditEvent(
+            timestamp: Date(),
+            action: action,
+            language: language,
+            previous: previous
+        )
+        log.append(event)
+        if log.count > 40 { log.removeFirst() }
+    }
+    static func exportLastJSON() -> String? {
+        guard let last = log.last else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static func recentSummaries(limit: Int = 10) -> [String] {
+        log.suffix(limit).map { $0.summary }
+    }
+}
+public enum LocalizationServiceAuditAdmin {
+    public static func lastSummary() -> String { LocalizationServiceAudit.log.last?.summary ?? "No events yet." }
+    public static func lastJSON() -> String? { LocalizationServiceAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 10) -> [String] { LocalizationServiceAudit.recentSummaries(limit: limit) }
 }
 
 // MARK: - Bundle Language Extension
@@ -60,7 +108,7 @@ extension Bundle {
         // Swap the main bundle implementation at runtime.
         objc_setAssociatedObject(Bundle.main, &bundleKey, Bundle(path: Bundle.main.path(forResource: language, ofType: "lproj") ?? ""), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         
-        let onceToken = UUID().uuidString // Prevent multiple swizzles in one session.
+        let onceToken = "com.furfolio.bundle.swizzle.\(language)" // One swizzle per language per run
         DispatchQueue.once(token: onceToken) {
             let original = class_getInstanceMethod(Bundle.self, #selector(localizedString(forKey:value:table:)))
             let swizzled = class_getInstanceMethod(Bundle.self, #selector(swizzled_localizedString(forKey:value:table:)))

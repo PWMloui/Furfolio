@@ -1,42 +1,82 @@
 [
   {
     "id": "O1",
+    "type": "household",
     "name": "Jane Doe",
     "contact": "555-1234",
     "email": "jane.doe@email.com",
     "address": "123 Main St, Cityville",
-    "dogIDs": ["D1"]
+    "dogIDs": ["D1"],
+    "loyaltyTier": "gold",
+    "preferredContactMethod": "sms",
+    "tags": ["vip", "newsletter"],
+    "notes": "Responds quickly, prefers morning appointments.",
+    "status": "active",
+    "createdAt": "2023-03-20T10:04:11Z",
+    "updatedAt": "2024-06-20T09:25:32Z"
   },
   {
     "id": "O2",
+    "type": "household",
     "name": "Sam Lee",
     "contact": "555-5678",
     "email": "sam.lee@email.com",
     "address": "456 Oak Ave, Cityville",
-    "dogIDs": ["D2"]
+    "dogIDs": ["D2"],
+    "loyaltyTier": "silver",
+    "preferredContactMethod": "email",
+    "tags": ["promotion-target"],
+    "notes": "May want monthly package.",
+    "status": "active",
+    "createdAt": "2023-07-12T13:55:05Z",
+    "updatedAt": "2024-06-17T12:03:15Z"
   },
   {
     "id": "O3",
+    "type": "household",
     "name": "Alex Smith",
     "contact": "555-2468",
     "email": "alex.smith@email.com",
     "address": "789 Pine Rd, Cityville",
-    "dogIDs": ["D3"]
+    "dogIDs": ["D3"],
+    "loyaltyTier": "standard",
+    "preferredContactMethod": "phone",
+    "tags": ["holiday-card"],
+    "notes": "Sensitive about price changes.",
+    "status": "active",
+    "createdAt": "2022-12-04T15:14:25Z",
+    "updatedAt": "2024-06-05T16:08:21Z"
   },
   {
     "id": "O4",
+    "type": "household",
     "name": "Emma Garcia",
     "contact": "555-1122",
     "email": "emma.garcia@email.com",
     "address": "321 Maple Ln, Cityville",
-    "dogIDs": ["D4"]
+    "dogIDs": ["D4"],
+    "loyaltyTier": "platinum",
+    "preferredContactMethod": "sms",
+    "tags": ["referral", "senior-discount"],
+    "notes": "Referred 2 new clients in 2024.",
+    "status": "active",
+    "createdAt": "2023-02-18T08:22:11Z",
+    "updatedAt": "2024-06-19T17:42:10Z"
   },
   {
     "id": "O5",
+    "type": "household",
     "name": "Chris Kim",
     "contact": "555-7531",
     "email": "chris.kim@email.com",
     "address": "89 Willow Blvd, Cityville",
-    "dogIDs": ["D5"]
+    "dogIDs": ["D5"],
+    "loyaltyTier": "standard",
+    "preferredContactMethod": "email",
+    "tags": ["unsubscribed"],
+    "notes": "Requested no marketing messages.",
+    "status": "active",
+    "createdAt": "2023-04-22T10:51:33Z",
+    "updatedAt": "2024-06-08T11:21:09Z"
   }
 ]

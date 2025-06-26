@@ -30,7 +30,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/OnboardingFlowManager/OnboardingFlowManager.swift,
-				Packages/enums,
+				App/Styling/Packages/enums,
 			);
 			target = 04562C432E051E2900FDC0A2 /* Furfolio */;
 		};

@@ -2,7 +2,7 @@
 //  OwnerProfileView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Accessible, Enterprise-Grade Owner Profile
 //
 
 import SwiftUI
@@ -27,59 +27,136 @@ struct OwnerProfileView: View {
     let auditLogEntries: [OwnerAuditLogEntry]
     let changeHistoryEntries: [OwnerChangeHistoryEntry]
 
+    @State private var appearedOnce: Bool = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
 
                 // Contact quick actions
-                OwnerContactQuickActionsView(
-                    phoneNumber: phoneNumber,
-                    email: email,
-                    address: address
-                )
+                SectionCard {
+                    OwnerContactQuickActionsView(
+                        phoneNumber: phoneNumber,
+                        email: email,
+                        address: address
+                    )
+                }
+                .accessibilityIdentifier("OwnerProfileView-QuickActions")
 
                 // Owner summary row
-                DogOwnerRowView(
-                    ownerName: ownerName,
-                    phoneNumber: phoneNumber,
-                    email: email,
-                    address: address,
-                    dogCount: dogCount,
-                    upcomingAppointmentDate: lastVisit
-                )
+                SectionCard {
+                    DogOwnerRowView(
+                        ownerName: ownerName,
+                        phoneNumber: phoneNumber,
+                        email: email,
+                        address: address,
+                        dogCount: dogCount,
+                        upcomingAppointmentDate: lastVisit
+                    )
+                }
+                .accessibilityIdentifier("OwnerProfileView-SummaryRow")
 
                 // Lifetime Value summary
-                OwnerLifetimeValueView(
-                    ownerName: ownerName,
-                    totalSpent: totalSpent,
-                    appointmentCount: appointmentCount,
-                    lastVisit: lastVisit,
-                    isTopSpender: isTopSpender
-                )
+                SectionCard {
+                    OwnerLifetimeValueView(
+                        ownerName: ownerName,
+                        totalSpent: totalSpent,
+                        appointmentCount: appointmentCount,
+                        lastVisit: lastVisit,
+                        isTopSpender: isTopSpender
+                    )
+                }
+                .accessibilityIdentifier("OwnerProfileView-LifetimeValue")
 
                 // Notes section
-                OwnerNotesView(notes: $notes)
+                SectionCard {
+                    OwnerNotesView(notes: $notes)
+                }
+                .accessibilityIdentifier("OwnerProfileView-Notes")
 
                 // Preferences section
-                OwnerPreferencesView(
-                    favoriteGroomingStyle: $favoriteGroomingStyle,
-                    preferredShampoo: $preferredShampoo,
-                    specialRequests: $specialRequests
-                )
+                SectionCard {
+                    OwnerPreferencesView(
+                        favoriteGroomingStyle: $favoriteGroomingStyle,
+                        preferredShampoo: $preferredShampoo,
+                        specialRequests: $specialRequests
+                    )
+                }
+                .accessibilityIdentifier("OwnerProfileView-Preferences")
 
                 // Owner history (timeline/audit/changes)
-                OwnerHistoryTabView(
-                    activityEvents: activityEvents,
-                    auditLogEntries: auditLogEntries,
-                    changeHistoryEntries: changeHistoryEntries
-                )
+                SectionCard {
+                    OwnerHistoryTabView(
+                        activityEvents: activityEvents,
+                        auditLogEntries: auditLogEntries,
+                        changeHistoryEntries: changeHistoryEntries
+                    )
+                }
+                .accessibilityIdentifier("OwnerProfileView-History")
             }
             .padding()
         }
+        .background(
+            LinearGradient(
+                colors: [Color(.systemGroupedBackground), Color(.secondarySystemGroupedBackground).opacity(0.7)],
+                startPoint: .top, endPoint: .bottom)
+        )
         .navigationTitle(ownerName)
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
+        .onAppear {
+            if !appearedOnce {
+                OwnerProfileAudit.record(action: "Appear", ownerName: ownerName)
+                appearedOnce = true
+            }
+        }
+        .accessibilityIdentifier("OwnerProfileView-Root")
     }
+}
+
+// MARK: - Section Card Helper
+
+fileprivate struct SectionCard<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+        content
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+                    .shadow(color: Color(.black).opacity(0.05), radius: 3, x: 0, y: 1)
+            )
+            .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct OwnerProfileAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let ownerName: String
+    var summary: String {
+        let df = DateFormatter()
+        df.dateStyle = .short
+        df.timeStyle = .short
+        return "[OwnerProfileView] \(action): \(ownerName) at \(df.string(from: timestamp))"
+    }
+}
+fileprivate final class OwnerProfileAudit {
+    static private(set) var log: [OwnerProfileAuditEvent] = []
+    static func record(action: String, ownerName: String) {
+        let event = OwnerProfileAuditEvent(timestamp: Date(), action: action, ownerName: ownerName)
+        log.append(event)
+        if log.count > 20 { log.removeFirst() }
+    }
+    static func recentSummaries(limit: Int = 6) -> [String] {
+        log.suffix(limit).map(\.summary)
+    }
+}
+public enum OwnerProfileAuditAdmin {
+    public static func lastSummary() -> String { OwnerProfileAudit.log.last?.summary ?? "No events yet." }
+    public static func recentEvents(limit: Int = 6) -> [String] { OwnerProfileAudit.recentSummaries(limit: limit) }
 }
 
 #if DEBUG

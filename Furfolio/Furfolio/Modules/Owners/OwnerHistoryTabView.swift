@@ -2,9 +2,8 @@
 //  OwnerHistoryTabView.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Enhanced 2025: Auditable, Accessible, Enterprise-Grade Tabbed Owner History
 //
-
 
 import SwiftUI
 
@@ -14,34 +13,79 @@ struct OwnerHistoryTabView: View {
     let changeHistoryEntries: [OwnerChangeHistoryEntry]
 
     @State private var selectedTab: Int = 0
+    @State private var appearedOnce = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 Picker("History Tab", selection: $selectedTab) {
-                    Text("Timeline").tag(0)
-                    Text("Audit Log").tag(1)
-                    Text("Changes").tag(2)
+                    Label("Timeline", systemImage: "clock.arrow.circlepath").tag(0)
+                    Label("Audit Log", systemImage: "doc.badge.gearshape").tag(1)
+                    Label("Changes", systemImage: "arrow.triangle.swap").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding([.horizontal, .top])
+                .accessibilityIdentifier("OwnerHistoryTabView-Picker")
 
-                Divider()
-                    .padding(.bottom, 4)
+                Divider().padding(.bottom, 4)
 
                 TabView(selection: $selectedTab) {
                     OwnerActivityTimelineView(events: activityEvents)
                         .tag(0)
+                        .accessibilityIdentifier("OwnerHistoryTabView-TimelineTab")
+                        .accessibilityLabel("Owner timeline tab")
+
                     OwnerAuditLogView(logEntries: auditLogEntries)
                         .tag(1)
+                        .accessibilityIdentifier("OwnerHistoryTabView-AuditTab")
+                        .accessibilityLabel("Owner audit log tab")
+
                     OwnerChangeHistoryView(changes: changeHistoryEntries)
                         .tag(2)
+                        .accessibilityIdentifier("OwnerHistoryTabView-ChangesTab")
+                        .accessibilityLabel("Owner changes tab")
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .accessibilityIdentifier("OwnerHistoryTabView-TabView")
+                .animation(.easeInOut(duration: 0.24), value: selectedTab)
             }
             .navigationTitle("Owner History")
             .background(Color(.systemGroupedBackground))
+            .onAppear {
+                // Audit only first appearance (QA/analytics)
+                if !appearedOnce {
+                    OwnerHistoryTabAudit.record(action: "Appear", tab: selectedTab)
+                    appearedOnce = true
+                }
+            }
+            .onChange(of: selectedTab) { tab in
+                OwnerHistoryTabAudit.record(action: "TabSwitch", tab: tab)
+            }
         }
+    }
+}
+
+// MARK: - Audit/Event Logging
+
+fileprivate struct OwnerHistoryTabAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let tab: Int
+    var summary: String {
+        let df = DateFormatter(); df.dateStyle = .short; df.timeStyle = .short
+        let tabName = tab == 0 ? "Timeline" : (tab == 1 ? "Audit Log" : "Changes")
+        return "[OwnerHistoryTabView] \(action): \(tabName) tab at \(df.string(from: timestamp))"
+    }
+}
+fileprivate final class OwnerHistoryTabAudit {
+    static private(set) var log: [OwnerHistoryTabAuditEvent] = []
+    static func record(action: String, tab: Int) {
+        let event = OwnerHistoryTabAuditEvent(timestamp: Date(), action: action, tab: tab)
+        log.append(event)
+        if log.count > 20 { log.removeFirst() }
+    }
+    static func recentSummaries(limit: Int = 6) -> [String] {
+        log.suffix(limit).map { $0.summary }
     }
 }
 

@@ -2,33 +2,24 @@
 //  InventoryListView.swift
 //  Furfolio
 //
-//  Created by Your Name on 6/22/25.
-//
-//  This view is fully modular, tokenized, and auditable, aligning with the
-//  Furfolio application's architecture. It displays a list of all inventory items,
-//  provides at-a-glance status, and allows for easy management.
+//  Enhanced 2025: Auditable, Accessible, Enterprise-Grade Inventory List
 //
 
 import SwiftUI
 import SwiftData
 
-/// A view that displays a searchable and filterable list of all inventory items.
-/// It integrates with the `InventoryManager` to show stock levels and provides
-/// functionality to add, view details of, and delete items.
 struct InventoryListView: View {
     @Environment(\.modelContext) private var modelContext
-    
-    // The manager holds the logic and summary data like the low stock count.
-    @StateObject private var inventoryManager = InventoryManager()
 
-    // Fetches all inventory items from SwiftData, sorted by name.
+    @StateObject private var inventoryManager = InventoryManager()
     @Query(sort: \InventoryItem.name) private var items: [InventoryItem]
-    
-    // State for the search text and sheet presentation.
+
     @State private var searchText: String = ""
     @State private var showingAddItemSheet = false
+    @State private var showAuditLog = false
+    @State private var animateAddBadge = false
+    @State private var appearedOnce = false
 
-    /// A computed property that filters the inventory based on the search text.
     private var filteredItems: [InventoryItem] {
         if searchText.isEmpty {
             return items
@@ -43,24 +34,34 @@ struct InventoryListView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // MARK: - Summary Header
                 summaryHeader
-                
-                // MARK: - Inventory List
+
                 List {
                     if filteredItems.isEmpty {
-                        // Show an empty state view if there are no items.
                         ContentUnavailableView(
                             "No Inventory Items",
                             systemImage: "shippingbox.fill",
                             description: Text("Tap the plus button to add your first inventory item.")
                         )
+                        .accessibilityIdentifier("InventoryListView-EmptyState")
+                        .overlay(
+                            Button {
+                                showAuditLog = true
+                            } label: {
+                                Label("View Audit Log", systemImage: "doc.text.magnifyingglass")
+                                    .font(.caption)
+                            }
+                            .accessibilityIdentifier("InventoryListView-AuditLogButton"),
+                            alignment: .bottomTrailing
+                        )
                     } else {
                         ForEach(filteredItems) { item in
-                            // Each item is a navigation link to its detail view.
-                            // NOTE: InventoryItemDetailView would need to be created.
                             NavigationLink(destination: Text("Detail View for \(item.name)")) {
                                 InventoryRowView(item: item)
+                            }
+                            .accessibilityIdentifier("InventoryListView-Row-\(item.name)")
+                            .onTapGesture {
+                                InventoryListAudit.record(action: "NavigateToDetail", itemName: item.name)
                             }
                         }
                         .onDelete(perform: deleteItems)
@@ -70,27 +71,77 @@ struct InventoryListView: View {
             }
             .navigationTitle("Inventory")
             .searchable(text: $searchText, prompt: "Search by name or SKU")
+            .onChange(of: searchText) { value in
+                InventoryListAudit.record(action: "Search", itemName: value)
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: { showingAddItemSheet = true }) {
-                        Image(systemName: "plus")
+                    Button(action: {
+                        showingAddItemSheet = true
+                        animateAddBadge = true
+                        InventoryListAudit.record(action: "ShowAddItem", itemName: "")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { animateAddBadge = false }
+                    }) {
+                        ZStack {
+                            if animateAddBadge {
+                                Circle()
+                                    .fill(Color.accentColor.opacity(0.17))
+                                    .frame(width: 44, height: 44)
+                                    .scaleEffect(1.08)
+                                    .animation(.spring(response: 0.32, dampingFraction: 0.55), value: animateAddBadge)
+                            }
+                            Image(systemName: "plus")
+                        }
                     }
                     .accessibilityLabel("Add new inventory item")
+                    .accessibilityIdentifier("InventoryListView-AddButton")
+                }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showAuditLog = true
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                    }
+                    .accessibilityLabel("View Audit Log")
+                    .accessibilityIdentifier("InventoryListView-AuditLogButton")
                 }
             }
             .sheet(isPresented: $showingAddItemSheet) {
-                // Presents the AddInventoryItemView created previously.
                 AddInventoryItemView()
                     .environment(\.modelContext, modelContext)
             }
+            .sheet(isPresented: $showAuditLog) {
+                NavigationStack {
+                    List {
+                        ForEach(InventoryListAuditAdmin.recentEvents(limit: 24), id: \.self) { summary in
+                            Text(summary)
+                                .font(.caption)
+                                .padding(.vertical, 2)
+                        }
+                    }
+                    .navigationTitle("Inventory Audit Log")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Copy") {
+                                UIPasteboard.general.string = InventoryListAuditAdmin.recentEvents(limit: 24).joined(separator: "\n")
+                            }
+                            .accessibilityIdentifier("InventoryListView-CopyAuditLogButton")
+                        }
+                    }
+                }
+            }
             .task {
-                // Update the low stock count when the view appears.
                 await inventoryManager.updateLowStockCount()
+            }
+            .onAppear {
+                if !appearedOnce {
+                    InventoryListAudit.record(action: "Appear", itemName: "")
+                    appearedOnce = true
+                }
             }
         }
     }
 
-    /// A header view that displays summary statistics about the inventory.
     private var summaryHeader: some View {
         HStack(spacing: AppTheme.Spacing.medium) {
             KPIStatCard(
@@ -100,7 +151,6 @@ struct InventoryListView: View {
                 systemIconName: "shippingbox.circle.fill",
                 iconBackgroundColor: AppTheme.Colors.primary
             )
-            
             KPIStatCard(
                 title: "Low Stock",
                 value: "\(inventoryManager.lowStockItemCount)",
@@ -112,16 +162,14 @@ struct InventoryListView: View {
         .padding()
         .background(AppColors.background.ignoresSafeArea())
     }
-    
-    /// Deletes items from the model context at the specified offsets.
+
     private func deleteItems(at offsets: IndexSet) {
         for index in offsets {
             let itemToDelete = filteredItems[index]
             modelContext.delete(itemToDelete)
-            // TODO: Add an audit log entry for item deletion.
+            InventoryListAudit.record(action: "Delete", itemName: itemToDelete.name)
         }
         Task {
-            // Re-calculate the low stock count after deletion.
             await inventoryManager.updateLowStockCount()
         }
     }
@@ -133,29 +181,24 @@ private struct InventoryRowView: View {
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.medium) {
-            // MARK: Icon
-            Image(systemName: item.category.iconName) // Assumes ItemCategory has an iconName property
+            Image(systemName: item.category.iconName)
                 .font(.title2)
                 .foregroundColor(AppTheme.Colors.primary)
                 .frame(width: 40, height: 40)
-            
-            // MARK: Name and Category
+
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(item.name)
                     .font(AppTheme.Fonts.headline)
-                
                 Text(item.category.displayName)
                     .font(AppTheme.Fonts.caption)
                     .foregroundColor(AppTheme.Colors.textSecondary)
             }
-            
+
             Spacer()
-            
-            // MARK: Stock Level and Status
+
             VStack(alignment: .trailing, spacing: AppTheme.Spacing.xs) {
                 Text("\(item.stockLevel)")
                     .font(AppTheme.Fonts.headline.monospacedDigit())
-                
                 if item.isLowStock {
                     Text("LOW STOCK")
                         .font(AppTheme.Fonts.caption.weight(.bold))
@@ -186,27 +229,50 @@ fileprivate extension ItemCategory {
     }
 }
 
+// MARK: - Audit/Event Logging
+
+fileprivate struct InventoryListAuditEvent: Codable {
+    let timestamp: Date
+    let action: String
+    let itemName: String
+    var summary: String {
+        let df = DateFormatter(); df.dateStyle = .short; df.timeStyle = .short
+        let itemPart = itemName.isEmpty ? "" : " [\(itemName)]"
+        return "[InventoryListView] \(action)\(itemPart) at \(df.string(from: timestamp))"
+    }
+}
+fileprivate final class InventoryListAudit {
+    static private(set) var log: [InventoryListAuditEvent] = []
+    static func record(action: String, itemName: String) {
+        let event = InventoryListAuditEvent(timestamp: Date(), action: action, itemName: itemName)
+        log.append(event)
+        if log.count > 32 { log.removeFirst() }
+    }
+    static func recentSummaries(limit: Int = 12) -> [String] {
+        log.suffix(limit).map { $0.summary }
+    }
+}
+public enum InventoryListAuditAdmin {
+    public static func recentEvents(limit: Int = 12) -> [String] { InventoryListAudit.recentSummaries(limit: limit) }
+}
 
 // MARK: - SwiftUI Preview
 
 #Preview {
-    // This preview sets up an in-memory SwiftData container
-    // and populates it with sample data to test the view.
     let container: ModelContainer = {
-        let schema = Schema([InventoryItem.self, Task.self]) // Task is included because InventoryManager can create tasks
+        let schema = Schema([InventoryItem.self, Task.self])
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         return try! ModelContainer(for: schema, configurations: [config])
     }()
-    
-    // Add sample data to the context
+
     let shampoo = InventoryItem(name: "Oatmeal Shampoo", category: .supplies, stockLevel: 3, lowStockThreshold: 5, cost: 8.50)
     let clippers = InventoryItem(name: "Cordless Clippers", category: .tools, stockLevel: 2, lowStockThreshold: 1, cost: 150.00)
     let treats = InventoryItem(name: "Organic Dog Treats", category: .retail, stockLevel: 25, lowStockThreshold: 10, cost: 2.00, price: 5.99)
-    
+
     container.mainContext.insert(shampoo)
     container.mainContext.insert(clippers)
     container.mainContext.insert(treats)
-    
+
     return InventoryListView()
         .modelContainer(container)
 }
