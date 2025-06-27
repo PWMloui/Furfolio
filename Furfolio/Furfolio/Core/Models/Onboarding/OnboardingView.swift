@@ -7,22 +7,27 @@
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - Centralized Analytics + Audit Protocols
 
-public protocol OnboardingViewAnalyticsLogger {
-    func log(event: String, step: OnboardingStep?)
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
-public struct NullOnboardingViewAnalyticsLogger: OnboardingViewAnalyticsLogger {
-    public init() {}
-    public func log(event: String, step: OnboardingStep?) {}
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
+
+// MARK: - OnboardingView
 
 struct OnboardingView: View {
-    // MARK: - Injectables (for preview/test/branding)
+    // MARK: - Injectables
     @StateObject private var flowManager: OnboardingFlowManager
-    private let analyticsLogger: OnboardingViewAnalyticsLogger
+    private let analytics: AnalyticsServiceProtocol
+    private let audit: AuditLoggerProtocol
 
-    // Tokens with fallback
+    // MARK: - Tokens
     private let spacingM: CGFloat
     private let spacingL: CGFloat
     private let spacingXL: CGFloat
@@ -30,10 +35,11 @@ struct OnboardingView: View {
     private let colorBackground: Color
     private let colorSecondaryBackground: Color
 
-    // MARK: - Default initializer (prod)
+    // MARK: - Initializer
     init(
         flowManager: @autoclosure @escaping () -> OnboardingFlowManager = OnboardingFlowManager(),
-        analyticsLogger: OnboardingViewAnalyticsLogger = NullOnboardingViewAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         spacingM: CGFloat = AppSpacing.medium ?? 20,
         spacingL: CGFloat = AppSpacing.large ?? 24,
         spacingXL: CGFloat = AppSpacing.extraLarge ?? 28,
@@ -42,7 +48,8 @@ struct OnboardingView: View {
         colorSecondaryBackground: Color = AppColors.secondaryBackground ?? Color(.secondarySystemBackground)
     ) {
         _flowManager = StateObject(wrappedValue: flowManager())
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.spacingM = spacingM
         self.spacingL = spacingL
         self.spacingXL = spacingXL
@@ -53,42 +60,50 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: spacingM) {
-            // MARK: Progress Indicator
+            // Progress Indicator
             OnboardingProgressIndicator(
                 currentStep: flowManager.currentStep.rawValue,
                 totalSteps: OnboardingStep.allCases.count,
-                analyticsLogger: analyticsLogger
+                analytics: analytics,
+                audit: audit
             )
             .accessibilityLabel(Text("Onboarding progress: step \(flowManager.currentStep.rawValue + 1) of \(OnboardingStep.allCases.count)"))
-            .accessibilityHint(Text(flowManager.currentStep.localizedDescription))
+            .accessibilityHint(Text(flowManager.currentStep.description))
             .accessibilityAddTraits(.isHeader)
 
             Spacer(minLength: spacingM)
 
-            // MARK: Main Onboarding Content
+            // Main Content
             Group {
                 switch flowManager.currentStep {
                 case .welcome:
                     OnboardingSlideView(
                         imageName: "pawprint.fill",
-                        title: LocalizedStringKey("Welcome to Furfolio!"),
-                        description: LocalizedStringKey("All-in-one business management for dog groomers. Organize your appointments, clients, and business insights, all in one secure app."),
-                        analyticsLogger: analyticsLogger
+                        title: "Welcome to Furfolio!",
+                        description: "All-in-one business management for dog groomers. Organize your appointments, clients, and business insights, all in one secure app.",
+                        analytics: analytics,
+                        audit: audit
                     )
                 case .dataImport:
-                    OnboardingDataImportView()
+                    OnboardingDataImportView(analytics: analytics, audit: audit)
                 case .tutorial:
-                    InteractiveTutorialView()
+                    InteractiveTutorialView(analytics: analytics, audit: audit)
                 case .faq:
-                    OnboardingFAQView()
+                    OnboardingFAQView(analytics: analytics, audit: audit)
                 case .permissions:
-                    OnboardingPermissionView {
-                        analyticsLogger.log(event: "onboarding_permission_continue", step: flowManager.currentStep)
-                        flowManager.goToNextStep()
-                    }
-                case .finish:
+                    OnboardingPermissionView(
+                        onContinue: {
+                            analytics.log(event: "onboarding_permission_continue", parameters: ["step": flowManager.currentStep.rawValue])
+                            audit.record("User continued from permission step", metadata: nil)
+                            flowManager.goToNextStep()
+                        },
+                        analytics: analytics,
+                        audit: audit
+                    )
+                case .completion:
                     OnboardingCompletionView {
-                        analyticsLogger.log(event: "onboarding_complete", step: flowManager.currentStep)
+                        analytics.log(event: "onboarding_complete", parameters: ["step": flowManager.currentStep.rawValue])
+                        audit.record("User completed onboarding", metadata: nil)
                         flowManager.skipOnboarding()
                     }
                 }
@@ -98,39 +113,34 @@ struct OnboardingView: View {
 
             Spacer(minLength: spacingL)
 
-            // MARK: Navigation Controls
-            if flowManager.currentStep != .finish {
+            // Navigation
+            if flowManager.currentStep != .completion {
                 HStack {
                     if flowManager.currentStep != .welcome {
                         Button {
-                            analyticsLogger.log(event: "onboarding_back", step: flowManager.currentStep)
+                            analytics.log(event: "onboarding_back", parameters: ["step": flowManager.currentStep.rawValue])
+                            audit.record("User tapped back at step \(flowManager.currentStep)", metadata: nil)
                             flowManager.goToPreviousStep()
                         } label: {
-                            Text(LocalizedStringKey("Back"))
-                                .font(fontBody)
+                            Text("Back").font(fontBody)
                         }
                         .padding(.horizontal, spacingL)
                         .accessibilityLabel(Text("Go back to previous step"))
-                        .accessibilityHint(Text("Navigates to the previous onboarding step"))
                     }
 
                     Spacer()
 
                     Button {
-                        analyticsLogger.log(event: "onboarding_next", step: flowManager.currentStep)
+                        analytics.log(event: "onboarding_next", parameters: ["step": flowManager.currentStep.rawValue])
+                        audit.record("User tapped next at step \(flowManager.currentStep)", metadata: nil)
                         flowManager.goToNextStep()
                     } label: {
-                        Text(flowManager.currentStep == .permissions ? LocalizedStringKey("Finish") : LocalizedStringKey("Next"))
+                        Text(flowManager.currentStep == .permissions ? "Finish" : "Next")
                             .font(fontBody)
                     }
                     .buttonStyle(.borderedProminent)
                     .padding(.horizontal, spacingL)
-                    .accessibilityLabel(
-                        Text(flowManager.currentStep == .permissions ? "Finish onboarding" : "Go to next onboarding step")
-                    )
-                    .accessibilityHint(
-                        Text(flowManager.currentStep == .permissions ? "Completes the onboarding process" : "Navigates to the next onboarding step")
-                    )
+                    .accessibilityLabel(Text(flowManager.currentStep == .permissions ? "Finish onboarding" : "Go to next onboarding step"))
                 }
                 .padding(.bottom, spacingXL)
                 .transition(.opacity)
@@ -139,10 +149,11 @@ struct OnboardingView: View {
         }
         .onAppear {
             flowManager.loadOnboardingState()
-            analyticsLogger.log(event: "onboarding_appear", step: flowManager.currentStep)
+            analytics.log(event: "onboarding_appear", parameters: ["step": flowManager.currentStep.rawValue])
+            audit.record("OnboardingView appeared at step \(flowManager.currentStep)", metadata: nil)
         }
         .fullScreenCover(isPresented: .constant(flowManager.isOnboardingComplete)) {
-            // TODO: Handle onboarding completion here (e.g., show main app entry)
+            // TODO: Handle onboarding completion
         }
         .background(
             LinearGradient(
@@ -159,33 +170,42 @@ struct OnboardingView: View {
 // MARK: - Preview
 
 #Preview {
-    struct SpyLogger: OnboardingViewAnalyticsLogger {
-        func log(event: String, step: OnboardingStep?) {
-            print("Analytics Event: \(event), Step: \(step?.description ?? "-")")
+    struct PreviewAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String: Any]?) {
+            print("[Analytics] \(event) \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
     }
+
+    struct PreviewAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String : String]?) {
+            print("[Audit] \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
+    }
+
     return Group {
         OnboardingView(
             flowManager: OnboardingFlowManager(),
-            analyticsLogger: SpyLogger()
+            analytics: PreviewAnalytics(),
+            audit: PreviewAudit()
         )
         .preferredColorScheme(.light)
-        .environment(\.sizeCategory, .medium)
         .previewDisplayName("Light Mode")
 
         OnboardingView(
             flowManager: OnboardingFlowManager(),
-            analyticsLogger: SpyLogger()
+            analytics: PreviewAnalytics(),
+            audit: PreviewAudit()
         )
         .preferredColorScheme(.dark)
-        .environment(\.sizeCategory, .medium)
         .previewDisplayName("Dark Mode")
 
         OnboardingView(
             flowManager: OnboardingFlowManager(),
-            analyticsLogger: SpyLogger()
+            analytics: PreviewAnalytics(),
+            audit: PreviewAudit()
         )
-        .preferredColorScheme(.light)
         .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         .previewDisplayName("Accessibility Large Text")
     }

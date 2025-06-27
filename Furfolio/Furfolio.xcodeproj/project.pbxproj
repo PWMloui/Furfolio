@@ -30,7 +30,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/Styling/Packages/enums,
-				Core/Models/OnboardingFlowManager/OnboardingFlowManager.swift,
+				Core/Models/Onboarding/OnboardingFlowManager.swift,
 			);
 			target = 04562C432E051E2900FDC0A2 /* Furfolio */;
 		};
@@ -41,7 +41,7 @@
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = 04562C422E051E2900FDC0A2 /* Resources */;
 			membershipExceptions = (
-				Core/Models/OnboardingFlowManager/OnboardingFlowManager.swift,
+				Core/Models/Onboarding/OnboardingFlowManager.swift,
 			);
 		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */

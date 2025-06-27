@@ -5,3 +5,29 @@
 //  Created by mac on 6/25/25.
 //
 
+// MARK: - Optimization & Stability
+SWIFT_OPTIMIZATION_LEVEL = -Owholemodule            // Full optimization for release builds
+ENABLE_NS_ASSERTIONS = NO                           // Disable runtime assertions in production
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym          // Include debug symbols for crash reporting
+STRIP_INSTALLED_PRODUCT = YES                        // Strip symbols from final binary
+STRIP_STYLE = all                                    // Remove all debug symbols
+
+// MARK: - Build Behavior
+DEAD_CODE_STRIPPING = YES                            // Remove unused code for smaller binary
+ENABLE_BITCODE = NO                                  // Disable bitcode unless required
+LD_NO_PIE = YES                                      // Allow linking without PIE
+
+// MARK: - Modules & Language
+CLANG_ENABLE_MODULES = YES                           // Enable modular builds
+BUILD_LIBRARY_FOR_DISTRIBUTION = YES                 // Module stability for Swift libraries
+SWIFT_VERSION = 5.9                                  // Use consistent Swift version
+
+// MARK: - Environment
+APP_ENV = release                                    // Used to flag production mode
+API_BASE_URL = https://api.furfolio.com              // Production API endpoint
+
+// MARK: - Logging
+SWIFT_ACTIVE_COMPILATION_CONDITIONS =                // No debug flags in release
+
+// MARK: - Deployment
+IPHONEOS_DEPLOYMENT_TARGET = 16.0                    // Minimum iOS version supported

@@ -5,3 +5,34 @@
 //  Created by mac on 6/25/25.
 //
 
+// MARK: - Shared Build Settings
+
+// Deployment target
+IPHONEOS_DEPLOYMENT_TARGET = 16.0
+
+// Swift version
+SWIFT_VERSION = 5.9
+
+// Enable module stability
+BUILD_LIBRARY_FOR_DISTRIBUTION = YES
+
+// Enable warnings
+WARNING_CFLAGS = -Wall -Wextra -Wpedantic
+
+// Use modern linker and bitcode off for faster builds
+LD_NO_PIE = YES
+ENABLE_BITCODE = NO
+
+// Other
+CLANG_ENABLE_MODULES = YES
+
+// MARK: - Swift Concurrency Safety
+OTHER_SWIFT_FLAGS = $(inherited) -Xfrontend -strict-concurrency=complete -Xfrontend -enable-actor-data-race-checks
+
+// MARK: - Reproducible Builds
+EXPORTED_SYMBOLS_FILE =                               // Ensures deterministic builds
+ENABLE_REPRODUCIBLE_BUILDS = YES                      // Enables build reproducibility
+
+// MARK: - CI/CD Compatibility
+USE_HEADERMAP = NO                                    // Recommended for Bazel/CocoaPods compatibility
+CLANG_ENABLE_OBJC_ARC = YES                           // Required for Objective-C ARC interoperability

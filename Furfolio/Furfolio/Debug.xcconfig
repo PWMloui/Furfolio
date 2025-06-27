@@ -5,3 +5,31 @@
 //  Created by mac on 6/25/25.
 //
 
+// MARK: - Optimization & Testability
+SWIFT_OPTIMIZATION_LEVEL = -Onone             // No optimization for easier debugging
+ENABLE_TESTABILITY = YES                      // Enable access to internal symbols for testing
+DEBUG_INFORMATION_FORMAT = dwarf              // Use DWARF format for debug symbols
+
+// MARK: - Environment
+APP_ENV = debug                               // Custom app environment flag
+API_BASE_URL = https://api-dev.furfolio.local // Development API endpoint
+
+// MARK: - Swift Diagnostics
+OTHER_SWIFT_FLAGS = -DDEBUG -Xfrontend -warn-long-function-bodies=100 -Xfrontend -warn-long-expression-type-checking=100
+
+// MARK: - Compilation Conditions & Warnings
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+WARNING_CFLAGS = -Wall -Wextra
+
+// MARK: - Code Generation
+ENABLE_BITCODE = NO                           // Disable bitcode for faster builds
+LD_NO_PIE = YES                               // Allows linking with older tools
+DEAD_CODE_STRIPPING = YES                     // Strip unused code
+
+// MARK: - Language & Deployment
+IPHONEOS_DEPLOYMENT_TARGET = 16.0             // Minimum supported iOS version
+SWIFT_VERSION = 5.9                           // Ensure consistent language version
+
+// MARK: - Modules & Distribution
+CLANG_ENABLE_MODULES = YES                    // Enable module support
+BUILD_LIBRARY_FOR_DISTRIBUTION = YES          // Enable module stability

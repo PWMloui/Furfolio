@@ -7,14 +7,16 @@
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - Centralized Logging Protocols
 
-public protocol FAQAnalyticsLogger {
-    func log(event: String, question: String)
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
-public struct NullFAQAnalyticsLogger: FAQAnalyticsLogger {
-    public init() {}
-    public func log(event: String, question: String) {}
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
 // MARK: - FAQ Data
@@ -52,7 +54,9 @@ struct FAQItem: Identifiable {
 
 struct OnboardingFAQView: View {
     @State private var expandedID: UUID?
-    private let analyticsLogger: FAQAnalyticsLogger
+    private let analytics: AnalyticsServiceProtocol
+    private let audit: AuditLoggerProtocol
+
     // Tokens
     private let sectionFont: Font
     private let sectionColor: Color
@@ -61,13 +65,15 @@ struct OnboardingFAQView: View {
 
     // Init (inject logger/tokens for preview/testing)
     init(
-        analyticsLogger: FAQAnalyticsLogger = NullFAQAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         sectionFont: Font = AppFonts.header ?? .title2.bold(),
         sectionColor: Color = AppColors.primary ?? .primary,
         listBg: Color = AppColors.background ?? Color(UIColor.systemGroupedBackground),
         spacing: CGFloat = AppSpacing.medium ?? 16
     ) {
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.sectionFont = sectionFont
         self.sectionColor = sectionColor
         self.listBg = listBg
@@ -85,7 +91,15 @@ struct OnboardingFAQView: View {
                             onToggle: { expanded in
                                 withAnimation(.easeInOut(duration: 0.3)) {
                                     expandedID = expanded ? item.id : nil
-                                    analyticsLogger.log(event: expanded ? "faq_expand" : "faq_collapse", question: String(localized: item.question))
+                                    let question = String(localized: item.question)
+                                    analytics.log(
+                                        event: expanded ? "faq_expand" : "faq_collapse",
+                                        parameters: ["question": question]
+                                    )
+                                    audit.record(
+                                        "User \(expanded ? "expanded" : "collapsed") FAQ: \(question)",
+                                        metadata: nil
+                                    )
                                 }
                             }
                         )
@@ -184,19 +198,30 @@ private struct FAQDisclosureGroup: View {
 // MARK: - Preview
 
 #Preview {
-    struct AnalyticsSpy: FAQAnalyticsLogger {
-        func log(event: String, question: String) {
-            print("Analytics Event: \(event), Q: \(question)")
+    struct MockAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String : Any]?) {
+            print("[Analytics] \(event) -> \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
     }
+
+    struct MockAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String : String]?) {
+            print("[Audit] \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
+    }
+
     return Group {
-        OnboardingFAQView(analyticsLogger: AnalyticsSpy())
+        OnboardingFAQView(analytics: MockAnalytics(), audit: MockAudit())
             .previewDisplayName("Light Mode")
             .environment(\.colorScheme, .light)
-        OnboardingFAQView(analyticsLogger: AnalyticsSpy())
+
+        OnboardingFAQView(analytics: MockAnalytics(), audit: MockAudit())
             .previewDisplayName("Dark Mode")
             .environment(\.colorScheme, .dark)
-        OnboardingFAQView(analyticsLogger: AnalyticsSpy())
+
+        OnboardingFAQView(analytics: MockAnalytics(), audit: MockAudit())
             .previewDisplayName("Accessibility Large Text")
             .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
     }

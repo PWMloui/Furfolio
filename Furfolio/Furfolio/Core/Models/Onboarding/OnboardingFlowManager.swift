@@ -8,14 +8,16 @@
 import Foundation
 import SwiftUI
 
-// MARK: - Analytics/Audit Protocol
+// MARK: - Analytics/Audit Protocols
 
-public protocol OnboardingAnalyticsLogger {
-    func log(event: String, step: OnboardingStep?, extra: [String: String]?)
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
-public struct NullOnboardingAnalyticsLogger: OnboardingAnalyticsLogger {
-    public init() {}
-    public func log(event: String, step: OnboardingStep?, extra: [String: String]?) { }
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
 // MARK: - Onboarding Steps
@@ -69,19 +71,22 @@ final class OnboardingFlowManager: ObservableObject {
     private let onboardingCompleteKey: String
     private let onboardingCurrentStepKey: String
 
-    // MARK: - Analytics/Audit
-    private let analyticsLogger: OnboardingAnalyticsLogger
+    // MARK: - Analytics/Audit Services
+    private let analytics: AnalyticsServiceProtocol
+    private let audit: AuditLoggerProtocol
 
     // MARK: - Initialization
     init(
         onboardingKey: String = "default",
-        analyticsLogger: OnboardingAnalyticsLogger = NullOnboardingAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         initialStep: OnboardingStep = .welcome,
         isComplete: Bool? = nil
     ) {
         self.onboardingCompleteKey = "isOnboardingComplete_\(onboardingKey)"
         self.onboardingCurrentStepKey = "onboardingCurrentStep_\(onboardingKey)"
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
 
         // Load state if available, else use provided/default
         let storedIsComplete = UserDefaults.standard.object(forKey: onboardingCompleteKey) as? Bool
@@ -114,7 +119,8 @@ final class OnboardingFlowManager: ObservableObject {
     }
 
     func skipOnboarding() {
-        analyticsLogger.log(event: "skip_onboarding", step: currentStep, extra: nil)
+        analytics.log(event: "skip_onboarding", parameters: ["step": currentStep.rawValue])
+        audit.record("User skipped onboarding at step \(currentStep)", metadata: nil)
         completeOnboarding()
     }
 
@@ -123,18 +129,20 @@ final class OnboardingFlowManager: ObservableObject {
     private func setStep(_ step: OnboardingStep, event: String) {
         currentStep = step
         UserDefaults.standard.set(step.rawValue, forKey: onboardingCurrentStepKey)
-        analyticsLogger.log(event: event, step: step, extra: [
-            "step": "\(step.rawValue)",
-            "title": String(step.localizedTitle)
+
+        analytics.log(event: event, parameters: [
+            "step": step.rawValue,
+            "title": String(describing: step.localizedTitle)
         ])
+        audit.record("Navigated to step \(step)", metadata: nil)
     }
 
     private func completeOnboarding() {
         isOnboardingComplete = true
         UserDefaults.standard.set(true, forKey: onboardingCompleteKey)
-        analyticsLogger.log(event: "onboarding_complete", step: currentStep, extra: [
-            "final_step": "\(currentStep.rawValue)"
-        ])
+
+        analytics.log(event: "onboarding_complete", parameters: ["final_step": currentStep.rawValue])
+        audit.record("User completed onboarding at step \(currentStep)", metadata: nil)
     }
 
     // MARK: - Persistence
@@ -151,6 +159,8 @@ final class OnboardingFlowManager: ObservableObject {
         currentStep = .welcome
         UserDefaults.standard.set(false, forKey: onboardingCompleteKey)
         UserDefaults.standard.set(OnboardingStep.welcome.rawValue, forKey: onboardingCurrentStepKey)
-        analyticsLogger.log(event: "reset_onboarding", step: .welcome, extra: nil)
+
+        analytics.log(event: "reset_onboarding", parameters: ["step": OnboardingStep.welcome.rawValue])
+        audit.record("User reset onboarding", metadata: nil)
     }
 }

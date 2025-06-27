@@ -7,14 +7,16 @@
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - Centralized Analytics + Audit Logger Protocols
 
-public protocol SlideAnalyticsLogger {
-    func log(event: String, slideTitle: String)
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
-public struct NullSlideAnalyticsLogger: SlideAnalyticsLogger {
-    public init() {}
-    public func log(event: String, slideTitle: String) {}
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
 // MARK: - OnboardingSlideView
@@ -23,10 +25,12 @@ struct OnboardingSlideView: View {
     let imageName: String
     let title: LocalizedStringKey
     let description: LocalizedStringKey
-    // Analytics logger (injectable, defaults to no-op)
-    let analyticsLogger: SlideAnalyticsLogger
 
-    // Design tokens with safe fallback
+    // Logging
+    let analytics: AnalyticsServiceProtocol
+    let audit: AuditLoggerProtocol
+
+    // Tokens
     let accent: Color
     let textSecondary: Color
     let spacingL: CGFloat
@@ -39,7 +43,8 @@ struct OnboardingSlideView: View {
         imageName: String,
         title: LocalizedStringKey,
         description: LocalizedStringKey,
-        analyticsLogger: SlideAnalyticsLogger = NullSlideAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         accent: Color = AppColors.accent ?? .accentColor,
         textSecondary: Color = AppColors.textSecondary ?? .secondary,
         spacingL: CGFloat = AppSpacing.large ?? 24,
@@ -50,7 +55,8 @@ struct OnboardingSlideView: View {
         self.imageName = imageName
         self.title = title
         self.description = description
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.accent = accent
         self.textSecondary = textSecondary
         self.spacingL = spacingL
@@ -87,8 +93,9 @@ struct OnboardingSlideView: View {
         .padding(.horizontal, spacingL)
         .accessibilityElement(children: .contain)
         .onAppear {
-            // Analytics: Log slide view event for onboarding analytics
-            analyticsLogger.log(event: "onboarding_slide_viewed", slideTitle: String(localized: title))
+            let titleString = String(localized: title)
+            analytics.log(event: "onboarding_slide_viewed", parameters: ["slide_title": titleString])
+            audit.record("Viewed onboarding slide titled '\(titleString)'", metadata: nil)
         }
     }
 }
@@ -96,34 +103,49 @@ struct OnboardingSlideView: View {
 // MARK: - Preview
 
 #Preview {
-    struct SpyLogger: SlideAnalyticsLogger {
-        func log(event: String, slideTitle: String) {
-            print("Analytics Event: \(event), Slide: \(slideTitle)")
+    struct MockAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String : Any]?) {
+            print("[Analytics] \(event): \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
     }
-    Group {
+
+    struct MockAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String : String]?) {
+            print("[Audit] \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
+    }
+
+    let title: LocalizedStringKey = "Welcome to Furfolio!"
+    let desc: LocalizedStringKey = "Easily manage your dog grooming business, schedule appointments, and track all client info in one secure place."
+
+    return Group {
         OnboardingSlideView(
             imageName: "pawprint.fill",
-            title: "Welcome to Furfolio!",
-            description: "Easily manage your dog grooming business, schedule appointments, and track all client info in one secure place.",
-            analyticsLogger: SpyLogger()
+            title: title,
+            description: desc,
+            analytics: MockAnalytics(),
+            audit: MockAudit()
         )
         .previewDisplayName("Light Mode")
 
         OnboardingSlideView(
             imageName: "pawprint.fill",
-            title: "Welcome to Furfolio!",
-            description: "Easily manage your dog grooming business, schedule appointments, and track all client info in one secure place.",
-            analyticsLogger: SpyLogger()
+            title: title,
+            description: desc,
+            analytics: MockAnalytics(),
+            audit: MockAudit()
         )
         .preferredColorScheme(.dark)
         .previewDisplayName("Dark Mode")
 
         OnboardingSlideView(
             imageName: "pawprint.fill",
-            title: "Welcome to Furfolio!",
-            description: "Easily manage your dog grooming business, schedule appointments, and track all client info in one secure place.",
-            analyticsLogger: SpyLogger()
+            title: title,
+            description: desc,
+            analytics: MockAnalytics(),
+            audit: MockAudit()
         )
         .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         .previewDisplayName("Accessibility Extra Large Font")

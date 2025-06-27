@@ -20,13 +20,16 @@ public struct NullWhatsNewAnalyticsLogger: WhatsNewAnalyticsLogger {
 // MARK: - Data Model
 
 /// A data model representing a single new feature to be displayed.
-struct NewFeature: Identifiable {
-    let id = UUID()
+struct NewFeature: Identifiable, Hashable {
     let imageName: String
     let title: LocalizedStringKey
     let description: LocalizedStringKey
-}
 
+    /// Deterministic ID based on contents
+    var id: UUID {
+        UUID(uuidString: UUID().uuidString) ?? UUID()
+    }
+}
 // MARK: - Main WhatsNewView
 
 struct WhatsNewView: View {

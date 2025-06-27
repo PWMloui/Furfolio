@@ -7,23 +7,27 @@
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - Centralized Analytics + Audit Logging
 
-public protocol ProgressAnalyticsLogger {
-    func log(event: String, currentStep: Int, totalSteps: Int)
-}
-public struct NullProgressAnalyticsLogger: ProgressAnalyticsLogger {
-    public init() {}
-    public func log(event: String, currentStep: Int, totalSteps: Int) {}
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
 
-// MARK: - Main Indicator
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
+}
+
+// MARK: - OnboardingProgressIndicator View
 
 struct OnboardingProgressIndicator: View {
     let currentStep: Int
     let totalSteps: Int
     var onProgressChange: ((Int) -> Void)? = nil
-    let analyticsLogger: ProgressAnalyticsLogger
+    let analytics: AnalyticsServiceProtocol
+    let audit: AuditLoggerProtocol
+
     // Tokens (with safe fallback)
     let accent: Color
     let inactive: Color
@@ -33,12 +37,13 @@ struct OnboardingProgressIndicator: View {
     let capsuleHeight: CGFloat
     let paddingY: CGFloat
 
-    // MARK: - Dependency Injection for modular/test/preview
+    // MARK: - Dependency Injection
     init(
         currentStep: Int,
         totalSteps: Int,
         onProgressChange: ((Int) -> Void)? = nil,
-        analyticsLogger: ProgressAnalyticsLogger = NullProgressAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         accent: Color = AppColors.accent ?? .accentColor,
         inactive: Color = AppColors.inactive ?? .gray.opacity(0.3),
         spacing: CGFloat = AppSpacing.medium ?? 8,
@@ -50,7 +55,8 @@ struct OnboardingProgressIndicator: View {
         self.currentStep = currentStep
         self.totalSteps = totalSteps
         self.onProgressChange = onProgressChange
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.accent = accent
         self.inactive = inactive
         self.spacing = spacing
@@ -92,7 +98,11 @@ struct OnboardingProgressIndicator: View {
             .accessibilityHint(Text("Indicates your progress through the onboarding steps."))
             .onChange(of: safeCurrentStep) { newValue in
                 onProgressChange?(newValue)
-                analyticsLogger.log(event: "progress_changed", currentStep: newValue, totalSteps: totalSteps)
+                analytics.log(event: "onboarding_progress_changed", parameters: [
+                    "step": newValue,
+                    "total": totalSteps
+                ])
+                audit.record("Progress indicator moved to step \(newValue + 1) of \(totalSteps)", metadata: nil)
             }
         }
     }
@@ -101,17 +111,27 @@ struct OnboardingProgressIndicator: View {
 // MARK: - Previews
 
 #Preview {
-    struct SpyLogger: ProgressAnalyticsLogger {
-        func log(event: String, currentStep: Int, totalSteps: Int) {
-            print("Analytics: \(event), Step: \(currentStep + 1)/\(totalSteps)")
+    struct MockAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String: Any]?) {
+            print("[Analytics] \(event): \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
     }
+
+    struct MockAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String: String]?) {
+            print("[Audit] \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
+    }
+
     return Group {
         VStack {
             OnboardingProgressIndicator(
                 currentStep: 2,
                 totalSteps: 5,
-                analyticsLogger: SpyLogger()
+                analytics: MockAnalytics(),
+                audit: MockAudit()
             )
             .padding()
             Text("Example step content goes here.")
@@ -123,7 +143,8 @@ struct OnboardingProgressIndicator: View {
             OnboardingProgressIndicator(
                 currentStep: 2,
                 totalSteps: 5,
-                analyticsLogger: SpyLogger()
+                analytics: MockAnalytics(),
+                audit: MockAudit()
             )
             .padding()
             Text("Example step content goes here.")
@@ -136,7 +157,8 @@ struct OnboardingProgressIndicator: View {
             OnboardingProgressIndicator(
                 currentStep: 2,
                 totalSteps: 5,
-                analyticsLogger: SpyLogger()
+                analytics: MockAnalytics(),
+                audit: MockAudit()
             )
             .padding()
             Text("Example step content goes here.")
@@ -149,7 +171,8 @@ struct OnboardingProgressIndicator: View {
             OnboardingProgressIndicator(
                 currentStep: 0,
                 totalSteps: 0,
-                analyticsLogger: SpyLogger()
+                analytics: MockAnalytics(),
+                audit: MockAudit()
             )
             .padding()
             Text("No steps to display (totalSteps = 0).")
@@ -161,7 +184,8 @@ struct OnboardingProgressIndicator: View {
             OnboardingProgressIndicator(
                 currentStep: 10,
                 totalSteps: 5,
-                analyticsLogger: SpyLogger()
+                analytics: MockAnalytics(),
+                audit: MockAudit()
             )
             .padding()
             Text("currentStep out of bounds (clamped to valid range).")

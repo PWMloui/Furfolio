@@ -7,22 +7,26 @@
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - Analytics/Audit Logger Protocols
 
-public protocol OnboardingImportAnalyticsLogger {
-    func log(event: String, detail: String?)
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
-public struct NullOnboardingImportAnalyticsLogger: OnboardingImportAnalyticsLogger {
-    public init() {}
-    public func log(event: String, detail: String?) {}
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
 // MARK: - View
 
 struct OnboardingDataImportView: View {
     // MARK: - Analytics / Audit (DI-ready)
-    let analyticsLogger: OnboardingImportAnalyticsLogger
+    let analytics: AnalyticsServiceProtocol
+    let audit: AuditLoggerProtocol
     let demoDataManager: DemoDataManagerProtocol
+
     // MARK: - Tokens
     let accent: Color
     let secondary: Color
@@ -47,7 +51,8 @@ struct OnboardingDataImportView: View {
 
     // MARK: - DI/Token init (prod, preview, or test)
     init(
-        analyticsLogger: OnboardingImportAnalyticsLogger = NullOnboardingImportAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         demoDataManager: DemoDataManagerProtocol = DemoDataManager.shared,
         accent: Color = AppColors.accent ?? .accentColor,
         secondary: Color = AppColors.secondary ?? .secondary,
@@ -62,7 +67,8 @@ struct OnboardingDataImportView: View {
         spacingS: CGFloat = AppSpacing.small ?? 8,
         spacingXL: CGFloat = AppSpacing.extraLarge ?? 36
     ) {
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.demoDataManager = demoDataManager
         self.accent = accent
         self.secondary = secondary
@@ -116,8 +122,7 @@ struct OnboardingDataImportView: View {
     }
 
     private var description: some View {
-        // Placeholder for future description/additional text.
-        EmptyView()
+        EmptyView() // Future description content
     }
 
     private var statusIndicator: some View {
@@ -166,8 +171,8 @@ struct OnboardingDataImportView: View {
             .accessibilityHint(Text(NSLocalizedString("Starts importing demo data into the app", comment: "Accessibility hint for import demo data button")))
 
             Button {
-                // Future: File picker logic
-                analyticsLogger.log(event: "import_file_tap", detail: nil)
+                analytics.log(event: "import_file_tap", parameters: nil)
+                audit.record("User tapped import from file", metadata: nil)
             } label: {
                 Label {
                     Text(LocalizedStringKey("Import from File (CSV, JSON)"))
@@ -178,12 +183,13 @@ struct OnboardingDataImportView: View {
             .buttonStyle(.bordered)
             .font(buttonFont)
             .tint(secondary)
-            .disabled(true) // Coming soon
+            .disabled(true)
             .accessibilityLabel(Text(NSLocalizedString("Import from File", comment: "Button label for importing from file")))
             .accessibilityHint(Text(NSLocalizedString("Coming soon: import data from CSV or JSON files", comment: "Accessibility hint for import from file button")))
 
             Button {
-                analyticsLogger.log(event: "import_skip_tap", detail: nil)
+                analytics.log(event: "import_skip_tap", parameters: nil)
+                audit.record("User skipped import", metadata: nil)
                 dismiss()
             } label: {
                 Text(LocalizedStringKey("Skip"))
@@ -200,17 +206,21 @@ struct OnboardingDataImportView: View {
 
     private func importDemoData() {
         importState = .loading
-        analyticsLogger.log(event: "import_demo_data_start", detail: nil)
+        analytics.log(event: "import_demo_data_start", parameters: nil)
+        audit.record("User started importing demo data", metadata: nil)
+
         Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // Simulate loading
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // Simulated delay
 
             do {
                 try await demoDataManager.populateDemoDataAsync(in: modelContext)
                 importState = .success
-                analyticsLogger.log(event: "import_demo_data_success", detail: nil)
+                analytics.log(event: "import_demo_data_success", parameters: nil)
+                audit.record("Demo data import succeeded", metadata: nil)
             } catch {
-                importState = .failed(NSLocalizedString("Could not import demo data. Please try again.", comment: "Error message when demo data import fails"))
-                analyticsLogger.log(event: "import_demo_data_failed", detail: error.localizedDescription)
+                importState = .failed(NSLocalizedString("Could not import demo data. Please try again.", comment: "Error message"))
+                analytics.log(event: "import_demo_data_failed", parameters: ["error": error.localizedDescription])
+                audit.record("Demo data import failed", metadata: ["error": error.localizedDescription])
             }
         }
     }
@@ -230,31 +240,25 @@ extension DemoDataManager: DemoDataManagerProtocol {
 // MARK: - Previews
 
 #Preview {
-    struct PreviewLogger: OnboardingImportAnalyticsLogger {
-        func log(event: String, detail: String?) {
-            print("Analytics: \(event) (\(detail ?? ""))")
+    struct MockAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String : Any]?) {
+            print("Mock Analytics: \(event), \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
+    }
+    struct MockAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String : String]?) {
+            print("Mock Audit: \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
     }
     struct MockDemoDataManager: DemoDataManagerProtocol {
         func populateDemoDataAsync(in context: ModelContext) async throws {}
     }
-    return Group {
-        OnboardingDataImportView(
-            analyticsLogger: PreviewLogger(),
-            demoDataManager: MockDemoDataManager()
-        )
-        .environment(\.modelContext, .init(DemoDataManager.shared))
-        .preferredColorScheme(.light)
-        .environment(\.sizeCategory, .large)
-        .previewDisplayName("Light Mode - Large Text")
 
-        OnboardingDataImportView(
-            analyticsLogger: PreviewLogger(),
-            demoDataManager: MockDemoDataManager()
-        )
-        .environment(\.modelContext, .init(DemoDataManager.shared))
-        .preferredColorScheme(.dark)
-        .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
-        .previewDisplayName("Dark Mode - Accessibility XXXL Text")
-    }
+    return OnboardingDataImportView(
+        analytics: MockAnalytics(),
+        audit: MockAudit(),
+        demoDataManager: MockDemoDataManager()
+    )
 }

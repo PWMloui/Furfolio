@@ -9,14 +9,16 @@ import SwiftUI
 import UserNotifications
 import OSLog
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - Centralized Analytics and Audit Protocols
 
-public protocol PermissionAnalyticsLogger {
-    func log(event: String, granted: Bool?, error: Error?)
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
-public struct NullPermissionAnalyticsLogger: PermissionAnalyticsLogger {
-    public init() {}
-    public func log(event: String, granted: Bool?, error: Error?) {}
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
 // MARK: - OnboardingPermissionView
@@ -34,7 +36,8 @@ struct OnboardingPermissionView: View {
 
     // MARK: - Injectables/DI
     var onContinue: (() -> Void)? = nil
-    let analyticsLogger: PermissionAnalyticsLogger
+    let analytics: AnalyticsServiceProtocol
+    let audit: AuditLoggerProtocol
 
     // Design tokens (with safe fallback)
     let accent: Color
@@ -51,10 +54,11 @@ struct OnboardingPermissionView: View {
 
     private let logger = Logger(subsystem: "com.furfolio.permissions", category: "onboarding")
 
-    // MARK: - DI Initializer (useful for preview/test/branding)
+    // MARK: - DI Initializer (preview/test/branding)
     init(
         onContinue: (() -> Void)? = nil,
-        analyticsLogger: PermissionAnalyticsLogger = NullPermissionAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         accent: Color = AppColors.accent ?? .accentColor,
         secondary: Color = AppColors.secondary ?? .secondary,
         errorColor: Color = AppColors.red ?? .red,
@@ -68,7 +72,8 @@ struct OnboardingPermissionView: View {
         spacingM: CGFloat = AppSpacing.medium ?? 16
     ) {
         self.onContinue = onContinue
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.accent = accent
         self.secondary = secondary
         self.errorColor = errorColor
@@ -90,14 +95,14 @@ struct OnboardingPermissionView: View {
                 .frame(height: iconSize)
                 .foregroundStyle(accent)
                 .padding(.top, spacingL)
-                .accessibilityLabel(Text(NSLocalizedString("Notification icon", comment: "Accessibility label for notification icon")))
+                .accessibilityLabel(Text("Notification icon"))
 
-            Text(LocalizedStringKey("Stay Informed"))
+            Text("Stay Informed")
                 .font(titleFont)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
 
-            Text(LocalizedStringKey("Enable notifications so you never miss an appointment, reminder, or business insight from Furfolio."))
+            Text("Enable notifications so you never miss an appointment, reminder, or business insight from Furfolio.")
                 .multilineTextAlignment(.center)
                 .font(bodyFont)
                 .foregroundStyle(secondary)
@@ -107,28 +112,28 @@ struct OnboardingPermissionView: View {
                 switch permissionState {
                 case .granted:
                     Label {
-                        Text(NSLocalizedString("Notifications enabled!", comment: "Notification permission granted message"))
+                        Text("Notifications enabled!")
                     } icon: {
                         Image(systemName: "checkmark.circle.fill")
                     }
                     .foregroundStyle(successColor)
-                    .accessibilityLabel(Text(NSLocalizedString("Notifications enabled", comment: "Accessibility label for enabled notifications")))
-                    .accessibilityValue(Text(NSLocalizedString("Status: Granted", comment: "Value for granted status")))
+                    .accessibilityLabel(Text("Notifications enabled"))
+                    .accessibilityValue(Text("Status: Granted"))
                 case .denied:
                     Label {
-                        Text(NSLocalizedString("Notifications not enabled", comment: "Notification permission denied message"))
+                        Text("Notifications not enabled")
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                     }
                     .foregroundStyle(errorColor)
-                    .accessibilityLabel(Text(NSLocalizedString("Notifications denied", comment: "Accessibility label for denied notifications")))
-                    .accessibilityValue(Text(NSLocalizedString("Status: Denied", comment: "Value for denied status")))
+                    .accessibilityLabel(Text("Notifications denied"))
+                    .accessibilityValue(Text("Status: Denied"))
                 case .error:
-                    Text(NSLocalizedString("Unable to request permissions. Please check your device settings.", comment: "Error message when permission request fails"))
+                    Text("Unable to request permissions. Please check your device settings.")
                         .foregroundColor(errorColor)
                         .multilineTextAlignment(.center)
                         .transition(.opacity)
-                        .accessibilityHint(Text(NSLocalizedString("Open settings to allow permissions manually.", comment: "Accessibility hint for error message")))
+                        .accessibilityHint(Text("Open settings to allow permissions manually."))
                 default:
                     EmptyView()
                 }
@@ -141,27 +146,24 @@ struct OnboardingPermissionView: View {
                         if permissionState == .requesting {
                             ProgressView().padding(.trailing, 6)
                         }
-                        Label {
-                            Text(LocalizedStringKey("Enable Notifications"))
-                        } icon: {
-                            Image(systemName: "bell.fill")
-                        }
+                        Label("Enable Notifications", systemImage: "bell.fill")
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(permissionState == .requesting || permissionState == .granted)
-                .accessibilityLabel(Text(NSLocalizedString("Enable notifications", comment: "Accessibility label for enable notifications button")))
-                .accessibilityHint(Text(NSLocalizedString("Requests permission from the system", comment: "Accessibility hint for enable notifications button")))
+                .accessibilityLabel(Text("Enable notifications"))
+                .accessibilityHint(Text("Requests permission from the system"))
 
                 Button(action: {
-                    analyticsLogger.log(event: "permission_skip", granted: nil, error: nil)
+                    analytics.log(event: "permission_skip", parameters: nil)
+                    audit.record("User skipped permission screen", metadata: nil)
                     onContinue?()
                 }) {
-                    Text(LocalizedStringKey("Skip for now"))
+                    Text("Skip for now")
                 }
                 .foregroundStyle(accent)
-                .accessibilityLabel(Text(NSLocalizedString("Skip permission step", comment: "Accessibility label for skip permission button")))
-                .accessibilityHint(Text(NSLocalizedString("Skips the notification permission step", comment: "Accessibility hint for skip permission button")))
+                .accessibilityLabel(Text("Skip permission step"))
+                .accessibilityHint(Text("Skips the notification permission step"))
             }
             .padding(.top, spacingM)
         }
@@ -178,44 +180,61 @@ struct OnboardingPermissionView: View {
                 if let error = error {
                     logger.error("Notification permission error: \(error.localizedDescription)")
                     permissionState = .error
-                    analyticsLogger.log(event: "permission_error", granted: nil, error: error)
+                    analytics.log(event: "permission_error", parameters: ["error": error.localizedDescription])
+                    audit.record("Permission error: \(error.localizedDescription)", metadata: nil)
                 } else if granted {
                     permissionState = .granted
-                    analyticsLogger.log(event: "permission_granted", granted: true, error: nil)
+                    analytics.log(event: "permission_granted", parameters: ["granted": true])
+                    audit.record("Notification permission granted", metadata: nil)
                     onContinue?()
                 } else {
                     permissionState = .denied
-                    analyticsLogger.log(event: "permission_denied", granted: false, error: nil)
+                    analytics.log(event: "permission_denied", parameters: ["granted": false])
+                    audit.record("Notification permission denied", metadata: nil)
                 }
             }
         }
     }
 }
 
+// MARK: - Preview
+
 #Preview {
-    struct PreviewLogger: PermissionAnalyticsLogger {
-        func log(event: String, granted: Bool?, error: Error?) {
-            print("Analytics Event: \(event), granted: \(String(describing: granted)), error: \(String(describing: error))")
+    struct PreviewAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String: Any]?) {
+            print("[Analytics] \(event) → \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
     }
-    Group {
+
+    struct PreviewAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String: String]?) {
+            print("[Audit] \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
+    }
+
+    return Group {
         OnboardingPermissionView(
             onContinue: {},
-            analyticsLogger: PreviewLogger()
+            analytics: PreviewAnalytics(),
+            audit: PreviewAudit()
         )
         .previewDisplayName("Light Mode")
         .environment(\.colorScheme, .light)
 
         OnboardingPermissionView(
             onContinue: {},
-            analyticsLogger: PreviewLogger()
+            analytics: PreviewAnalytics(),
+            audit: PreviewAudit()
         )
         .previewDisplayName("Dark Mode")
         .environment(\.colorScheme, .dark)
 
         OnboardingPermissionView(
             onContinue: {},
-            analyticsLogger: PreviewLogger()
+            analytics: PreviewAnalytics(),
+            audit: PreviewAudit()
         )
         .previewDisplayName("Accessibility Large Text")
         .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)

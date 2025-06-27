@@ -9,10 +9,7 @@
 import Foundation
 import SwiftUI
 
-/// Unified, modular helper for applying accessibility labels, traits, values, and dynamic announcements.
-/// Prepares for business diagnostics, Trust Center audit logging, and localization.
 enum AccessibilityHelper {
-    /// Applies an accessibility label and (optional) value to a view.
     @ViewBuilder
     static func labeled<V: View>(_ view: V, label: String, value: String? = nil) -> some View {
         view
@@ -20,33 +17,41 @@ enum AccessibilityHelper {
             .accessibilityValue(value.map(Text.init) ?? Text(""))
     }
 
-    /// Adds an accessibility trait to a view.
     @ViewBuilder
     static func withTrait<V: View>(_ view: V, trait: AccessibilityTraits) -> some View {
         view.accessibilityAddTraits(trait)
     }
 
-    /// Adds an accessibility hint to a view.
+    @ViewBuilder
+    static func withTraits<V: View>(_ view: V, traits: [AccessibilityTraits]) -> some View {
+        traits.reduce(view) { result, trait in
+            result.accessibilityAddTraits(trait)
+        }
+    }
+
     @ViewBuilder
     static func withHint<V: View>(_ view: V, hint: String) -> some View {
         view.accessibilityHint(Text(hint))
     }
 
-    /// Hides a view from the accessibility tree.
     @ViewBuilder
     static func hidden<V: View>(_ view: V) -> some View {
         view.accessibilityHidden(true)
     }
 
-    /// Announces a message for VoiceOver (iOS only; stubbed elsewhere).
     static func announce(_ message: String) {
         #if os(iOS)
         UIAccessibility.post(notification: .announcement, argument: message)
         #endif
-        // TODO: Hook to audit logger for Trust Center/business compliance.
+        logEvent("announce", extra: message)
     }
 
-    /// Combines label/hint for row-like accessibility elements.
+    static func announceLocalized(key: String) {
+        let message = NSLocalizedString(key, comment: "")
+        announce(message)
+        logEvent("announceLocalized", extra: message)
+    }
+
     @ViewBuilder
     static func row<V: View>(_ view: V, label: String, hint: String? = nil) -> some View {
         view
@@ -55,9 +60,22 @@ enum AccessibilityHelper {
             .accessibilityHint(hint.map(Text.init) ?? Text(""))
     }
 
-    /// Logs an accessibility-related event (for audit/diagnostics; stub).
+    @ViewBuilder
+    static func button<V: View>(_ view: V, label: String, hint: String? = nil) -> some View {
+        view
+            .accessibilityElement()
+            .accessibilityLabel(Text(label))
+            .accessibilityHint(hint.map(Text.init) ?? Text(""))
+            .accessibilityAddTraits(.isButton)
+    }
+
     static func logEvent(_ event: String, extra: String? = nil) {
-        // TODO: Connect to Trust Center/audit event logger.
+        #if DEBUG
+        print("[Accessibility] \(event): \(extra ?? "-")")
+        #else
+        // Replace with your audit/event logger
+        AuditLogger.shared.log(category: .accessibility, event: event, metadata: ["extra": extra ?? ""])
+        #endif
     }
 }
 

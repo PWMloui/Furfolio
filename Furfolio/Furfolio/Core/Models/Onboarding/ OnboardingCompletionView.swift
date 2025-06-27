@@ -7,22 +7,25 @@
 
 import SwiftUI
 
-/// Protocol for audit/analytics logging; inject for compliance and business BI.
-public protocol OnboardingAnalyticsLogger {
-    func log(event: String)
+// MARK: - Centralized Analytics + Audit Protocols
+
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
 }
 
-/// Default no-op logger for previews/tests.
-public struct NullOnboardingAnalyticsLogger: OnboardingAnalyticsLogger {
-    public init() {}
-    public func log(event: String) {}
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
-/// The final screen displayed at the end of the onboarding flow.
-/// Now fully tokenized, modular, analytics/audit–ready, and accessible.
+// MARK: - Onboarding Completion View
+
 struct OnboardingCompletionView: View {
     let onGetStarted: () -> Void
-    let analyticsLogger: OnboardingAnalyticsLogger
+    let analytics: AnalyticsServiceProtocol
+    let audit: AuditLoggerProtocol
+
     // Design tokens with safe fallback
     let accent: Color
     let secondary: Color
@@ -36,7 +39,8 @@ struct OnboardingCompletionView: View {
     /// Dependency-injectable initializer for test, preview, or production.
     init(
         onGetStarted: @escaping () -> Void,
-        analyticsLogger: OnboardingAnalyticsLogger = NullOnboardingAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         accent: Color = AppColors.accent ?? .accentColor,
         secondary: Color = AppColors.secondary ?? .secondary,
         background: Color = AppColors.background ?? Color(UIColor.systemBackground),
@@ -47,7 +51,8 @@ struct OnboardingCompletionView: View {
         spacing: CGFloat = AppSpacing.xxLarge ?? 32
     ) {
         self.onGetStarted = onGetStarted
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.accent = accent
         self.secondary = secondary
         self.background = background
@@ -78,7 +83,8 @@ struct OnboardingCompletionView: View {
                 .foregroundStyle(secondary)
 
             Button(action: {
-                analyticsLogger.log(event: "onboarding_get_started_tap")
+                analytics.log(event: "onboarding_get_started_tap", parameters: nil)
+                audit.record("User tapped 'Get Started' on onboarding completion", metadata: nil)
                 onGetStarted()
             }) {
                 Text(LocalizedStringKey("Get Started"))
@@ -103,31 +109,42 @@ struct OnboardingCompletionView: View {
 // MARK: - Previews
 
 struct OnboardingCompletionView_Previews: PreviewProvider {
-    struct AnalyticsLoggerSpy: OnboardingAnalyticsLogger {
-        func log(event: String) {
-            print("Analytics Event: \(event)")
+    struct PreviewAnalyticsLogger: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String : Any]?) {
+            print("[Preview] Analytics: \(event)")
         }
+        func screenView(_ name: String) {}
+    }
+
+    struct PreviewAuditLogger: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String : String]?) {
+            print("[Preview] Audit: \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
     }
 
     static var previews: some View {
         Group {
             OnboardingCompletionView(
                 onGetStarted: {},
-                analyticsLogger: AnalyticsLoggerSpy()
+                analytics: PreviewAnalyticsLogger(),
+                audit: PreviewAuditLogger()
             )
             .previewDisplayName("Light Mode")
             .environment(\.colorScheme, .light)
 
             OnboardingCompletionView(
                 onGetStarted: {},
-                analyticsLogger: AnalyticsLoggerSpy()
+                analytics: PreviewAnalyticsLogger(),
+                audit: PreviewAuditLogger()
             )
             .previewDisplayName("Dark Mode")
             .environment(\.colorScheme, .dark)
 
             OnboardingCompletionView(
                 onGetStarted: {},
-                analyticsLogger: AnalyticsLoggerSpy()
+                analytics: PreviewAnalyticsLogger(),
+                audit: PreviewAuditLogger()
             )
             .previewDisplayName("Accessibility Large Text")
             .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)

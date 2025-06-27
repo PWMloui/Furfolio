@@ -7,14 +7,27 @@
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Logger Protocol
+// MARK: - TutorialAnalytics Protocol (Legacy Stub)
 
 public protocol TutorialAnalyticsLogger {
     func log(event: String, step: Int?)
 }
+
 public struct NullTutorialAnalyticsLogger: TutorialAnalyticsLogger {
     public init() {}
     public func log(event: String, step: Int?) {}
+}
+
+// MARK: - Centralized Logging Protocols
+
+public protocol AnalyticsServiceProtocol {
+    func log(event: String, parameters: [String: Any]?)
+    func screenView(_ name: String)
+}
+
+public protocol AuditLoggerProtocol {
+    func record(_ message: String, metadata: [String: String]?)
+    func recordSensitive(_ action: String, userId: String)
 }
 
 // MARK: - Tutorial Step
@@ -29,10 +42,11 @@ struct TutorialStep: Identifiable {
 // MARK: - InteractiveTutorialView
 
 struct InteractiveTutorialView: View {
-    // MARK: - Dependencies (Inject for test/preview)
-    let analyticsLogger: TutorialAnalyticsLogger
+    // MARK: - Dependencies
+    let analytics: AnalyticsServiceProtocol
+    let audit: AuditLoggerProtocol
 
-    // MARK: - Design Tokens (with safe fallback)
+    // MARK: - Design Tokens
     let accent: Color
     let secondary: Color
     let background: Color
@@ -46,7 +60,7 @@ struct InteractiveTutorialView: View {
     let capsuleHeight: CGFloat
     let cornerRadius: CGFloat
 
-    // MARK: - Steps Data
+    // MARK: - Tutorial Data
     static let defaultSteps: [TutorialStep] = [
         .init(imageName: "pawprint.fill",
               titleKey: "Welcome to Furfolio!",
@@ -67,10 +81,11 @@ struct InteractiveTutorialView: View {
     @State private var currentStep = 0
     @Environment(\.dismiss) private var dismiss
 
-    // MARK: - Initializer (Dependency injection + tokenization)
+    // MARK: - Initializer
     init(
         steps: [TutorialStep] = Self.defaultSteps,
-        analyticsLogger: TutorialAnalyticsLogger = NullTutorialAnalyticsLogger(),
+        analytics: AnalyticsServiceProtocol = AnalyticsService.shared,
+        audit: AuditLoggerProtocol = AuditLogger.shared,
         accent: Color = AppColors.accent ?? .accentColor,
         secondary: Color = AppColors.secondary ?? .secondary,
         background: Color = AppColors.background ?? Color(.systemBackground),
@@ -85,7 +100,8 @@ struct InteractiveTutorialView: View {
         cornerRadius: CGFloat = AppRadius.medium ?? 16
     ) {
         self.steps = steps
-        self.analyticsLogger = analyticsLogger
+        self.analytics = analytics
+        self.audit = audit
         self.accent = accent
         self.secondary = secondary
         self.background = background
@@ -158,7 +174,8 @@ struct InteractiveTutorialView: View {
                     Button(action: {
                         withAnimation {
                             currentStep -= 1
-                            analyticsLogger.log(event: "tutorial_back", step: currentStep)
+                            analytics.log(event: "tutorial_back", parameters: ["step": currentStep])
+                            audit.record("User navigated back to tutorial step \(currentStep)", metadata: nil)
                         }
                     }) {
                         Text(LocalizedStringKey("Back"))
@@ -174,7 +191,8 @@ struct InteractiveTutorialView: View {
                     Button(action: {
                         withAnimation {
                             currentStep += 1
-                            analyticsLogger.log(event: "tutorial_next", step: currentStep)
+                            analytics.log(event: "tutorial_next", parameters: ["step": currentStep])
+                            audit.record("User advanced to tutorial step \(currentStep)", metadata: nil)
                         }
                     }) {
                         Text(LocalizedStringKey("Next"))
@@ -185,7 +203,8 @@ struct InteractiveTutorialView: View {
                     .accessibilityHint(Text("Navigates to the next tutorial step"))
                 } else {
                     Button(action: {
-                        analyticsLogger.log(event: "tutorial_complete", step: currentStep)
+                        analytics.log(event: "tutorial_complete", parameters: ["step": currentStep])
+                        audit.record("User completed tutorial", metadata: nil)
                         dismiss()
                     }) {
                         Text(LocalizedStringKey("Get Started"))
@@ -209,29 +228,34 @@ struct InteractiveTutorialView: View {
         )
         .cornerRadius(cornerRadius)
         .accessibilityElement(children: .contain)
-        .onAppear { analyticsLogger.log(event: "tutorial_start", step: 0) }
+        .onAppear {
+            analytics.log(event: "tutorial_start", parameters: ["step": 0])
+            audit.record("User started tutorial", metadata: nil)
+        }
     }
 }
 
-// MARK: - Previews
+// MARK: - Preview
 
 struct InteractiveTutorialView_Previews: PreviewProvider {
-    struct AnalyticsSpy: TutorialAnalyticsLogger {
-        func log(event: String, step: Int?) {
-            print("Analytics Event: \(event), step: \(step ?? -1)")
+    struct MockAnalytics: AnalyticsServiceProtocol {
+        func log(event: String, parameters: [String : Any]?) {
+            print("Mock Analytics Event: \(event), params: \(parameters ?? [:])")
         }
+        func screenView(_ name: String) {}
+    }
+
+    struct MockAudit: AuditLoggerProtocol {
+        func record(_ message: String, metadata: [String : String]?) {
+            print("Mock Audit: \(message)")
+        }
+        func recordSensitive(_ action: String, userId: String) {}
     }
 
     static var previews: some View {
-        Group {
-            InteractiveTutorialView(analyticsLogger: AnalyticsSpy())
-                .previewDisplayName("Light Mode")
-            InteractiveTutorialView(analyticsLogger: AnalyticsSpy())
-                .preferredColorScheme(.dark)
-                .previewDisplayName("Dark Mode")
-            InteractiveTutorialView(analyticsLogger: AnalyticsSpy())
-                .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
-                .previewDisplayName("Accessibility - Extra Large Text")
-        }
+        InteractiveTutorialView(
+            analytics: MockAnalytics(),
+            audit: MockAudit()
+        )
     }
 }
