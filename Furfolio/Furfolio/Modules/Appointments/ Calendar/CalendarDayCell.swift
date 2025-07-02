@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - CalendarDayCell Audit/Event Logging
 
@@ -81,35 +82,124 @@ struct CalendarDayCell: View {
     var actor: String? = "user"
     var context: String? = "CalendarDayCell"
 
+    // MARK: - Body
+
     var body: some View {
-        VStack(spacing: AppSpacing.small) {
-            dayNumberView
-            eventIndicatorsView
-                .frame(height: AppSpacing.xSmall)
-        }
-        .padding(AppSpacing.xSmall)
-        .opacity(isInCurrentMonth ? 1.0 : 0.4)
-        .background(
-            RoundedRectangle(cornerRadius: BorderRadius.medium)
-                .fill(isToday ? AppColors.backgroundHighlight : AppColors.background)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            CalendarDayCellAudit.record(
-                operation: "tap",
-                date: date,
-                appointments: appointments.count,
-                birthdays: birthdays.count,
-                tasks: tasks.count,
-                tags: buildTags(),
-                actor: actor,
-                context: context
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: AppSpacing.medium) { // Increased spacing for better touch comfort
+                dayNumberView
+                eventIndicatorsView
+                    .frame(height: AppSpacing.xSmall)
+            }
+            .padding(AppSpacing.xSmall)
+            .opacity(isInCurrentMonth ? 1.0 : 0.4)
+            .background(
+                RoundedRectangle(cornerRadius: BorderRadius.medium)
+                    .fill(isToday ? AppColors.backgroundHighlight : AppColors.background)
             )
-            onTap?()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // Audit tap event as before
+                CalendarDayCellAudit.record(
+                    operation: "tap",
+                    date: date,
+                    appointments: appointments.count,
+                    birthdays: birthdays.count,
+                    tasks: tasks.count,
+                    tags: buildTags(),
+                    actor: actor,
+                    context: context
+                )
+                onTap?()
+            }
+            // Add long-press gesture to present context menu with quick actions
+            .contextMenu {
+                Button(action: {
+                    // Copy day summary to clipboard
+                    let summary = accessibilityLabel
+                    UIPasteboard.general.string = summary
+                }) {
+                    Label("Copy Day Summary", systemImage: "doc.on.doc")
+                }
+                Button(action: {
+                    // Audit quick add appointment and trigger onTap
+                    CalendarDayCellAudit.record(
+                        operation: "tap",
+                        date: date,
+                        appointments: appointments.count,
+                        birthdays: birthdays.count,
+                        tasks: tasks.count,
+                        tags: buildTags() + ["add"],
+                        actor: actor,
+                        context: context,
+                        detail: "Quick Add Appointment"
+                    )
+                    onTap?()
+                }) {
+                    Label("Quick Add Appointment", systemImage: "plus.circle")
+                }
+                Button(action: {
+                    // Audit quick add task and trigger onTap
+                    CalendarDayCellAudit.record(
+                        operation: "tap",
+                        date: date,
+                        appointments: appointments.count,
+                        birthdays: birthdays.count,
+                        tasks: tasks.count,
+                        tags: buildTags() + ["task"],
+                        actor: actor,
+                        context: context,
+                        detail: "Quick Add Task"
+                    )
+                    onTap?()
+                }) {
+                    Label("Quick Add Task", systemImage: "plus.circle.fill")
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(accessibilityTraits)
+
+            // MARK: - Top-right badge for appointments > 2 and/or birthdays
+
+            if hasBadge {
+                VStack(spacing: 2) {
+                    if showBirthdayBadge {
+                        Text("🎂")
+                            .font(.caption)
+                            .padding(4)
+                            .background(Circle().fill(AppColors.birthdayBadgeBackground))
+                            .accessibilityHidden(true)
+                    }
+                    if showAppointmentBadge {
+                        Text("\(appointments.count)")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                            .padding(6)
+                            .background(Circle().fill(AppColors.appointmentBadge))
+                            .accessibilityHidden(true)
+                    }
+                }
+                .offset(x: 6, y: -6)
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(accessibilityTraits)
+    }
+
+    // MARK: - Badge Helpers
+
+    /// Whether to show any badge in the top-right corner
+    private var hasBadge: Bool {
+        showAppointmentBadge || showBirthdayBadge
+    }
+
+    /// Show numeric badge if appointments > 2
+    private var showAppointmentBadge: Bool {
+        appointments.count > 2
+    }
+
+    /// Show cake emoji badge if at least one birthday
+    private var showBirthdayBadge: Bool {
+        !birthdays.isEmpty
     }
 
     // MARK: - Subviews
@@ -241,6 +331,17 @@ struct CalendarDayCell_Previews: PreviewProvider {
                 tasks: [],
                 isSelected: false,
                 isInCurrentMonth: false
+            )
+            CalendarDayCell(
+                date: Calendar.current.date(byAdding: .day, value: 3, to: Date())!,
+                appointments: [
+                    .init(id: UUID(), date: Date(), serviceType: "Grooming"),
+                    .init(id: UUID(), date: Date(), serviceType: "Walking"),
+                    .init(id: UUID(), date: Date(), serviceType: "Vet Visit")
+                ],
+                birthdays: [.init(id: UUID(), name: "Max", birthDate: Date())],
+                tasks: [],
+                isSelected: false
             )
         }
         .padding()

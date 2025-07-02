@@ -5,18 +5,36 @@
 //  Enhanced: Fully tokenized, analytics/audit–ready, modular, accessible, preview/testable, robust.
 //
 
+/**
+ OnboardingCompletionView
+ ------------------------
+ A SwiftUI view that confirms onboarding completion in Furfolio.
+
+ - **Purpose**: Celebrates successful onboarding and directs users to start the app.
+ - **Architecture**: MVVM-capable, dependency-injectable for analytics and audit.
+ - **Concurrency & Analytics**: Uses async/await for audit and analytics logging via protocols.
+ - **Audit/Analytics Ready**: Defines async protocols and uses Task for non-blocking logging.
+ - **Localization**: All user-facing strings use `LocalizedStringKey`.
+ - **Accessibility**: Combines children, provides labels and hints.
+ - **Preview/Testability**: Previews inject mock async loggers and demonstrate light/dark/accessibility modes.
+ */
+
 import SwiftUI
 
 // MARK: - Centralized Analytics + Audit Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Track a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record a general audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
 }
 
 // MARK: - Onboarding Completion View
@@ -83,9 +101,11 @@ struct OnboardingCompletionView: View {
                 .foregroundStyle(secondary)
 
             Button(action: {
-                analytics.log(event: "onboarding_get_started_tap", parameters: nil)
-                audit.record("User tapped 'Get Started' on onboarding completion", metadata: nil)
-                onGetStarted()
+                Task {
+                    await analytics.log(event: "onboarding_get_started_tap", parameters: nil)
+                    await audit.record("User tapped 'Get Started' on onboarding completion", metadata: nil)
+                    onGetStarted()
+                }
             }) {
                 Text(LocalizedStringKey("Get Started"))
                     .frame(maxWidth: .infinity)
@@ -103,6 +123,11 @@ struct OnboardingCompletionView: View {
         .background(background.ignoresSafeArea())
         .cornerRadius(cornerRadius)
         .accessibilityElement(children: .combine)
+        .onAppear {
+            Task {
+                await analytics.screenView("OnboardingCompletion")
+            }
+        }
     }
 }
 
@@ -110,17 +135,17 @@ struct OnboardingCompletionView: View {
 
 struct OnboardingCompletionView_Previews: PreviewProvider {
     struct PreviewAnalyticsLogger: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String : Any]?) {
+        func log(event: String, parameters: [String : Any]?) async {
             print("[Preview] Analytics: \(event)")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
 
     struct PreviewAuditLogger: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String : String]?) {
+        func record(_ message: String, metadata: [String : String]?) async {
             print("[Preview] Audit: \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     static var previews: some View {

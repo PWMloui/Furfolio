@@ -2,40 +2,68 @@
 //  DependencyContainer.swift
 //  Furfolio
 //
-//  Enhanced: audit/analytics–ready, token-compliant, test-injectable, brand/Trust Center compliant.
+//  Enhanced 2025-06-30: role/staff/context audit, escalation protocol, trust center/BI ready, still modular, testable.
 //
 
 import SwiftUI
 import Foundation
 import SwiftData
 
-// MARK: - Analytics/Audit Protocol
-
+// MARK: - Analytics/Audit Protocol (Role/Staff/Context/Escalation)
 public protocol DependencyContainerAnalyticsLogger {
-    func log(event: String, info: String?)
+    var testMode: Bool { get set }
+    func log(event: String, info: String?, role: String?, staffID: String?, context: String?) async
+    func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async
 }
+
+/// No-op logger for default/preview/testing
 public struct NullDependencyContainerAnalyticsLogger: DependencyContainerAnalyticsLogger {
+    public var testMode: Bool = false
     public init() {}
-    public func log(event: String, info: String?) {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?) async {}
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {}
+}
+
+/// Console logger for QA/testing
+public struct ConsoleDependencyContainerAnalyticsLogger: DependencyContainerAnalyticsLogger {
+    public var testMode: Bool = true
+    public init() {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?) async {
+        print("[DependencyContainer][LOG] \(event) | Info: \(info ?? "-") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]")
+    }
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {
+        print("[DependencyContainer][ESCALATE] \(event) | Info: \(info ?? "-") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]")
+    }
 }
 
 // MARK: - DependencyContainer (Unified DI for Services, Managers, ViewModels)
 
 @MainActor
 final class DependencyContainer: ObservableObject {
-    // MARK: - Analytics Logger (BI/QA/Trust Center/admin/preview)
+    // MARK: - Audit/Analytics Context (DI ready)
     static var analyticsLogger: DependencyContainerAnalyticsLogger = NullDependencyContainerAnalyticsLogger()
+    static var currentRole: String? = nil
+    static var currentStaffID: String? = nil
+    static var currentContext: String? = "DependencyContainer"
+    private static var analyticsEventHistory: [(event: String, info: String?, role: String?, staffID: String?, context: String?)] = []
 
-    // MARK: - Singleton/Test Instance
+    // Singleton and test instances
     static var shared: DependencyContainer = DependencyContainer()
     static var testInstance: DependencyContainer = {
         let container = DependencyContainer(testing: true)
-        // TODO: Inject mock services and test loggers here
-        DependencyContainer.analyticsLogger.log(event: "testInstance_created", info: nil)
+        Task {
+            await DependencyContainer.analyticsLogger.log(
+                event: NSLocalizedString("testInstance_created", comment: "Analytics event when test instance of DependencyContainer is created"),
+                info: nil,
+                role: currentRole,
+                staffID: currentStaffID,
+                context: currentContext
+            )
+        }
         return container
     }()
 
-    // MARK: - Core Services & Managers (Tokenized)
+    // MARK: - Core Services & Managers (unchanged)
     let featureFlagManager: FeatureFlagManager
     let demoDataManager: DemoDataManager
     let appState: AppState
@@ -49,7 +77,7 @@ final class DependencyContainer: ObservableObject {
     let userRoleManager: UserRoleManager
     let modelContainer: ModelContainer
 
-    // MARK: - View Models (DI Stubs)
+    // MARK: - View Models (unchanged)
     let onboardingViewModel: OnboardingViewModel
     let dashboardViewModel: DashboardViewModel
     let loginViewModel: LoginViewModel
@@ -57,9 +85,21 @@ final class DependencyContainer: ObservableObject {
     // MARK: - Initialization
 
     private init(testing: Bool = false) {
-        // Log initialization (for Trust Center/audit)
-        Self.analyticsLogger.log(event: "DependencyContainer_init", info: testing ? "testing" : "production")
-        // Initialize core services and managers (future: support DI/parameter overrides)
+        // Test mode logger if testing
+        if testing {
+            Self.analyticsLogger = ConsoleDependencyContainerAnalyticsLogger()
+        }
+
+        // Log container initialization
+        Task {
+            await Self.logEvent(
+                event: NSLocalizedString("DependencyContainer_init", comment: "Analytics event when DependencyContainer initializes"),
+                info: testing ? NSLocalizedString("testing", comment: "Indicates testing environment") : NSLocalizedString("production", comment: "Indicates production environment"),
+                escalate: false
+            )
+        }
+
+        // Core services
         self.featureFlagManager = FeatureFlagManager.shared
         self.demoDataManager = DemoDataManager.shared
         self.appState = AppState()
@@ -71,56 +111,98 @@ final class DependencyContainer: ObservableObject {
         self.expenseTracker = ExpenseTracker()
         self.businessManager = BusinessManager()
         self.userRoleManager = UserRoleManager()
-
-        // ModelContainer: robust error handling, audit if failed
+        
         do {
             self.modelContainer = try ModelContainer(
                 for: DogOwner.self, Dog.self, Appointment.self, Charge.self, Task.self, BehaviorLog.self, VaccinationRecord.self
             )
         } catch {
-            Self.analyticsLogger.log(event: "ModelContainer_init_failed", info: error.localizedDescription)
-            // Fail-safe: Fallback or show onboarding error UI, never just fatalError in production!
+            Task {
+                await Self.logEvent(
+                    event: NSLocalizedString("ModelContainer_init_failed", comment: "Analytics event when ModelContainer initialization fails"),
+                    info: error.localizedDescription,
+                    escalate: true
+                )
+            }
             fatalError("Failed to initialize ModelContainer: \(error)")
         }
 
-        // Inject dependencies into view models
+        // View models
         self.onboardingViewModel = OnboardingViewModel(dependencies: self)
         self.dashboardViewModel = DashboardViewModel(dependencies: self)
         self.loginViewModel = LoginViewModel(dependencies: self)
 
         platformSpecificSetup()
 
-        Self.analyticsLogger.log(event: "DependencyContainer_ready", info: nil)
+        Task {
+            await Self.logEvent(
+                event: NSLocalizedString("DependencyContainer_ready", comment: "Analytics event when DependencyContainer is fully initialized and ready"),
+                info: nil,
+                escalate: false
+            )
+        }
     }
 
     // MARK: - Methods
 
-    /// Refresh all dependencies (log for QA/audit/preview)
     func refreshDependencies() {
-        Self.analyticsLogger.log(event: "refreshDependencies_called", info: nil)
-        // Example: featureFlagManager.reload(), demoDataManager.reload(), appState.reset()
-        // All critical refreshes should be logged and auditable.
+        Task {
+            await Self.logEvent(
+                event: NSLocalizedString("refreshDependencies_called", comment: "Analytics event when refreshDependencies is called"),
+                info: nil,
+                escalate: false
+            )
+        }
+        // Add refresh logic for critical managers as needed
     }
 
-    /// Platform-specific setup (future: audit/analytics as well)
     private func platformSpecificSetup() {
         #if os(macOS)
-        Self.analyticsLogger.log(event: "platformSetup", info: "macOS")
+        Task {
+            await Self.logEvent(
+                event: NSLocalizedString("platformSetup", comment: "Analytics event for platform-specific setup"),
+                info: NSLocalizedString("macOS", comment: "Platform info for macOS"),
+                escalate: false
+            )
+        }
         #elseif os(iOS)
         let idiom = UIDevice.current.userInterfaceIdiom
-        Self.analyticsLogger.log(event: "platformSetup", info: idiom == .pad ? "iPad" : "iPhone")
+        let platformInfo = idiom == .pad ? NSLocalizedString("iPad", comment: "Platform info for iPad") : NSLocalizedString("iPhone", comment: "Platform info for iPhone")
+        Task {
+            await Self.logEvent(
+                event: NSLocalizedString("platformSetup", comment: "Analytics event for platform-specific setup"),
+                info: platformInfo,
+                escalate: false
+            )
+        }
         #endif
     }
 
-    // MARK: - Dependency Accessors with Audit Hooks (optional for Trust Center)
-    // Example: every time a dependency is accessed, you could log it for sensitive services (use judiciously to avoid log spam!)
-    // func getAuditLogManager() -> AuditLogManager {
-    //     Self.analyticsLogger.log(event: "auditLogManager_accessed", info: nil)
-    //     return auditLogManager
-    // }
+    // MARK: - Audit Logging & Escalation
+
+    @MainActor
+    private static func logEvent(event: String, info: String?, escalate: Bool) async {
+        let role = currentRole
+        let staffID = currentStaffID
+        let ctx = currentContext
+        analyticsEventHistory.append((event: event, info: info, role: role, staffID: staffID, context: ctx))
+        if analyticsEventHistory.count > 20 {
+            analyticsEventHistory.removeFirst(analyticsEventHistory.count - 20)
+        }
+        if escalate {
+            await analyticsLogger.escalate(event: event, info: info, role: role, staffID: staffID, context: ctx)
+        } else {
+            await analyticsLogger.log(event: event, info: info, role: role, staffID: staffID, context: ctx)
+        }
+    }
+
+    /// Public API to fetch the last 20 analytics events for diagnostics or admin UI.
+    public static func fetchRecentAnalyticsEvents() -> [(event: String, info: String?, role: String?, staffID: String?, context: String?)] {
+        return analyticsEventHistory
+    }
 }
 
-// MARK: - Stub Classes for Managers and ViewModels (unchanged, as before)
+// MARK: - Stubs for Managers and ViewModels (unchanged)
 final class TrustCenterManager {}
 final class NotificationPermissionHelper {}
 final class AuditLogManager {}
@@ -139,12 +221,3 @@ final class DashboardViewModel: ObservableObject {
 final class LoginViewModel: ObservableObject {
     init(dependencies: DependencyContainer) {}
 }
-
-// MARK: - Best Practices (Usage Guidance, unchanged)
-/*
- - Use DependencyContainer.shared for real, .testInstance for previews/tests.
- - All services/managers/view models are always injected and logged for audit/compliance.
- - All new dependencies should be registered in the container and, if sensitive, have audit hooks for access.
- - Replace stubs with real implementations as the app grows; inject mocks/test loggers as needed.
- - Never instantiate dependencies outside the container—enforce single source of truth.
-*/

@@ -16,17 +16,17 @@ final class Dog: Identifiable, ObservableObject {
     // MARK: - Core Properties
 
     @Attribute(.unique)
-    @Published var id: UUID
+    @Published private var _id: UUID
 
     @Attribute(.required)
-    @Published var name: String
+    @Published private var _name: String
 
-    @Published var breed: String?
-    @Published var birthdate: Date?
-    @Published var color: String?
-    @Published var gender: String?
-    @Published var notes: String?
-    @Published var isActive: Bool
+    @Published private var _breed: String?
+    @Published private var _birthdate: Date?
+    @Published private var _color: String?
+    @Published private var _gender: String?
+    @Published private var _notes: String?
+    @Published private var _isActive: Bool
 
     // MARK: - Relationships
 
@@ -34,42 +34,250 @@ final class Dog: Identifiable, ObservableObject {
     @Published var owner: DogOwner?
 
     @Relationship(deleteRule: .cascade, inverse: \Appointment.dog)
-    @Published var appointments: [Appointment]
+    @Published private var _appointments: [Appointment]
 
     @Relationship(deleteRule: .nullify, inverse: \Charge.dog)
-    @Published var charges: [Charge]
+    @Published private var _charges: [Charge]
 
     @Relationship(deleteRule: .cascade)
-    @Published var vaccinationRecords: [VaccinationRecord]
+    @Published private var _vaccinationRecords: [VaccinationRecord]
 
     @Relationship(deleteRule: .cascade)
-    @Published var behaviorLogs: [BehaviorLog]
+    @Published private var _behaviorLogs: [BehaviorLog]
 
-    @Published var imageGallery: [Data]
-    @Published var tags: [String]
+    @Published private var _imageGallery: [Data]
+    @Published private var _tags: [String]
 
     // MARK: - Metadata & Audit
 
-    @Published var dateAdded: Date
-    @Published var lastModified: Date
-    @Published var lastModifiedBy: String?
+    @Published private var _dateAdded: Date
+    @Published private var _lastModified: Date
+    @Published private var _lastModifiedBy: String?
 
-    // MARK: - Tag Tokenization
+    // MARK: - Audit Log Entry
+
+    struct AuditEntry: Codable, Identifiable {
+        let id = UUID()
+        let date: Date
+        let event: String
+    }
+
+    // MARK: - Audit Log Storage & Concurrency
+
+    /// Actor to serialize audit logging operations safely for concurrency.
+    private actor AuditLogger {
+        private(set) var auditEntries: [AuditEntry] = []
+
+        /// Adds a new audit entry asynchronously.
+        /// - Parameter event: The localized event description string.
+        func logEvent(_ event: String) {
+            let entry = AuditEntry(date: Date(), event: event)
+            auditEntries.append(entry)
+        }
+
+        /// Retrieves all audit entries asynchronously.
+        func getAuditEntries() -> [AuditEntry] {
+            auditEntries
+        }
+    }
+
+    private let auditLogger = AuditLogger()
+
+    // MARK: - BusinessTag Enum
 
     enum BusinessTag: String, CaseIterable, Codable {
         case loyal, aggressive, overdueVaccination, senior, puppy, birthdayThisMonth, specialNeeds, frequent, firstVisit
     }
 
+    // MARK: - Public Properties with Async Audit Logging
+
+    var id: UUID {
+        _id
+    }
+
+    var name: String {
+        get { _name }
+        set {
+            if _name != newValue {
+                _name = newValue
+                Task {
+                    await logPropertyChange(propertyName: NSLocalizedString("Name", comment: "Property name"), newValue: newValue)
+                }
+            }
+        }
+    }
+
+    var breed: String? {
+        get { _breed }
+        set {
+            if _breed != newValue {
+                _breed = newValue
+                Task {
+                    await logPropertyChange(propertyName: NSLocalizedString("Breed", comment: "Property name"), newValue: newValue ?? NSLocalizedString("None", comment: "No value"))
+                }
+            }
+        }
+    }
+
+    var birthdate: Date? {
+        get { _birthdate }
+        set {
+            if _birthdate != newValue {
+                _birthdate = newValue
+                Task {
+                    let newValString = newValue?.formatted(.dateTime.month().day().year()) ?? NSLocalizedString("None", comment: "No value")
+                    await logPropertyChange(propertyName: NSLocalizedString("Birthdate", comment: "Property name"), newValue: newValString)
+                }
+            }
+        }
+    }
+
+    var color: String? {
+        get { _color }
+        set {
+            if _color != newValue {
+                _color = newValue
+                Task {
+                    await logPropertyChange(propertyName: NSLocalizedString("Color", comment: "Property name"), newValue: newValue ?? NSLocalizedString("None", comment: "No value"))
+                }
+            }
+        }
+    }
+
+    var gender: String? {
+        get { _gender }
+        set {
+            if _gender != newValue {
+                _gender = newValue
+                Task {
+                    await logPropertyChange(propertyName: NSLocalizedString("Gender", comment: "Property name"), newValue: newValue ?? NSLocalizedString("None", comment: "No value"))
+                }
+            }
+        }
+    }
+
+    var notes: String? {
+        get { _notes }
+        set {
+            if _notes != newValue {
+                _notes = newValue
+                Task {
+                    await logPropertyChange(propertyName: NSLocalizedString("Notes", comment: "Property name"), newValue: newValue ?? "")
+                }
+            }
+        }
+    }
+
+    var isActive: Bool {
+        get { _isActive }
+        set {
+            if _isActive != newValue {
+                _isActive = newValue
+                Task {
+                    await logPropertyChange(propertyName: NSLocalizedString("Active Status", comment: "Property name"), newValue: newValue ? NSLocalizedString("Active", comment: "Status") : NSLocalizedString("Inactive", comment: "Status"))
+                }
+            }
+        }
+    }
+
+    var appointments: [Appointment] {
+        get { _appointments }
+        set {
+            _appointments = newValue
+            Task {
+                await logAuditEvent(String(format: NSLocalizedString("Appointments updated, total count: %d", comment: "Audit event"), newValue.count))
+            }
+        }
+    }
+
+    var charges: [Charge] {
+        get { _charges }
+        set {
+            _charges = newValue
+            Task {
+                await logAuditEvent(String(format: NSLocalizedString("Charges updated, total count: %d", comment: "Audit event"), newValue.count))
+            }
+        }
+    }
+
+    var vaccinationRecords: [VaccinationRecord] {
+        get { _vaccinationRecords }
+        set {
+            _vaccinationRecords = newValue
+            Task {
+                await logAuditEvent(String(format: NSLocalizedString("Vaccination records updated, total count: %d", comment: "Audit event"), newValue.count))
+            }
+        }
+    }
+
+    var behaviorLogs: [BehaviorLog] {
+        get { _behaviorLogs }
+        set {
+            _behaviorLogs = newValue
+            Task {
+                await logAuditEvent(String(format: NSLocalizedString("Behavior logs updated, total count: %d", comment: "Audit event"), newValue.count))
+            }
+        }
+    }
+
+    var imageGallery: [Data] {
+        get { _imageGallery }
+        set {
+            _imageGallery = newValue
+            Task {
+                await logAuditEvent(String(format: NSLocalizedString("Image gallery updated, total images: %d", comment: "Audit event"), newValue.count))
+            }
+        }
+    }
+
+    var tags: [String] {
+        get { _tags }
+        set {
+            _tags = newValue
+            Task {
+                await logAuditEvent(String(format: NSLocalizedString("Tags updated, total count: %d", comment: "Audit event"), newValue.count))
+            }
+        }
+    }
+
+    var dateAdded: Date {
+        _dateAdded
+    }
+
+    var lastModified: Date {
+        _lastModified
+    }
+
+    var lastModifiedBy: String? {
+        _lastModifiedBy
+    }
+
+    // MARK: - Tag Tokenization
+
     var businessTags: [BusinessTag] {
         tags.compactMap { BusinessTag(rawValue: $0) }
     }
 
-    func addTag(_ tag: BusinessTag) {
-        if !tags.contains(tag.rawValue) { tags.append(tag.rawValue) }
+    /// Adds a business tag asynchronously with audit logging.
+    /// - Parameter tag: The BusinessTag to add.
+    func addTag(_ tag: BusinessTag) async {
+        if !tags.contains(tag.rawValue) {
+            _tags.append(tag.rawValue)
+            await logAuditEvent(String(format: NSLocalizedString("Tag added: %@", comment: "Audit event for tag addition"), tag.rawValue))
+        }
     }
-    func removeTag(_ tag: BusinessTag) {
-        tags.removeAll { $0 == tag.rawValue }
+
+    /// Removes a business tag asynchronously with audit logging.
+    /// - Parameter tag: The BusinessTag to remove.
+    func removeTag(_ tag: BusinessTag) async {
+        if _tags.removeAll(where: { $0 == tag.rawValue }) > 0 {
+            await logAuditEvent(String(format: NSLocalizedString("Tag removed: %@", comment: "Audit event for tag removal"), tag.rawValue))
+        }
     }
+
+    /// Checks if a tag exists.
+    /// - Parameter tag: The BusinessTag to check.
+    /// - Returns: Boolean indicating presence of tag.
     func hasTag(_ tag: BusinessTag) -> Bool {
         tags.contains(tag.rawValue)
     }
@@ -77,17 +285,20 @@ final class Dog: Identifiable, ObservableObject {
     // MARK: - Business Intelligence
 
     /// Calculate dog's age in years (rounded down)
+    @Attribute(.transient)
     var age: Int? {
         guard let birthdate else { return nil }
         return Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year
     }
 
     /// Calculate dog's lifetime value (LTV) based on charges
+    @Attribute(.transient)
     var lifetimeValue: Double {
         charges.reduce(0) { $0 + ($1.amount ?? 0) }
     }
 
     /// Average appointment frequency in months
+    @Attribute(.transient)
     var appointmentFrequencyMonths: Double? {
         guard appointments.count > 1 else { return nil }
         let sorted = appointments.compactMap { $0.date }.sorted()
@@ -97,6 +308,7 @@ final class Dog: Identifiable, ObservableObject {
     }
 
     /// Loyalty score (simple heuristic for demo)
+    @Attribute(.transient)
     var loyaltyScore: Double {
         var score = 0.0
         if hasTag(.loyal) { score += 1 }
@@ -107,40 +319,55 @@ final class Dog: Identifiable, ObservableObject {
 
     // MARK: - Status & UI Convenience
 
+    @Attribute(.transient)
     var thumbnailImage: Image? {
         guard let data = imageGallery.first, let uiImage = UIImage(data: data) else { return nil }
         return Image(uiImage: uiImage)
     }
 
+    @Attribute(.transient)
     var isBirthdayMonth: Bool {
         guard let birthdate else { return false }
         return Calendar.current.component(.month, from: birthdate) == Calendar.current.component(.month, from: Date())
     }
 
+    @Attribute(.transient)
     var tagSummary: String {
         tags.joined(separator: ", ")
     }
 
+    @Attribute(.transient)
     var isOverdueForVaccination: Bool {
         vaccinationRecords.contains { $0.isOverdue }
     }
 
+    @Attribute(.transient)
     var hasRecentAggression: Bool {
         behaviorLogs.suffix(3).contains { $0.isAggressive }
     }
 
+    @Attribute(.transient)
     var statusLabel: String {
-        isActive ? (tags.first ?? "Active") : "Inactive"
+        isActive ? (tags.first ?? NSLocalizedString("Active", comment: "Status label")) : NSLocalizedString("Inactive", comment: "Status label")
     }
 
     // MARK: - Audit & Accessibility
 
+    @Attribute(.transient)
     var auditSummary: String {
-        "Last edited by \(lastModifiedBy ?? "unknown") on \(lastModified.formatted(.dateTime.month().day().year()))"
+        String(format: NSLocalizedString("Last edited by %@ on %@", comment: "Audit summary"),
+               lastModifiedBy ?? NSLocalizedString("unknown", comment: "Unknown user"),
+               lastModified.formatted(.dateTime.month().day().year()))
     }
 
+    @Attribute(.transient)
     var accessibilityLabel: String {
-        "Dog profile for \(name). \(isActive ? "Active." : "Inactive.") Age: \(age.map { String($0) } ?? "Unknown"). Breed: \(breed ?? "Unknown"). Loyalty score: \(loyaltyScore)."
+        String(format: NSLocalizedString("Dog profile for %@. %@ Age: %@. Breed: %@. Loyalty score: %.1f.", comment: "Accessibility label"),
+               name,
+               isActive ? NSLocalizedString("Active.", comment: "Active status") : NSLocalizedString("Inactive.", comment: "Inactive status"),
+               age.map { String($0) } ?? NSLocalizedString("Unknown", comment: "Unknown age"),
+               breed ?? NSLocalizedString("Unknown", comment: "Unknown breed"),
+               loyaltyScore)
     }
 
     // MARK: - Data Export
@@ -168,6 +395,130 @@ final class Dog: Identifiable, ObservableObject {
             return String(data: data, encoding: .utf8)
         }
         return nil
+    }
+
+    // MARK: - Audit Logging Methods
+
+    /// Logs a generic audit event asynchronously.
+    /// - Parameter event: The localized event description.
+    func logAuditEvent(_ event: String) async {
+        await auditLogger.logEvent(event)
+    }
+
+    /// Logs a property change asynchronously with property name and new value.
+    /// - Parameters:
+    ///   - propertyName: Localized name of the property.
+    ///   - newValue: New value description.
+    func logPropertyChange(propertyName: String, newValue: String) async {
+        let event = String(format: NSLocalizedString("Property '%@' changed to '%@'", comment: "Audit event for property change"), propertyName, newValue)
+        await logAuditEvent(event)
+    }
+
+    /// Adds an appointment asynchronously with audit logging.
+    /// - Parameter appointment: The Appointment to add.
+    func addAppointment(_ appointment: Appointment) async {
+        _appointments.append(appointment)
+        await logAuditEvent(String(format: NSLocalizedString("Appointment added on %@", comment: "Audit event"), appointment.date?.formatted(.dateTime.month().day().year()) ?? NSLocalizedString("Unknown date", comment: "Unknown date")))
+    }
+
+    /// Removes an appointment asynchronously with audit logging.
+    /// - Parameter appointment: The Appointment to remove.
+    func removeAppointment(_ appointment: Appointment) async {
+        if let index = _appointments.firstIndex(where: { $0.id == appointment.id }) {
+            _appointments.remove(at: index)
+            await logAuditEvent(String(format: NSLocalizedString("Appointment removed on %@", comment: "Audit event"), appointment.date?.formatted(.dateTime.month().day().year()) ?? NSLocalizedString("Unknown date", comment: "Unknown date")))
+        }
+    }
+
+    /// Adds a charge asynchronously with audit logging.
+    /// - Parameter charge: The Charge to add.
+    func addCharge(_ charge: Charge) async {
+        _charges.append(charge)
+        await logAuditEvent(String(format: NSLocalizedString("Charge added: $%.2f", comment: "Audit event"), charge.amount ?? 0))
+    }
+
+    /// Removes a charge asynchronously with audit logging.
+    /// - Parameter charge: The Charge to remove.
+    func removeCharge(_ charge: Charge) async {
+        if let index = _charges.firstIndex(where: { $0.id == charge.id }) {
+            _charges.remove(at: index)
+            await logAuditEvent(String(format: NSLocalizedString("Charge removed: $%.2f", comment: "Audit event"), charge.amount ?? 0))
+        }
+    }
+
+    /// Adds a vaccination record asynchronously with audit logging.
+    /// - Parameter record: The VaccinationRecord to add.
+    func addVaccinationRecord(_ record: VaccinationRecord) async {
+        _vaccinationRecords.append(record)
+        await logAuditEvent(String(format: NSLocalizedString("Vaccination record added: %@", comment: "Audit event"), record.vaccineName ?? NSLocalizedString("Unknown vaccine", comment: "Unknown vaccine")))
+    }
+
+    /// Removes a vaccination record asynchronously with audit logging.
+    /// - Parameter record: The VaccinationRecord to remove.
+    func removeVaccinationRecord(_ record: VaccinationRecord) async {
+        if let index = _vaccinationRecords.firstIndex(where: { $0.id == record.id }) {
+            _vaccinationRecords.remove(at: index)
+            await logAuditEvent(String(format: NSLocalizedString("Vaccination record removed: %@", comment: "Audit event"), record.vaccineName ?? NSLocalizedString("Unknown vaccine", comment: "Unknown vaccine")))
+        }
+    }
+
+    /// Adds a behavior log asynchronously with audit logging.
+    /// - Parameter log: The BehaviorLog to add.
+    func addBehaviorLog(_ log: BehaviorLog) async {
+        _behaviorLogs.append(log)
+        await logAuditEvent(String(format: NSLocalizedString("Behavior log added: %@", comment: "Audit event"), log.description ?? NSLocalizedString("No description", comment: "No description")))
+    }
+
+    /// Removes a behavior log asynchronously with audit logging.
+    /// - Parameter log: The BehaviorLog to remove.
+    func removeBehaviorLog(_ log: BehaviorLog) async {
+        if let index = _behaviorLogs.firstIndex(where: { $0.id == log.id }) {
+            _behaviorLogs.remove(at: index)
+            await logAuditEvent(String(format: NSLocalizedString("Behavior log removed: %@", comment: "Audit event"), log.description ?? NSLocalizedString("No description", comment: "No description")))
+        }
+    }
+
+    /// Adds image data asynchronously with audit logging.
+    /// - Parameter imageData: The image data to add.
+    func addImageData(_ imageData: Data) async {
+        _imageGallery.append(imageData)
+        await logAuditEvent(NSLocalizedString("Image added to gallery", comment: "Audit event"))
+    }
+
+    /// Removes image data asynchronously with audit logging.
+    /// - Parameter imageData: The image data to remove.
+    func removeImageData(_ imageData: Data) async {
+        if let index = _imageGallery.firstIndex(of: imageData) {
+            _imageGallery.remove(at: index)
+            await logAuditEvent(NSLocalizedString("Image removed from gallery", comment: "Audit event"))
+        }
+    }
+
+    /// Asynchronously returns the audit entries as a JSON string.
+    /// - Returns: JSON string of audit entries or nil on failure.
+    func exportAuditLog() async -> String? {
+        let entries = await auditLogger.getAuditEntries()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        if let data = try? encoder.encode(entries) {
+            return String(data: data, encoding: .utf8)
+        }
+        return nil
+    }
+
+    /// Asynchronously returns a summary of profile changes for audit.
+    /// - Returns: A string summarizing key profile properties.
+    func auditProfileSummary() async -> String {
+        let summary = """
+        \(NSLocalizedString("Name", comment: "Property name")): \(name)
+        \(NSLocalizedString("Breed", comment: "Property name")): \(breed ?? NSLocalizedString("None", comment: "No value"))
+        \(NSLocalizedString("Birthdate", comment: "Property name")): \(birthdate?.formatted(.dateTime.month().day().year()) ?? NSLocalizedString("None", comment: "No value"))
+        \(NSLocalizedString("Color", comment: "Property name")): \(color ?? NSLocalizedString("None", comment: "No value"))
+        \(NSLocalizedString("Gender", comment: "Property name")): \(gender ?? NSLocalizedString("None", comment: "No value"))
+        \(NSLocalizedString("Active Status", comment: "Property name")): \(isActive ? NSLocalizedString("Active", comment: "Status") : NSLocalizedString("Inactive", comment: "Status"))
+        """
+        await logAuditEvent(String(format: NSLocalizedString("Profile summary accessed:\n%@", comment: "Audit event"), summary))
+        return summary
     }
 
     // MARK: - Snapshot for History/Undo
@@ -206,53 +557,56 @@ final class Dog: Identifiable, ObservableObject {
         lastModified: Date = Date(),
         lastModifiedBy: String? = nil
     ) {
-        self.id = id
-        self.name = name
-        self.breed = breed
-        self.birthdate = birthdate
-        self.color = color
-        self.gender = gender
-        self.notes = notes
-        self.isActive = isActive
+        self._id = id
+        self._name = name
+        self._breed = breed
+        self._birthdate = birthdate
+        self._color = color
+        self._gender = gender
+        self._notes = notes
+        self._isActive = isActive
         self.owner = owner
-        self.appointments = appointments
-        self.charges = charges
-        self.vaccinationRecords = vaccinationRecords
-        self.behaviorLogs = behaviorLogs
-        self.imageGallery = imageGallery
-        self.tags = tags
-        self.dateAdded = dateAdded
-        self.lastModified = lastModified
-        self.lastModifiedBy = lastModifiedBy
+        self._appointments = appointments
+        self._charges = charges
+        self._vaccinationRecords = vaccinationRecords
+        self._behaviorLogs = behaviorLogs
+        self._imageGallery = imageGallery
+        self._tags = tags
+        self._dateAdded = dateAdded
+        self._lastModified = lastModified
+        self._lastModifiedBy = lastModifiedBy
     }
 
     // MARK: - Profile Description
 
+    @Attribute(.transient)
     var fullProfileDescription: String {
         """
-        Name: \(name)
-        Breed: \(breed ?? "Unknown")
-        Age: \(age.map { String($0) } ?? "Unknown")
-        Color: \(color ?? "Unknown")
-        Gender: \(gender ?? "Unknown")
-        Notes: \(notes ?? "")
-        Owner: \(owner?.displayName ?? "No Owner")
-        Active: \(isActive ? "Yes" : "No")
-        Tags: \(tagSummary)
-        Appointments: \(appointments.count)
-        Charges: \(charges.count)
-        LTV: $\(lifetimeValue)
-        Loyalty Score: \(loyaltyScore)
-        Vaccinations: \(vaccinationRecords.count)
-        Behaviors: \(behaviorLogs.count)
-        Added: \(dateAdded.formatted(.dateTime.month().day().year()))
-        Last Modified: \(lastModified.formatted(.dateTime.month().day().year()))
+        \(NSLocalizedString("Name", comment: "Label")): \(name)
+        \(NSLocalizedString("Breed", comment: "Label")): \(breed ?? NSLocalizedString("Unknown", comment: "Unknown value"))
+        \(NSLocalizedString("Age", comment: "Label")): \(age.map { String($0) } ?? NSLocalizedString("Unknown", comment: "Unknown value"))
+        \(NSLocalizedString("Color", comment: "Label")): \(color ?? NSLocalizedString("Unknown", comment: "Unknown value"))
+        \(NSLocalizedString("Gender", comment: "Label")): \(gender ?? NSLocalizedString("Unknown", comment: "Unknown value"))
+        \(NSLocalizedString("Notes", comment: "Label")): \(notes ?? "")
+        \(NSLocalizedString("Owner", comment: "Label")): \(owner?.displayName ?? NSLocalizedString("No Owner", comment: "No owner"))
+        \(NSLocalizedString("Active", comment: "Label")): \(isActive ? NSLocalizedString("Yes", comment: "Yes") : NSLocalizedString("No", comment: "No"))
+        \(NSLocalizedString("Tags", comment: "Label")): \(tagSummary)
+        \(NSLocalizedString("Appointments", comment: "Label")): \(appointments.count)
+        \(NSLocalizedString("Charges", comment: "Label")): \(charges.count)
+        \(NSLocalizedString("LTV", comment: "Label")): $\(lifetimeValue)
+        \(NSLocalizedString("Loyalty Score", comment: "Label")): \(loyaltyScore)
+        \(NSLocalizedString("Vaccinations", comment: "Label")): \(vaccinationRecords.count)
+        \(NSLocalizedString("Behaviors", comment: "Label")): \(behaviorLogs.count)
+        \(NSLocalizedString("Added", comment: "Label")): \(dateAdded.formatted(.dateTime.month().day().year()))
+        \(NSLocalizedString("Last Modified", comment: "Label")): \(lastModified.formatted(.dateTime.month().day().year()))
         """
     }
 }
 
 // MARK: - Example Usage (for preview/testing)
 #if DEBUG
+import XCTest
+
 extension Dog {
     static var preview: Dog {
         Dog(
@@ -290,6 +644,23 @@ extension Dog {
             tags: [BusinessTag.aggressive.rawValue],
             isActive: true
         )
+    }
+}
+
+/// SwiftUI PreviewProvider demonstrating async audit logging usage.
+struct Dog_Previews: PreviewProvider {
+    static var previews: some View {
+        Text("Dog Preview")
+            .task {
+                let dog = Dog.preview
+                await dog.addTag(.frequent)
+                await dog.removeTag(.loyal)
+                dog.name = "Baxter Updated"
+                _ = await dog.auditProfileSummary()
+                if let auditLogJSON = await dog.exportAuditLog() {
+                    print("Audit Log JSON:\n\(auditLogJSON)")
+                }
+            }
     }
 }
 #endif

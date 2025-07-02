@@ -6,11 +6,14 @@
 //
 
 import Foundation
+import SwiftUI
+import SwiftData
 
 // MARK: - Note Model
 
-struct Note: Identifiable, Codable, Hashable {
-    let id: UUID
+@Model
+public struct Note: Identifiable {
+    @Attribute(.unique) var id: UUID
     var text: String
     var dateCreated: Date
     var dateModified: Date?
@@ -81,94 +84,252 @@ final class NoteManager: ObservableObject {
     @Published private(set) var lastDeleted: (note: Note, index: Int)?
     @Published var showUndo: Bool = false
 
-    // Add a note
-    func add(_ note: Note) {
+    // Add a note asynchronously, recording audit log safely.
+    func add(_ note: Note) async {
         notes.append(note)
-        NoteAudit.record(action: "Add", note: note)
-        save()
+        do {
+            try await NoteAudit.record(action: "Add", note: note)
+        } catch {
+            // Handle audit logging error if needed
+            print("Audit log failed on add: \(error)")
+        }
+        await save()
     }
 
-    // Edit a note
-    func edit(_ updated: Note) {
+    // Edit a note asynchronously, recording audit log safely.
+    func edit(_ updated: Note) async {
         if let idx = notes.firstIndex(where: { $0.id == updated.id }) {
             notes[idx] = updated
-            NoteAudit.record(action: "Edit", note: updated)
-            save()
+            do {
+                try await NoteAudit.record(action: "Edit", note: updated)
+            } catch {
+                print("Audit log failed on edit: \(error)")
+            }
+            await save()
         }
     }
 
-    // Delete a note (with undo)
-    func delete(_ note: Note) {
+    // Delete a note asynchronously with undo support, recording audit log safely.
+    func delete(_ note: Note) async {
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             lastDeleted = (notes[idx], idx)
             notes.remove(at: idx)
-            NoteAudit.record(action: "Delete", note: note)
+            do {
+                try await NoteAudit.record(action: "Delete", note: note)
+            } catch {
+                print("Audit log failed on delete: \(error)")
+            }
             showUndo = true
-            save()
+            await save()
         }
     }
 
-    // Undo last delete
-    func undoDelete() {
+    // Undo last delete asynchronously, recording audit log safely.
+    func undoDelete() async {
         if let last = lastDeleted {
             notes.insert(last.note, at: last.index)
-            NoteAudit.record(action: "UndoDelete", note: last.note)
+            do {
+                try await NoteAudit.record(action: "UndoDelete", note: last.note)
+            } catch {
+                print("Audit log failed on undoDelete: \(error)")
+            }
             lastDeleted = nil
             showUndo = false
-            save()
+            await save()
         }
     }
 
-    // Pin/unpin note
-    func togglePin(_ note: Note) {
+    // Pin/unpin note asynchronously, recording audit log safely.
+    func togglePin(_ note: Note) async {
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             notes[idx].isPinned.toggle()
-            let action = notes[idx].isPinned ? "Pin" : "Unpin"
-            NoteAudit.record(action: action, note: notes[idx])
-            save()
+            let actionKey = notes[idx].isPinned ? "Pin" : "Unpin"
+            do {
+                try await NoteAudit.record(action: actionKey, note: notes[idx])
+            } catch {
+                print("Audit log failed on togglePin: \(error)")
+            }
+            await save()
         }
     }
 
-    // Example stubs for cloud/SwiftData persistence
-    func load() {
-        // Load notes from storage/cloud
+    // Example async stubs for cloud/SwiftData persistence
+    /// Asynchronously load notes from storage or cloud.
+    func load() async {
+        // Placeholder for async load implementation
         // self.notes = ...
     }
 
-    func save() {
-        // Save notes to storage/cloud
+    /// Asynchronously save notes to storage or cloud.
+    func save() async {
+        // Placeholder for async save implementation
+    }
+
+    // MARK: - Backward compatibility synchronous wrappers
+
+    /// Synchronous wrapper for add.
+    func addSync(_ note: Note) {
+        Task {
+            await add(note)
+        }
+    }
+
+    /// Synchronous wrapper for edit.
+    func editSync(_ updated: Note) {
+        Task {
+            await edit(updated)
+        }
+    }
+
+    /// Synchronous wrapper for delete.
+    func deleteSync(_ note: Note) {
+        Task {
+            await delete(note)
+        }
+    }
+
+    /// Synchronous wrapper for undoDelete.
+    func undoDeleteSync() {
+        Task {
+            await undoDelete()
+        }
+    }
+
+    /// Synchronous wrapper for togglePin.
+    func togglePinSync(_ note: Note) {
+        Task {
+            await togglePin(note)
+        }
     }
 }
 
 // MARK: - Notes Audit/Event Logging
 
+/// Represents a single audit event for note operations.
 struct NoteAuditEvent: Codable {
     let timestamp: Date
     let action: String
     let noteID: UUID
     let summary: String
 
+    /// Initializes an audit event with localized summary.
+    /// - Parameters:
+    ///   - action: The action performed on the note.
+    ///   - note: The note involved in the action.
     init(action: String, note: Note) {
         self.timestamp = Date()
         self.action = action
         self.noteID = note.id
-        self.summary = "[Note] \(action): '\(note.text.prefix(32))...' by \(note.author) at \(DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short))"
+
+        let actionLocalized = NSLocalizedString(action, comment: "Note audit action")
+        let prefixText = note.text.prefix(32)
+        let authorLocalized = NSLocalizedString(note.author, comment: "Note author")
+        let dateString = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+
+        self.summary = String(
+            format: NSLocalizedString("[Note] %@: '%@...' by %@ at %@", comment: "Audit event summary format"),
+            actionLocalized,
+            prefixText,
+            authorLocalized,
+            dateString
+        )
     }
 }
 
-final class NoteAudit {
-    static private(set) var log: [NoteAuditEvent] = []
+/// Actor to manage concurrency-safe audit log operations.
+actor NoteAudit {
+    private static var log: [NoteAuditEvent] = []
 
-    static func record(action: String, note: Note) {
+    /// Records an audit event asynchronously.
+    /// - Parameters:
+    ///   - action: The action performed on the note.
+    ///   - note: The note involved.
+    /// - Throws: An error if logging fails (currently unused, placeholder).
+    static func record(action: String, note: Note) async throws {
         let event = NoteAuditEvent(action: action, note: note)
-        log.append(event)
-        if log.count > 80 { log.removeFirst() }
+        await self.append(event: event)
     }
 
-    static func recentSummaries(limit: Int = 6) -> [String] {
-        log.suffix(limit).map(\.summary)
+    /// Appends an event to the log in a concurrency-safe manner.
+    /// - Parameter event: The audit event to append.
+    private static func append(event: NoteAuditEvent) {
+        log.append(event)
+        if log.count > 80 {
+            log.removeFirst()
+        }
+    }
+
+    /// Returns recent audit summaries asynchronously.
+    /// - Parameter limit: The maximum number of summaries to return.
+    /// - Returns: An array of audit summary strings.
+    static func recentSummaries(limit: Int = 6) async -> [String] {
+        Array(log.suffix(limit).map(\.summary))
+    }
+
+    // MARK: - Backward compatibility synchronous wrappers
+
+    /// Synchronous wrapper for record (fire-and-forget).
+    static func recordSync(action: String, note: Note) {
+        Task {
+            try? await record(action: action, note: note)
+        }
+    }
+
+    /// Synchronous wrapper for recentSummaries.
+    static func recentSummariesSync(limit: Int = 6) -> [String] {
+        // Warning: This is not concurrency safe if called from multiple threads.
+        // Prefer using recentSummaries(limit:) async.
+        return Array(log.suffix(limit).map(\.summary))
     }
 }
+
+/// Administrative interface for note audit logs.
 public enum NoteAuditAdmin {
-    public static func recentEvents(limit: Int = 6) -> [String] { NoteAudit.recentSummaries(limit: limit) }
+    /// Retrieves recent audit event summaries asynchronously.
+    /// - Parameter limit: Maximum number of events to retrieve.
+    /// - Returns: Array of summary strings.
+    public static func recentEvents(limit: Int = 6) async -> [String] {
+        await NoteAudit.recentSummaries(limit: limit)
+    }
 }
+
+// MARK: - SwiftUI PreviewProvider demonstrating async audit logging
+
+#if DEBUG
+struct NoteAuditPreviewView: View {
+    @StateObject private var manager = NoteManager()
+    @State private var auditSummaries: [String] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Audit Log Summaries")
+                .font(.headline)
+            List(auditSummaries, id: \.self) { summary in
+                Text(summary)
+                    .accessibilityLabel(Text(summary))
+            }
+            Button("Add Example Note and Log Audit") {
+                Task {
+                    let newNote = Note(
+                        text: "Preview note for audit logging.",
+                        author: "PreviewUser"
+                    )
+                    await manager.add(newNote)
+                    auditSummaries = await NoteAudit.recentSummaries()
+                }
+            }
+            .padding(.top)
+        }
+        .padding()
+        .task {
+            auditSummaries = await NoteAudit.recentSummaries()
+        }
+    }
+}
+
+struct NoteAuditPreviewView_Previews: PreviewProvider {
+    static var previews: some View {
+        NoteAuditPreviewView()
+    }
+}
+#endif

@@ -5,18 +5,80 @@
 //  Enhanced: tokenized, analytics/audit–ready, modular, previewable, accessible.
 //
 
+/**
+ OnboardingDataImportView
+ ------------------------
+ A SwiftUI view for importing sample data during onboarding in Furfolio.
+
+ - **Architecture**: MVVM-capable, dependency-injectable AnalyticsServiceProtocol and AuditLoggerProtocol.
+ - **Concurrency & Async Logging**: Uses async/await for non-blocking analytics and audit calls wrapped in Tasks.
+ - **Diagnostics**: Records import start, success, failure, and user actions for diagnostics.
+ - **Localization**: All user-facing strings are localized via NSLocalizedString or LocalizedStringKey.
+ - **Accessibility**: Interactive elements include accessibility labels and hints.
+ - **Preview/Testability**: Previews inject mock async loggers and demo data manager.
+ */
+
 import SwiftUI
+
+/// A record of an onboarding data import audit event.
+public struct OnboardingDataImportAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let message: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), message: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.message = message
+    }
+}
+
+/// Manages concurrency-safe audit logging for data import events.
+public actor OnboardingDataImportAuditManager {
+    private var buffer: [OnboardingDataImportAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = OnboardingDataImportAuditManager()
+
+    /// Add a new audit entry, capping to `maxEntries`.
+    public func add(_ entry: OnboardingDataImportAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries.
+    public func recent(limit: Int = 20) -> [OnboardingDataImportAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit log as JSON.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - Analytics/Audit Logger Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Track a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit entry asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
 }
 
 // MARK: - View
@@ -94,6 +156,12 @@ struct OnboardingDataImportView: View {
         .padding(spacingM)
         .background(background.ignoresSafeArea())
         .accessibilityElement(children: .contain)
+        .onAppear {
+            Task {
+                await analytics.screenView("ImportView")
+                await audit.record("Import view appeared", metadata: nil)
+            }
+        }
     }
 
     // MARK: - Subviews
@@ -171,8 +239,13 @@ struct OnboardingDataImportView: View {
             .accessibilityHint(Text(NSLocalizedString("Starts importing demo data into the app", comment: "Accessibility hint for import demo data button")))
 
             Button {
-                analytics.log(event: "import_file_tap", parameters: nil)
-                audit.record("User tapped import from file", metadata: nil)
+                Task {
+                    await analytics.log(event: "import_file_tap", parameters: nil)
+                    await audit.record("User tapped import from file", metadata: nil)
+                    await OnboardingDataImportAuditManager.shared.add(
+                      OnboardingDataImportAuditEntry(message: "Tapped import from file")
+                    )
+                }
             } label: {
                 Label {
                     Text(LocalizedStringKey("Import from File (CSV, JSON)"))
@@ -188,9 +261,14 @@ struct OnboardingDataImportView: View {
             .accessibilityHint(Text(NSLocalizedString("Coming soon: import data from CSV or JSON files", comment: "Accessibility hint for import from file button")))
 
             Button {
-                analytics.log(event: "import_skip_tap", parameters: nil)
-                audit.record("User skipped import", metadata: nil)
-                dismiss()
+                Task {
+                    await analytics.log(event: "import_skip_tap", parameters: nil)
+                    await audit.record("User skipped import", metadata: nil)
+                    await OnboardingDataImportAuditManager.shared.add(
+                      OnboardingDataImportAuditEntry(message: "Skipped import")
+                    )
+                    dismiss()
+                }
             } label: {
                 Text(LocalizedStringKey("Skip"))
             }
@@ -206,8 +284,13 @@ struct OnboardingDataImportView: View {
 
     private func importDemoData() {
         importState = .loading
-        analytics.log(event: "import_demo_data_start", parameters: nil)
-        audit.record("User started importing demo data", metadata: nil)
+        Task {
+            await analytics.log(event: "import_demo_data_start", parameters: nil)
+            await audit.record("User started importing demo data", metadata: nil)
+            await OnboardingDataImportAuditManager.shared.add(
+              OnboardingDataImportAuditEntry(message: "Started demo import")
+            )
+        }
 
         Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000) // Simulated delay
@@ -215,12 +298,12 @@ struct OnboardingDataImportView: View {
             do {
                 try await demoDataManager.populateDemoDataAsync(in: modelContext)
                 importState = .success
-                analytics.log(event: "import_demo_data_success", parameters: nil)
-                audit.record("Demo data import succeeded", metadata: nil)
+                await analytics.log(event: "import_demo_data_success", parameters: nil)
+                await audit.record("Demo data import succeeded", metadata: nil)
             } catch {
                 importState = .failed(NSLocalizedString("Could not import demo data. Please try again.", comment: "Error message"))
-                analytics.log(event: "import_demo_data_failed", parameters: ["error": error.localizedDescription])
-                audit.record("Demo data import failed", metadata: ["error": error.localizedDescription])
+                await analytics.log(event: "import_demo_data_failed", parameters: ["error": error.localizedDescription])
+                await audit.record("Demo data import failed", metadata: ["error": error.localizedDescription])
             }
         }
     }
@@ -241,24 +324,32 @@ extension DemoDataManager: DemoDataManagerProtocol {
 
 #Preview {
     struct MockAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String : Any]?) {
-            print("Mock Analytics: \(event), \(parameters ?? [:])")
+        func log(event: String, parameters: [String : Any]?) async {
+            print("Mock Analytics: \(event)")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
     struct MockAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String : String]?) {
+        func record(_ message: String, metadata: [String : String]?) async {
             print("Mock Audit: \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
     struct MockDemoDataManager: DemoDataManagerProtocol {
         func populateDemoDataAsync(in context: ModelContext) async throws {}
     }
 
-    return OnboardingDataImportView(
-        analytics: MockAnalytics(),
-        audit: MockAudit(),
-        demoDataManager: MockDemoDataManager()
-    )
+    return VStack {
+        OnboardingDataImportView(
+            analytics: MockAnalytics(),
+            audit: MockAudit(),
+            demoDataManager: MockDemoDataManager()
+        )
+        Button("Show Audit JSON") {
+            Task {
+                let json = OnboardingDataImportAuditManager.shared.exportJSON()
+                print(json)
+            }
+        }
+    }
 }

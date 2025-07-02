@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Charts
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -25,6 +26,7 @@ fileprivate struct RevenueTrendChartAuditEvent: Codable {
 fileprivate final class RevenueTrendChartAudit {
     static private(set) var log: [RevenueTrendChartAuditEvent] = []
 
+    /// Records a new audit event with the given parameters.
     static func record(
         pointCount: Int,
         valueRange: String,
@@ -42,17 +44,57 @@ fileprivate final class RevenueTrendChartAudit {
         if log.count > 40 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// Provides a summary string for accessibility based on the last event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No revenue trend chart events recorded."
     }
+
+    /// Returns the accessibility labels of recent audit events up to the specified limit.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+
+    // MARK: - New Analytics Enhancements
+
+    /// Computes the average point count from all logged audit events.
+    static var averagePointCount: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0) { $0 + $1.pointCount }
+        return Double(total) / Double(log.count)
+    }
+
+    /// Finds the most frequent valueRange string in the audit log.
+    static var mostFrequentValueRange: String {
+        guard !log.isEmpty else { return "n/a" }
+        let frequency = Dictionary(grouping: log, by: { $0.valueRange })
+            .mapValues { $0.count }
+        if let (valueRange, _) = frequency.max(by: { $0.value < $1.value }) {
+            return valueRange
+        }
+        return "n/a"
+    }
+
+    // MARK: - New CSV Export Enhancement
+
+    /// Exports all audit events as a CSV string with headers: timestamp,pointCount,valueRange,dateRange,tags.
+    static func exportCSV() -> String {
+        let header = "timestamp,pointCount,valueRange,dateRange,tags"
+        let rows = log.map { event -> String in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let pointCountStr = String(event.pointCount)
+            let valueRangeStr = "\"\(event.valueRange)\""
+            let dateRangeStr = "\"\(event.dateRange)\""
+            let tagsStr = "\"\(event.tags.joined(separator: ","))\""
+            return [timestampStr, pointCountStr, valueRangeStr, dateRangeStr, tagsStr].joined(separator: ",")
+        }
+        return ([header] + rows).joined(separator: "\n")
     }
 }
 
@@ -92,6 +134,9 @@ struct RevenueTrendChart: View {
         formatter.dateFormat = "MMM yyyy"
         return "\(formatter.string(from: first)) – \(formatter.string(from: last))"
     }
+
+    // Publisher to trigger VoiceOver announcements
+    @State private var voiceOverAnnouncement: String?
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -133,6 +178,30 @@ struct RevenueTrendChart: View {
             }
             .frame(height: 220)
             .accessibilityIdentifier("RevenueTrendChart-MainChart")
+
+#if DEBUG
+            // DEV overlay showing last 3 audit events, averagePointCount, and mostFrequentValueRange
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                Text("DEV Audit Overlay")
+                    .font(.caption).bold()
+                    .foregroundColor(.accentColor)
+                ForEach(RevenueTrendChartAudit.recentEvents(limit: 3), id: \.self) { eventLabel in
+                    Text(eventLabel)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text("Average Point Count: \(String(format: "%.2f", RevenueTrendChartAudit.averagePointCount))")
+                    .font(.caption2)
+                Text("Most Frequent Value Range: \(RevenueTrendChartAudit.mostFrequentValueRange)")
+                    .font(.caption2)
+            }
+            .padding(8)
+            .background(Color(.systemGray6).opacity(0.9))
+            .cornerRadius(8)
+            .padding(.top, 8)
+#endif
         }
         .padding()
         .background(
@@ -143,12 +212,18 @@ struct RevenueTrendChart: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Revenue trend chart from \(dateRange), values \(valueRange)")
         .accessibilityIdentifier("RevenueTrendChart-Container")
+        // Accessibility: Post VoiceOver announcement if minimum revenue is zero
         .onAppear {
             RevenueTrendChartAudit.record(
                 pointCount: data.count,
                 valueRange: valueRange,
                 dateRange: dateRange
             )
+            if let minRevenue = data.map(\.revenue).min(), minRevenue == 0 {
+                // Post a VoiceOver announcement warning about zero revenue month(s)
+                let announcement = "Warning: At least one month had zero revenue."
+                UIAccessibility.post(notification: .announcement, argument: announcement)
+            }
         }
     }
 }
@@ -160,6 +235,20 @@ public enum RevenueTrendChartAuditAdmin {
     public static var lastJSON: String? { RevenueTrendChartAudit.exportLastJSON() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         RevenueTrendChartAudit.recentEvents(limit: limit)
+    }
+
+    // Expose new analytics properties for external use
+    public static var averagePointCount: Double {
+        RevenueTrendChartAudit.averagePointCount
+    }
+
+    public static var mostFrequentValueRange: String {
+        RevenueTrendChartAudit.mostFrequentValueRange
+    }
+
+    // Expose CSV export for audit events
+    public static func exportCSV() -> String {
+        RevenueTrendChartAudit.exportCSV()
     }
 }
 

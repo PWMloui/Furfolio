@@ -2,22 +2,67 @@
 //  PrivacyPolicyView.swift
 //  Furfolio
 //
-//  Enhanced: analytics/audit–ready, token-compliant, Trust Center–compliant, accessibility, preview/test–injectable.
+//  Enhanced 2025-06-30: Role/staff/context audit, escalation, trust center/BI-ready, fully modular, tokenized, accessible, and localizable.
 //
 
 import SwiftUI
 
-// MARK: - Analytics/Audit Protocol
+// MARK: - Analytics/Audit Protocol (Role/Staff/Context/Escalation)
 
 public protocol PrivacyPolicyAnalyticsLogger {
-    func log(event: String, info: String?)
-}
-public struct NullPrivacyPolicyAnalyticsLogger: PrivacyPolicyAnalyticsLogger {
-    public init() {}
-    public func log(event: String, info: String?) {}
+    var testMode: Bool { get set }
+    func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async
+    func recentEvents(count: Int) async -> [String]
+    func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async
 }
 
-// MARK: - PrivacyPolicyView (Business Privacy, Modular Token Styling, Audit/Analytics Ready)
+public struct NullPrivacyPolicyAnalyticsLogger: PrivacyPolicyAnalyticsLogger {
+    public var testMode: Bool = false
+    public init() {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async {}
+    public func recentEvents(count: Int) async -> [String] { [] }
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {}
+}
+
+public final class InMemoryPrivacyPolicyAnalyticsLogger: PrivacyPolicyAnalyticsLogger {
+    public var testMode: Bool = false
+    private let queue = DispatchQueue(label: "com.furfolio.analyticsLogger", attributes: .concurrent)
+    private var events: [String] = []
+    private let maxStoredEvents = 100
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let infoString = info ?? ""
+        let logEntry = "[\(timestamp)] \(event): \(infoString) [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]\(escalate ? " [ESCALATE]" : "")"
+        if testMode { print("[PrivacyPolicyAnalytics] \(logEntry)") }
+        queue.async(flags: .barrier) {
+            self.events.append(logEntry)
+            if self.events.count > self.maxStoredEvents {
+                self.events.removeFirst(self.events.count - self.maxStoredEvents)
+            }
+        }
+    }
+    public func recentEvents(count: Int) async -> [String] {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let slice = self.events.suffix(count)
+                continuation.resume(returning: Array(slice))
+            }
+        }
+    }
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {
+        await log(event: event, info: info, role: role, staffID: staffID, context: context, escalate: true)
+    }
+}
+
+// MARK: - Audit Context
+
+public struct PrivacyPolicyAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "PrivacyPolicyView"
+}
+
+// MARK: - PrivacyPolicyView
 
 struct PrivacyPolicyView: View {
     @Environment(\.dismiss) private var dismiss
@@ -25,7 +70,7 @@ struct PrivacyPolicyView: View {
 
     static var analyticsLogger: PrivacyPolicyAnalyticsLogger = NullPrivacyPolicyAnalyticsLogger()
 
-    private let policyText = """
+    private let policyText = NSLocalizedString("""
     **Privacy Policy**
 
     At Furfolio, your privacy is our top priority. We’re dedicated to keeping your information safe, secure, and private. Here’s how we handle your data:
@@ -50,7 +95,8 @@ struct PrivacyPolicyView: View {
 
     **Contact Us**
     If you have questions or concerns, please reach out at support@furfolio.app. We’re here to help!
-    """
+    """,
+    comment: "Full privacy policy text shown in PrivacyPolicyView")
 
     var body: some View {
         NavigationStack {
@@ -63,15 +109,15 @@ struct PrivacyPolicyView: View {
                         .foregroundStyle(AppColors.accent)
                         .accessibilityHidden(true)
 
-                    Text("Privacy Policy")
+                    Text(NSLocalizedString("Privacy Policy", comment: "Title of the privacy policy screen"))
                         .font(AppFonts.title)
                         .foregroundStyle(AppColors.accent)
                         .accessibilityAddTraits(.isHeader)
 
-                    Text("Your privacy matters to us")
+                    Text(NSLocalizedString("Your privacy matters to us", comment: "Subtitle emphasizing privacy importance"))
                         .font(AppFonts.subheadline)
                         .foregroundStyle(AppColors.secondary)
-                        .accessibilityLabel("Privacy statement subtitle")
+                        .accessibilityLabel(NSLocalizedString("Privacy statement subtitle", comment: "Accessibility label for privacy subtitle"))
 
                     Divider()
 
@@ -84,13 +130,22 @@ struct PrivacyPolicyView: View {
                                 .fill(AppColors.card)
                         )
                         .appShadow(AppShadows.card)
-                        .accessibilityLabel("Privacy policy details. " + policyText.replacingOccurrences(of: "**", with: ""))
+                        .accessibilityLabel(NSLocalizedString("Privacy policy details. ", comment: "Accessibility label prefix for privacy details") + policyText.replacingOccurrences(of: "**", with: ""))
 
                     Button {
                         showTrustCenter = true
-                        Self.analyticsLogger.log(event: "tap_trust_center", info: nil)
+                        Task {
+                            await Self.analyticsLogger.log(
+                                event: NSLocalizedString("tap_trust_center", comment: "Analytics event: user tapped View Trust Center button"),
+                                info: nil,
+                                role: PrivacyPolicyAuditContext.role,
+                                staffID: PrivacyPolicyAuditContext.staffID,
+                                context: PrivacyPolicyAuditContext.context,
+                                escalate: false
+                            )
+                        }
                     } label: {
-                        Label("View Trust Center", systemImage: "lock.shield")
+                        Label(NSLocalizedString("View Trust Center", comment: "Button label to open Trust Center"), systemImage: "lock.shield")
                             .font(AppFonts.headline)
                             .foregroundStyle(AppColors.accent)
                             .padding(.vertical, AppSpacing.small)
@@ -100,12 +155,21 @@ struct PrivacyPolicyView: View {
                                     .stroke(AppColors.accent, lineWidth: 2)
                             )
                     }
-                    .accessibilityLabel("View Trust Center")
-                    .accessibilityHint("Opens the Furfolio Trust Center for more privacy information.")
+                    .accessibilityLabel(NSLocalizedString("View Trust Center", comment: "Accessibility label for View Trust Center button"))
+                    .accessibilityHint(NSLocalizedString("Opens the Furfolio Trust Center for more privacy information.", comment: "Accessibility hint describing the Trust Center button action"))
                     .sheet(isPresented: $showTrustCenter) {
                         TrustCenterView()
                             .onAppear {
-                                Self.analyticsLogger.log(event: "trust_center_view_presented", info: nil)
+                                Task {
+                                    await Self.analyticsLogger.log(
+                                        event: NSLocalizedString("trust_center_view_presented", comment: "Analytics event: Trust Center view presented"),
+                                        info: nil,
+                                        role: PrivacyPolicyAuditContext.role,
+                                        staffID: PrivacyPolicyAuditContext.staffID,
+                                        context: PrivacyPolicyAuditContext.context,
+                                        escalate: false
+                                    )
+                                }
                             }
                     }
                 }
@@ -117,28 +181,47 @@ struct PrivacyPolicyView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
                         dismiss()
-                        Self.analyticsLogger.log(event: "close_privacy_policy", info: nil)
+                        Task {
+                            await Self.analyticsLogger.log(
+                                event: NSLocalizedString("close_privacy_policy", comment: "Analytics event: privacy policy view closed"),
+                                info: nil,
+                                role: PrivacyPolicyAuditContext.role,
+                                staffID: PrivacyPolicyAuditContext.staffID,
+                                context: PrivacyPolicyAuditContext.context,
+                                escalate: false
+                            )
+                        }
                     } label: {
-                        Label("Close", systemImage: "xmark.circle")
+                        Label(NSLocalizedString("Close", comment: "Close button label"), systemImage: "xmark.circle")
                     }
-                    .accessibilityLabel("Close Privacy Policy")
+                    .accessibilityLabel(NSLocalizedString("Close Privacy Policy", comment: "Accessibility label for Close button in Privacy Policy view"))
                 }
             }
             .onAppear {
-                Self.analyticsLogger.log(event: "privacy_policy_view_appear", info: nil)
+                Task {
+                    await Self.analyticsLogger.log(
+                        event: NSLocalizedString("privacy_policy_view_appear", comment: "Analytics event: privacy policy view appeared"),
+                        info: nil,
+                        role: PrivacyPolicyAuditContext.role,
+                        staffID: PrivacyPolicyAuditContext.staffID,
+                        context: PrivacyPolicyAuditContext.context,
+                        escalate: false
+                    )
+                }
             }
         }
     }
 }
 
 // MARK: - Trust Center View Stub (for demo, unchanged)
+
 struct TrustCenterView: View {
     var body: some View {
         VStack(spacing: AppSpacing.large) {
-            Text("Trust Center")
+            Text(NSLocalizedString("Trust Center", comment: "Title of the Trust Center view"))
                 .font(AppFonts.title)
                 .foregroundStyle(AppColors.primary)
-            Text("Data Security & Audit Log features will be implemented here.")
+            Text(NSLocalizedString("Data Security & Audit Log features will be implemented here.", comment: "Placeholder text for Trust Center content"))
                 .font(AppFonts.body)
                 .foregroundStyle(AppColors.secondary)
             Spacer()
@@ -152,12 +235,21 @@ struct TrustCenterView: View {
 }
 
 // MARK: - Preview with analytics print logger
+
 #Preview {
     struct SpyLogger: PrivacyPolicyAnalyticsLogger {
-        func log(event: String, info: String?) {
-            print("[PrivacyPolicyAnalytics] \(event): \(info ?? "")")
+        var testMode: Bool = true
+        func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async {
+            print("[PrivacyPolicyAnalytics] \(event): \(info ?? "") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]\(escalate ? " [ESCALATE]" : "")")
+        }
+        func recentEvents(count: Int) async -> [String] { [] }
+        func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {
+            await log(event: event, info: info, role: role, staffID: staffID, context: context, escalate: true)
         }
     }
     PrivacyPolicyView.analyticsLogger = SpyLogger()
+    PrivacyPolicyAuditContext.role = "Owner"
+    PrivacyPolicyAuditContext.staffID = "staff001"
+    PrivacyPolicyAuditContext.context = "PrivacyPolicyPreview"
     return PrivacyPolicyView()
 }

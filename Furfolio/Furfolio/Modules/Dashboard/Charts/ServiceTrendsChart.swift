@@ -26,6 +26,7 @@ fileprivate struct ServiceTrendsChartAuditEvent: Codable {
 fileprivate final class ServiceTrendsChartAudit {
     static private(set) var log: [ServiceTrendsChartAuditEvent] = []
 
+    /// Records a new audit event with given parameters
     static func record(
         services: [String],
         pointCount: Int,
@@ -41,15 +42,59 @@ fileprivate final class ServiceTrendsChartAudit {
         )
         log.append(event)
         if log.count > 40 { log.removeFirst() }
+        
+        // Accessibility enhancement: Post VoiceOver announcement if any event has pointCount > 30
+        if pointCount > 30 {
+            DispatchQueue.main.async {
+                UIAccessibility.post(notification: .announcement, argument: "High volume: Over 30 service trend points.")
+            }
+        }
     }
 
+    /// Exports the last audit event as pretty-printed JSON string
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Exports all audit events as CSV string including timestamp, services, pointCount, dateRange, tags
+    static func exportCSV() -> String {
+        var csv = "timestamp,services,pointCount,dateRange,tags\n"
+        let formatter = ISO8601DateFormatter()
+        for event in log {
+            let timestamp = formatter.string(from: event.timestamp)
+            // Escape services and tags that might contain commas by wrapping in quotes
+            let services = "\"\(event.services.joined(separator: ";"))\""
+            let pointCount = "\(event.pointCount)"
+            let dateRange = "\"\(event.dateRange)\""
+            let tags = "\"\(event.tags.joined(separator: ";"))\""
+            csv.append("\(timestamp),\(services),\(pointCount),\(dateRange),\(tags)\n")
+        }
+        return csv
+    }
+    
+    /// Accessibility summary of last event or default message
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No service trends chart events recorded."
+    }
+    
+    /// Analytics: Average point count across all audit events
+    static var averagePointCount: Double {
+        guard !log.isEmpty else { return 0.0 }
+        let total = log.reduce(0) { $0 + $1.pointCount }
+        return Double(total) / Double(log.count)
+    }
+    
+    /// Analytics: Most frequently occurring service across all audit events
+    static var mostFrequentService: String {
+        var frequency: [String: Int] = [:]
+        for event in log {
+            for service in event.services {
+                frequency[service, default: 0] += 1
+            }
+        }
+        return frequency.max(by: { $0.value < $1.value })?.key ?? "N/A"
     }
 }
 
@@ -173,6 +218,33 @@ struct ServiceTrendsChart: View {
                 dateRange: dateRangeString
             )
         }
+        #if DEBUG
+        // DEV overlay showing last 3 audit events and analytics
+        .overlay(
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Audit Events (last 3):")
+                    .font(.caption)
+                    .bold()
+                ForEach(ServiceTrendsChartAudit.log.suffix(3).reversed(), id: \.timestamp) { event in
+                    Text(event.accessibilityLabel)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Divider()
+                Text(String(format: "Average Point Count: %.2f", ServiceTrendsChartAudit.averagePointCount))
+                    .font(.caption2)
+                Text("Most Frequent Service: \(ServiceTrendsChartAudit.mostFrequentService)")
+                    .font(.caption2)
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.75))
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            .padding(),
+            alignment: .bottom
+        )
+        #endif
     }
 }
 
@@ -181,6 +253,17 @@ struct ServiceTrendsChart: View {
 public enum ServiceTrendsChartAuditAdmin {
     public static var lastSummary: String { ServiceTrendsChartAudit.accessibilitySummary }
     public static var lastJSON: String? { ServiceTrendsChartAudit.exportLastJSON() }
+    
+    /// Exposes CSV export of all audit events
+    public static var exportCSV: String { ServiceTrendsChartAudit.exportCSV() }
+    
+    /// Exposes average point count analytics
+    public static var averagePointCount: Double { ServiceTrendsChartAudit.averagePointCount }
+    
+    /// Exposes most frequent service analytics
+    public static var mostFrequentService: String { ServiceTrendsChartAudit.mostFrequentService }
+    
+    /// Returns recent audit event accessibility labels, limited by parameter
     public static func recentEvents(limit: Int = 5) -> [String] {
         ServiceTrendsChartAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }

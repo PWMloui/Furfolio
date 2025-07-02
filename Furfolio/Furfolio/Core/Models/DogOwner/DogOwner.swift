@@ -26,7 +26,7 @@ final class DogOwner: Identifiable, ObservableObject {
     @Published var dateAdded: Date
     @Published var lastModified: Date
     @Published var lastModifiedBy: String?
-    @Published var auditLog: [String]
+    @Published private(set) var auditLog: [String]
 
     @Relationship(deleteRule: .cascade, inverse: \Dog.owner)
     @Published var dogs: [Dog]
@@ -37,7 +37,12 @@ final class DogOwner: Identifiable, ObservableObject {
     @Relationship(deleteRule: .cascade, inverse: \Charge.owner)
     @Published var charges: [Charge]
 
-    @Published var badgeTypes: [String]
+    @Published private(set) var badgeTypes: [String]
+
+    // MARK: - Concurrency Queue for Audit Log
+
+    /// Serial queue to ensure thread-safe access and mutation of auditLog and badgeTypes.
+    private let auditQueue = DispatchQueue(label: "com.furfolio.DogOwner.auditQueue")
 
     // MARK: - Tag/Badge Tokenization
 
@@ -45,28 +50,64 @@ final class DogOwner: Identifiable, ObservableObject {
         case loyal, friendly, atRisk, bigSpender, newClient, multiPet, feedbackChampion, platinum
     }
 
+    @Attribute(.transient)
     var ownerBadges: [OwnerBadgeType] {
-        badgeTypes.compactMap { OwnerBadgeType(rawValue: $0) }
+        auditQueue.sync {
+            badgeTypes.compactMap { OwnerBadgeType(rawValue: $0) }
+        }
     }
-    func addBadge(_ badge: OwnerBadgeType) {
-        if !badgeTypes.contains(badge.rawValue) { badgeTypes.append(badge.rawValue) }
+
+    /// Adds a badge to the owner asynchronously and logs the action.
+    /// - Parameter badge: The badge to add.
+    @MainActor
+    func addBadge(_ badge: OwnerBadgeType) async {
+        await auditQueue.async {
+            if !self.badgeTypes.contains(badge.rawValue) {
+                self.badgeTypes.append(badge.rawValue)
+                Task { @MainActor in
+                    self.objectWillChange.send()
+                }
+                await self.addAuditLogEntry(NSLocalizedString("Added badge: \(badge.rawValue)", comment: "Audit log entry for adding a badge"))
+            }
+        }
     }
-    func removeBadge(_ badge: OwnerBadgeType) {
-        badgeTypes.removeAll { $0 == badge.rawValue }
+
+    /// Removes a badge from the owner asynchronously and logs the action.
+    /// - Parameter badge: The badge to remove.
+    @MainActor
+    func removeBadge(_ badge: OwnerBadgeType) async {
+        await auditQueue.async {
+            if self.badgeTypes.contains(badge.rawValue) {
+                self.badgeTypes.removeAll { $0 == badge.rawValue }
+                Task { @MainActor in
+                    self.objectWillChange.send()
+                }
+                await self.addAuditLogEntry(NSLocalizedString("Removed badge: \(badge.rawValue)", comment: "Audit log entry for removing a badge"))
+            }
+        }
     }
-    func hasBadge(_ badge: OwnerBadgeType) -> Bool {
-        badgeTypes.contains(badge.rawValue)
+
+    /// Checks asynchronously if the owner has a specific badge.
+    /// - Parameter badge: The badge to check.
+    /// - Returns: True if the badge is present.
+    func hasBadge(_ badge: OwnerBadgeType) async -> Bool {
+        await auditQueue.sync {
+            badgeTypes.contains(badge.rawValue)
+        }
     }
 
     // MARK: - Analytics/Computed
 
     /// Total amount spent by this owner
+    @Attribute(.transient)
     var totalSpent: Double {
         charges.reduce(0) { $0 + $1.amount }
     }
     /// Number of dogs
+    @Attribute(.transient)
     var dogCount: Int { dogs.count }
     /// Average spend per appointment
+    @Attribute(.transient)
     var averageSpendPerAppointment: Double {
         let completed = completedAppointments
         guard !completed.isEmpty else { return 0 }
@@ -77,25 +118,30 @@ final class DogOwner: Identifiable, ObservableObject {
         return total / Double(completed.count)
     }
     /// Spend by year
+    @Attribute(.transient)
     func spend(forYear year: Int) -> Double {
         charges.filter {
             Calendar.current.component(.year, from: $0.date) == year
         }.reduce(0) { $0 + $1.amount }
     }
     /// Appointments completed
+    @Attribute(.transient)
     var completedAppointments: [Appointment] {
         appointments.filter { $0.status == .completed }
     }
     /// Most recent appointment date
+    @Attribute(.transient)
     var lastAppointmentDate: Date? {
         appointments.sorted(by: { $0.date > $1.date }).first?.date
     }
     /// True if last appointment > 60 days ago
+    @Attribute(.transient)
     var isRetentionRisk: Bool {
         guard let last = lastAppointmentDate else { return true }
         return Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? 0 > 60
     }
     /// Loyalty tier
+    @Attribute(.transient)
     var loyaltyTier: String {
         switch totalSpent {
         case 0..<500: "Bronze"
@@ -105,6 +151,7 @@ final class DogOwner: Identifiable, ObservableObject {
         }
     }
     /// Average interval between appointments (in days)
+    @Attribute(.transient)
     var averageAppointmentInterval: Double? {
         let dates = appointments.map { $0.date }.sorted()
         guard dates.count > 1 else { return nil }
@@ -112,24 +159,55 @@ final class DogOwner: Identifiable, ObservableObject {
         return intervals.reduce(0, +) / Double(intervals.count)
     }
     /// True if any active dogs
+    @Attribute(.transient)
     var hasActiveDogs: Bool {
         dogs.contains(where: { $0.isActive })
     }
     /// Display name for UI
+    @Attribute(.transient)
     var displayName: String {
-        ownerName.isEmpty ? "Unnamed Owner" : ownerName
+        ownerName.isEmpty ? NSLocalizedString("Unnamed Owner", comment: "Default owner name") : ownerName
     }
 
     // MARK: - Audit/Export
 
-    /// Show most recent N audit log entries
-    func recentAuditLog(_ count: Int = 3) -> [String] {
-        Array(auditLog.suffix(count))
+    /// Adds an entry to the audit log asynchronously in a concurrency-safe manner.
+    /// - Parameter entry: The audit log entry text.
+    @discardableResult
+    func addAuditLogEntry(_ entry: String) async {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        let fullEntry = "[\(timestamp)] \(entry)"
+        await auditQueue.async {
+            self.auditLog.append(fullEntry)
+            Task { @MainActor in
+                self.objectWillChange.send()
+                self.lastModified = Date()
+            }
+        }
     }
-    /// Export audit log as plain text
-    var auditLogText: String {
-        auditLog.joined(separator: "\n")
+
+    /// Fetches the most recent N audit log entries asynchronously and safely.
+    /// - Parameter count: Number of recent entries to fetch.
+    /// - Returns: Array of recent audit log entries.
+    func recentAuditLog(_ count: Int = 3) async -> [String] {
+        await auditQueue.sync {
+            Array(auditLog.suffix(count))
+        }
     }
+
+    /// Exports the audit log as JSON asynchronously.
+    /// - Returns: JSON string of audit log entries or nil if encoding fails.
+    func exportAuditLogJSON() async -> String? {
+        await auditQueue.sync {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            if let data = try? encoder.encode(auditLog) {
+                return String(data: data, encoding: .utf8)
+            }
+            return nil
+        }
+    }
+
     /// Export as JSON for compliance/integration
     func exportJSON() -> String? {
         struct OwnerExport: Codable {
@@ -146,13 +224,31 @@ final class DogOwner: Identifiable, ObservableObject {
 
     // MARK: - Accessibility
 
+    /// Asynchronously constructs a localized accessibility label describing the owner profile.
+    @Attribute(.transient)
     var accessibilityLabel: String {
-        """
-        Owner profile for \(displayName).
-        Loyalty tier: \(loyaltyTier).
-        Total spent: $\(String(format: "%.0f", totalSpent)).
-        Active dogs: \(dogCount).
-        """
+        get async {
+            """
+            \(NSLocalizedString("Owner profile for", comment: "Accessibility label prefix")) \(displayName).
+            \(NSLocalizedString("Loyalty tier", comment: "Accessibility label loyalty tier")): \(loyaltyTier).
+            \(NSLocalizedString("Total spent", comment: "Accessibility label total spent")): $\(String(format: "%.0f", totalSpent)).
+            \(NSLocalizedString("Active dogs", comment: "Accessibility label active dogs")): \(dogCount).
+            """
+        }
+    }
+
+    // MARK: - Modification Tracking
+
+    /// Updates the last modified date and user asynchronously in a concurrency-safe manner.
+    /// - Parameter user: The user who made the modification.
+    func updateModification(user: String?) async {
+        await auditQueue.async {
+            self.lastModified = Date()
+            self.lastModifiedBy = user
+            Task { @MainActor in
+                self.objectWillChange.send()
+            }
+        }
     }
 
     // MARK: - Initializer
@@ -199,17 +295,71 @@ final class DogOwner: Identifiable, ObservableObject {
         self.badgeTypes = badgeTypes
     }
 
-    // MARK: - Utility
+    // MARK: - Synchronous Wrappers for Backward Compatibility
 
-    func addAuditLogEntry(_ entry: String) {
-        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
-        auditLog.append("[\(timestamp)] \(entry)")
-        lastModified = Date()
+    /// Synchronously adds an audit log entry by internally calling the async method.
+    /// - Parameter entry: The audit log entry text.
+    func addAuditLogEntrySync(_ entry: String) {
+        Task {
+            await addAuditLogEntry(entry)
+        }
     }
-    func updateModification(user: String?) {
-        lastModified = Date()
-        lastModifiedBy = user
+
+    /// Synchronously updates modification info by internally calling the async method.
+    /// - Parameter user: The user who made the modification.
+    func updateModificationSync(user: String?) {
+        Task {
+            await updateModification(user: user)
+        }
     }
+
+    /// Synchronously adds a badge by internally calling the async method.
+    /// - Parameter badge: The badge to add.
+    func addBadgeSync(_ badge: OwnerBadgeType) {
+        Task {
+            await addBadge(badge)
+        }
+    }
+
+    /// Synchronously removes a badge by internally calling the async method.
+    /// - Parameter badge: The badge to remove.
+    func removeBadgeSync(_ badge: OwnerBadgeType) {
+        Task {
+            await removeBadge(badge)
+        }
+    }
+
+    /// Synchronously checks if a badge exists by internally calling the async method.
+    /// - Parameter badge: The badge to check.
+    /// - Returns: True if the badge is present.
+    func hasBadgeSync(_ badge: OwnerBadgeType) -> Bool {
+        var result = false
+        let group = DispatchGroup()
+        group.enter()
+        Task {
+            result = await hasBadge(badge)
+            group.leave()
+        }
+        group.wait()
+        return result
+    }
+
+    /// Synchronously fetches recent audit log entries by internally calling the async method.
+    /// - Parameter count: Number of recent entries to fetch.
+    /// - Returns: Array of recent audit log entries.
+    func recentAuditLogSync(_ count: Int = 3) -> [String] {
+        var result: [String] = []
+        let group = DispatchGroup()
+        group.enter()
+        Task {
+            result = await recentAuditLog(count)
+            group.leave()
+        }
+        group.wait()
+        return result
+    }
+
+    // MARK: - Utility
 
     // MARK: - Previews
 
@@ -242,3 +392,70 @@ final class DogOwner: Identifiable, ObservableObject {
         badgeTypes: [OwnerBadgeType.atRisk.rawValue, OwnerBadgeType.newClient.rawValue]
     )
 }
+
+// MARK: - SwiftUI PreviewProvider demonstrating async audit log and badge usage
+
+#if DEBUG
+import PlaygroundSupport
+
+struct DogOwnerPreviewView: View {
+    @StateObject private var owner = DogOwner.preview
+
+    @State private var recentLogs: [String] = []
+    @State private var accessibilityLabelText: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Owner: \(owner.displayName)")
+                .font(.title)
+            Text("Badges: \(owner.ownerBadges.map { $0.rawValue }.joined(separator: ", "))")
+            Button("Add 'Platinum' Badge") {
+                Task {
+                    await owner.addBadge(.platinum)
+                    await refreshLogs()
+                }
+            }
+            Button("Remove 'Friendly' Badge") {
+                Task {
+                    await owner.removeBadge(.friendly)
+                    await refreshLogs()
+                }
+            }
+            Button("Add Audit Log Entry") {
+                Task {
+                    await owner.addAuditLogEntry("Test audit entry at \(Date())")
+                    await refreshLogs()
+                }
+            }
+            Text("Recent Audit Logs:")
+                .font(.headline)
+            List(recentLogs, id: \.self) { log in
+                Text(log)
+            }
+            Text("Accessibility Label:")
+                .font(.headline)
+            Text(accessibilityLabelText)
+                .italic()
+        }
+        .padding()
+        .task {
+            await refreshLogs()
+            await loadAccessibilityLabel()
+        }
+    }
+
+    func refreshLogs() async {
+        recentLogs = await owner.recentAuditLog(5)
+    }
+
+    func loadAccessibilityLabel() async {
+        accessibilityLabelText = await owner.accessibilityLabel
+    }
+}
+
+struct DogOwner_Previews: PreviewProvider {
+    static var previews: some View {
+        DogOwnerPreviewView()
+    }
+}
+#endif

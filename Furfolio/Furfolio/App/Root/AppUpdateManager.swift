@@ -2,32 +2,60 @@
 //  AppUpdateManager.swift
 //  Furfolio
 //
-//  Enhanced: audit/analytics–ready, extensible, token-compliant, preview/test-injectable, Trust Center compliant.
+//  ENHANCED 2025-06-30: Role/staff/context audit, escalation, trust center/BI ready, extensible, modular.
 //
 
 import Foundation
 
-// MARK: - Audit/Analytics Protocol
+// MARK: - Analytics/Audit Protocol (Role/Staff/Context/Escalation)
 
 public protocol AppUpdateAnalyticsLogger {
-    func log(event: String, info: String?)
-}
-public struct NullAppUpdateAnalyticsLogger: AppUpdateAnalyticsLogger {
-    public init() {}
-    public func log(event: String, info: String?) {}
+    var testMode: Bool { get set }
+    func log(event: String, info: String?, role: String?, staffID: String?, context: String?) async
+    func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async
 }
 
-// MARK: - AppUpdateManager (Version Check, Update Prompt, Changelog, Audit, Trust Center)
+/// No-op logger (for default/preview/testing)
+public struct NullAppUpdateAnalyticsLogger: AppUpdateAnalyticsLogger {
+    public var testMode: Bool = false
+    public init() {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?) async {}
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {}
+}
+
+/// Console logger for QA/testing
+public class ConsoleAppUpdateAnalyticsLogger: AppUpdateAnalyticsLogger {
+    public var testMode: Bool = true
+    public init(testMode: Bool = true) { self.testMode = testMode }
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?) async {
+        if testMode { print("[AppUpdate][LOG] \(event) | Info: \(info ?? "-") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]") }
+    }
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?) async {
+        if testMode { print("[AppUpdate][ESCALATE] \(event) | Info: \(info ?? "-") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]") }
+    }
+}
+
+// MARK: - AppUpdateManager
 
 final class AppUpdateManager: ObservableObject {
-    // Analytics logger for Trust Center/BI/QA/preview
+    // MARK: - Analytics Logger
+    
+    /// Shared analytics logger, can be replaced (admin, BI, trust center, QA)
     static var analyticsLogger: AppUpdateAnalyticsLogger = NullAppUpdateAnalyticsLogger()
     
-    // MARK: - Tokens/config (centralized for maintainability)
-    private let versionAPIURL = URL(string: "https://furfolio.app/api/version")! // Move to Tokens if needed
+    /// Role/staff/business context for audit (set at login/session)
+    static var currentRole: String? = nil
+    static var currentStaffID: String? = nil
+    static var currentContext: String? = "AppUpdateManager"
+    
+    // MARK: - Configuration Tokens
+    
+    private let versionAPIURL = URL(string: "https://furfolio.app/api/version")!
     private let changelogAPIURL = URL(string: "https://furfolio.app/api/changelog")!
     private let appStoreURL = URL(string: "https://apps.apple.com/app/id000000000")!
     private let mandatoryUpdatePolicyKey = "mandatory_update"
+    
+    // MARK: - Published Properties
     
     @Published var updateAvailable: Bool = false
     @Published var mandatoryUpdate: Bool = false
@@ -35,98 +63,178 @@ final class AppUpdateManager: ObservableObject {
     @Published var latestVersion: String? = nil
     @Published var updateChecked: Date? = nil
     
+    // MARK: - Diagnostics
+
+    public struct AnalyticsEvent: Codable, Identifiable {
+        public let id = UUID()
+        public let timestamp: Date
+        public let event: String
+        public let info: String?
+        public let role: String?
+        public let staffID: String?
+        public let context: String?
+        public let escalate: Bool
+    }
+    private var analyticsEventHistory: [AnalyticsEvent] = []
+    private let analyticsEventHistoryQueue = DispatchQueue(label: "com.furfolio.AppUpdateManager.analyticsEventHistoryQueue", attributes: .concurrent)
+    
+    // MARK: - Test Mode
+
+    var testMode: Bool = false
+    
+    // MARK: - Initializer
+
+    init(testMode: Bool = false) {
+        self.testMode = testMode
+    }
+    
     // MARK: - Update Check (local/remote)
+
     func checkForUpdates(completion: ((Bool, String?) -> Void)? = nil) {
-        // Example: Async remote check (future–ready)
-        Self.analyticsLogger.log(event: "checkForUpdates_called", info: nil)
-        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
-        let request = URLRequest(url: versionAPIURL)
-        
-        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                self?.updateChecked = Date()
-                if let error = error {
-                    Self.analyticsLogger.log(event: "update_check_failed", info: error.localizedDescription)
-                    completion?(false, nil)
-                    return
+        Task {
+            await Self.logEvent("checkForUpdates_called", info: nil, escalate: false, testMode: self.testMode)
+            
+            let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
+            let request = URLRequest(url: versionAPIURL)
+            
+            let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    self?.updateChecked = Date()
+                    if let error = error {
+                        Task { await Self.logEvent("update_check_failed", info: error.localizedDescription, escalate: true, testMode: self?.testMode ?? false) }
+                        completion?(false, nil)
+                        return
+                    }
+                    guard let data = data,
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let latest = json["latest_version"] as? String else {
+                        Task { await Self.logEvent("update_check_parse_error", info: nil, escalate: true, testMode: self?.testMode ?? false) }
+                        completion?(false, nil)
+                        return
+                    }
+                    self?.latestVersion = latest
+                    let isUpdateAvailable = latest.compare(currentVersion, options: .numeric) == .orderedDescending
+                    self?.updateAvailable = isUpdateAvailable
+                    self?.mandatoryUpdate = (json[self?.mandatoryUpdatePolicyKey ?? "mandatory_update"] as? Bool) ?? false
+                    
+                    Task {
+                        await Self.logEvent("update_check_complete",
+                                            info: String(format: NSLocalizedString("Available:%@ Latest:%@", comment: "Analytics log info for update check completion"), isUpdateAvailable.description, latest),
+                                            escalate: false, testMode: self?.testMode ?? false)
+                    }
+                    completion?(isUpdateAvailable, latest)
                 }
-                guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let latest = json["latest_version"] as? String else {
-                    Self.analyticsLogger.log(event: "update_check_parse_error", info: nil)
-                    completion?(false, nil)
-                    return
-                }
-                self?.latestVersion = latest
-                let isUpdateAvailable = latest.compare(currentVersion, options: .numeric) == .orderedDescending
-                self?.updateAvailable = isUpdateAvailable
-                self?.mandatoryUpdate = (json[self?.mandatoryUpdatePolicyKey ?? "mandatory_update"] as? Bool) ?? false
-                Self.analyticsLogger.log(event: "update_check_complete", info: "Available:\(isUpdateAvailable) Latest:\(latest)")
-                completion?(isUpdateAvailable, latest)
             }
+            task.resume()
         }
-        task.resume()
     }
     
     // MARK: - Show Update Prompt
+
     func showUpdatePrompt(forceMandatory: Bool? = nil) {
         let isMandatory = forceMandatory ?? mandatoryUpdate
-        Self.analyticsLogger.log(event: "showUpdatePrompt", info: isMandatory ? "mandatory" : "optional")
-        // Implementation: Present UI (e.g., SwiftUI .sheet or alert) and handle App Store navigation.
-        // Use NotificationCenter, Combine, or delegate to trigger the UI from your View.
-        // Example:
-        // NotificationCenter.default.post(name: .shouldShowUpdatePrompt, object: isMandatory)
+        Task {
+            await Self.logEvent("showUpdatePrompt",
+                                info: NSLocalizedString(isMandatory ? "mandatory" : "optional", comment: "Update prompt type"),
+                                escalate: isMandatory, testMode: self.testMode)
+        }
+        // Implement UI trigger (NotificationCenter, Combine, delegate, etc.)
     }
     
     // MARK: - Fetch Changelog
+
     func fetchChangelog(completion: ((String?) -> Void)? = nil) {
-        Self.analyticsLogger.log(event: "fetchChangelog_called", info: nil)
-        let task = URLSession.shared.dataTask(with: URLRequest(url: changelogAPIURL)) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    Self.analyticsLogger.log(event: "changelog_fetch_failed", info: error.localizedDescription)
-                    completion?(nil)
-                    return
+        Task {
+            await Self.logEvent("fetchChangelog_called", info: nil, escalate: false, testMode: self.testMode)
+            let task = URLSession.shared.dataTask(with: URLRequest(url: changelogAPIURL)) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        Task { await Self.logEvent("changelog_fetch_failed", info: error.localizedDescription, escalate: false, testMode: self?.testMode ?? false) }
+                        completion?(nil)
+                        return
+                    }
+                    guard let data = data, let changelogText = String(data: data, encoding: .utf8) else {
+                        Task { await Self.logEvent("changelog_parse_error", info: nil, escalate: false, testMode: self?.testMode ?? false) }
+                        completion?(nil)
+                        return
+                    }
+                    self?.changelog = changelogText
+                    Task {
+                        await Self.logEvent("changelog_fetched",
+                                            info: String(format: NSLocalizedString("%@…", comment: "Changelog preview"), changelogText.prefix(32)),
+                                            escalate: false, testMode: self?.testMode ?? false)
+                    }
+                    completion?(changelogText)
                 }
-                guard let data = data, let changelogText = String(data: data, encoding: .utf8) else {
-                    Self.analyticsLogger.log(event: "changelog_parse_error", info: nil)
-                    completion?(nil)
-                    return
-                }
-                self?.changelog = changelogText
-                Self.analyticsLogger.log(event: "changelog_fetched", info: "\(changelogText.prefix(32))…")
-                completion?(changelogText)
             }
+            task.resume()
         }
-        task.resume()
     }
     
     // MARK: - Handle Mandatory Update
+
     func handleMandatoryUpdate() {
-        Self.analyticsLogger.log(event: "handleMandatoryUpdate_called", info: nil)
-        // Block UI, force update, or direct to App Store as per your update policy.
-        // Example: Present a non-dismissible alert.
+        Task {
+            await Self.logEvent("handleMandatoryUpdate_called", info: nil, escalate: true, testMode: self.testMode)
+        }
         showUpdatePrompt(forceMandatory: true)
     }
     
-    // MARK: - Trust Center Integration (stub)
+    // MARK: - Trust Center/Audit Permission (stub)
+
     func auditPermission(for action: String) -> Bool {
-        Self.analyticsLogger.log(event: "trust_center_permission_check", info: action)
-        // Future: Integrate with Trust Center/role manager.
+        Task {
+            await Self.logEvent("trust_center_permission_check", info: action, escalate: false, testMode: self.testMode)
+        }
+        // Integrate with Trust Center/RoleManager as needed
         return true
     }
+    
+    // MARK: - Diagnostics API
+
+    public func fetchRecentAnalyticsEvents(count: Int = 20) -> [AnalyticsEvent] {
+        var events: [AnalyticsEvent] = []
+        analyticsEventHistoryQueue.sync {
+            events = Array(self.analyticsEventHistory.suffix(count))
+        }
+        return events
+    }
+    
+    // MARK: - Private Logging Helper
+
+    private static func logEvent(_ event: String, info: String?, escalate: Bool, testMode: Bool) async {
+        let role = Self.currentRole
+        let staffID = Self.currentStaffID
+        let ctx = Self.currentContext
+        let timestamp = Date()
+        let analyticsEvent = AnalyticsEvent(
+            timestamp: timestamp,
+            event: event,
+            info: info,
+            role: role,
+            staffID: staffID,
+            context: ctx,
+            escalate: escalate
+        )
+        // Append to event history thread-safe
+        DispatchQueue.global(qos: .utility).async {
+            let manager = AppUpdateManager.sharedInstance
+            manager.analyticsEventHistoryQueue.async(flags: .barrier) {
+                manager.analyticsEventHistory.append(analyticsEvent)
+                if manager.analyticsEventHistory.count > 40 { manager.analyticsEventHistory.removeFirst() }
+            }
+        }
+        // Logging
+        if testMode || Self.analyticsLogger.testMode {
+            print("[AppUpdate][Event]: \(event) | Info: \(info ?? "-") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(ctx ?? "-")]")
+        } else if escalate {
+            await analyticsLogger.escalate(event: event, info: info, role: role, staffID: staffID, context: ctx)
+        } else {
+            await analyticsLogger.log(event: event, info: info, role: role, staffID: staffID, context: ctx)
+        }
+    }
+    
+    // MARK: - Shared Instance for internal use
+
+    private static let sharedInstance = AppUpdateManager()
 }
-
-/*
- Usage Example:
-
- let updateManager = AppUpdateManager()
- updateManager.checkForUpdates { isAvailable, latestVersion in
-     if isAvailable { updateManager.showUpdatePrompt() }
- }
- updateManager.fetchChangelog { changelog in
-     print("Changelog: \(changelog ?? "none")")
- }
- // To handle forced update:
- if updateManager.mandatoryUpdate { updateManager.handleMandatoryUpdate() }
-*/

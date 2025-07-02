@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -24,6 +25,12 @@ fileprivate struct TrendIndicatorAuditEvent: Codable {
 fileprivate final class TrendIndicatorAudit {
     static private(set) var log: [TrendIndicatorAuditEvent] = []
 
+    /// Records a new audit event with given parameters.
+    /// - Parameters:
+    ///   - direction: Trend direction ("up", "down", "flat").
+    ///   - value: Numeric value of the trend.
+    ///   - color: Color representing the trend.
+    ///   - tags: Optional tags for categorization.
     static func record(
         direction: String,
         value: Double,
@@ -49,16 +56,55 @@ fileprivate final class TrendIndicatorAudit {
         if log.count > 20 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
+    /// - Returns: JSON string of last event or nil if no events.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+
+    /// Accessibility summary for the last event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No trend indicator events recorded."
     }
+
+    /// Returns the accessibility labels of recent audit events up to a limit.
+    /// - Parameter limit: Number of recent events to return.
+    /// - Returns: Array of accessibility labels.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+
+    // MARK: - New Enhancements
+
+    /// Exports all audit events as CSV string with headers: timestamp,direction,value,color,tags
+    /// - Returns: CSV formatted string of all audit events.
+    static func exportCSV() -> String {
+        let header = "timestamp,direction,value,color,tags"
+        let rows = log.map { event -> String in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: ";")
+            return "\"\(timestampStr)\",\"\(event.direction)\",\"\(event.value)\",\"\(event.color)\",\"\(tagsStr)\""
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    /// The most frequent trend direction in the audit log.
+    /// Returns "up", "down", or "flat". Returns "none" if no events.
+    static var mostFrequentDirection: String {
+        guard !log.isEmpty else { return "none" }
+        let counts = Dictionary(grouping: log, by: { $0.direction })
+            .mapValues { $0.count }
+        return counts.max(by: { $0.value < $1.value })?.key ?? "none"
+    }
+
+    /// The average value of all audit events.
+    /// Returns 0 if no events.
+    static var averageValue: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0) { $0 + $1.value }
+        return total / Double(log.count)
     }
 }
 
@@ -113,6 +159,11 @@ public struct TrendIndicator: View {
                 value: value,
                 color: color
             )
+            // Accessibility enhancement:
+            // If trend is "down" and value <= -5.0, post a VoiceOver announcement warning.
+            if direction == "down" && value <= -5.0 {
+                UIAccessibility.post(notification: .announcement, argument: "Warning: Significant negative trend detected.")
+            }
         }
     }
 
@@ -138,11 +189,80 @@ public enum TrendIndicatorAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         TrendIndicatorAudit.recentEvents(limit: limit)
     }
+
+    // Expose new CSV export
+    public static func exportCSV() -> String {
+        TrendIndicatorAudit.exportCSV()
+    }
+
+    // Expose analytics properties
+    public static var mostFrequentDirection: String {
+        TrendIndicatorAudit.mostFrequentDirection
+    }
+
+    public static var averageValue: Double {
+        TrendIndicatorAudit.averageValue
+    }
 }
 
 // MARK: - Preview
 
 #if DEBUG
+/// Developer overlay view showing last 3 audit events, most frequent direction, and average value.
+private struct TrendIndicatorAuditOverlay: View {
+    @State private var events: [String] = []
+    @State private var mostFreq: String = ""
+    @State private var avgValue: Double = 0
+
+    private var refreshTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("🔍 Audit Events (Last 3):")
+                .font(.caption).bold()
+            ForEach(events, id: \.self) { event in
+                Text(event)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Text("Most Frequent Direction: \(mostFreq)")
+                .font(.caption2).bold()
+            Text(String(format: "Average Value: %.2f%%", avgValue))
+                .font(.caption2).bold()
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.75))
+        .foregroundColor(.white)
+        .cornerRadius(8)
+        .padding()
+        .onReceive(refreshTimer) { _ in
+            events = TrendIndicatorAudit.recentEvents(limit: 3)
+            mostFreq = TrendIndicatorAudit.mostFrequentDirection
+            avgValue = TrendIndicatorAudit.averageValue
+        }
+    }
+}
+
+struct TrendIndicator_Previews: PreviewProvider {
+    static var previews: some View {
+        VStack(spacing: 18) {
+            TrendIndicator(value: 3.5)
+            TrendIndicator(value: -1.2)
+            TrendIndicator(value: 0)
+        }
+        .padding()
+        .previewLayout(.sizeThatFits)
+        .overlay(
+            // DEV overlay at bottom showing audit info
+            VStack {
+                Spacer()
+                TrendIndicatorAuditOverlay()
+            }
+        )
+    }
+}
+#else
 struct TrendIndicator_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 18) {

@@ -6,8 +6,66 @@
 //  Author: mac + ChatGPT
 //
 
+/**
+ StaffMember
+ -----------
+ A data model representing a staff member in Furfolio, with support for biographical data, role-based logic, tokenized badges, security attributes, and asynchronous, concurrency-safe audit logging.
+
+ - **Architecture**: SwiftData @Model class conforming to Identifiable and ObservableObject for SwiftUI data binding.
+ - **Concurrency & Audit**: Uses async/await with `StaffMemberAuditManager` actor to record audit entries without blocking the main thread.
+ - **Analytics & BI**: Exposes computed properties for business intelligence (e.g., riskScore, activityStreak).
+ - **Localization & Accessibility**: All user-facing text can be localized; provides an `accessibilityLabel`.
+ - **Diagnostics & Export**: Supports exporting structured JSON for interoperability and diagnostics.
+ */
+
 import Foundation
 import SwiftData
+import SwiftUI
+
+/// A record of an audit event for a StaffMember.
+public struct StaffMemberAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let entry: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), entry: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.entry = entry
+    }
+}
+
+/// Concurrency-safe actor for logging StaffMember audit entries.
+public actor StaffMemberAuditManager {
+    private var buffer: [StaffMemberAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = StaffMemberAuditManager()
+
+    /// Add a new audit entry, trimming older entries beyond `maxEntries`.
+    public func add(_ entry: StaffMemberAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries, up to `limit`.
+    public func recent(limit: Int = 20) -> [StaffMemberAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a pretty-printed JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 @available(iOS 18.0, *)
 @Model
@@ -38,22 +96,21 @@ final class StaffMember: Identifiable, ObservableObject {
         case certified, bilingual, remote, firstAid, mentor, atRisk, longTerm, recentlyJoined
     }
     var badges: [StaffBadge] { badgeTokens.compactMap { StaffBadge(rawValue: $0) } }
-    func addBadge(_ badge: StaffBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
-    func removeBadge(_ badge: StaffBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func addBadge(_ badge: StaffBadge) {
+        if !badgeTokens.contains(badge.rawValue) {
+            badgeTokens.append(badge.rawValue)
+            Task { await addAudit("Added badge \(badge.rawValue)") }
+        }
+    }
+    func removeBadge(_ badge: StaffBadge) {
+        badgeTokens.removeAll { $0 == badge.rawValue }
+        Task { await addAudit("Removed badge \(badge.rawValue)") }
+    }
     func hasBadge(_ badge: StaffBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
 
     // MARK: - Relationships
     @Relationship(deleteRule: .nullify, inverse: \Business.staff)
     var business: Business?
-
-    // MARK: - Audit Log
-    var auditLog: [String]
-
-    func addAudit(_ entry: String) {
-        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
-        auditLog.append("[\(stamp)] \(entry)")
-    }
-    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
 
     // MARK: - Analytics & Business Intelligence
 
@@ -147,7 +204,6 @@ final class StaffMember: Identifiable, ObservableObject {
         self.mfaEnabled = mfaEnabled
         self.complianceTrainingDate = complianceTrainingDate
         self.badgeTokens = badgeTokens
-        self.auditLog = auditLog
     }
 
     // MARK: - Sample/Preview
@@ -164,9 +220,33 @@ final class StaffMember: Identifiable, ObservableObject {
         lastPasswordChange: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
         mfaEnabled: true,
         complianceTrainingDate: Calendar.current.date(byAdding: .month, value: -10, to: Date()),
-        badgeTokens: ["certified", "mentor"],
-        auditLog: ["[01/01/2022, 09:00 AM] Created profile."]
+        badgeTokens: ["certified", "mentor"]
     )
+}
+
+// MARK: - Async Audit Methods
+
+public extension StaffMember {
+    /// Asynchronously record an audit entry for this staff member.
+    /// - Parameter entry: Description of the event.
+    func addAudit(_ entry: String) async {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        let formatted = "[\(stamp)] \(entry)"
+        await StaffMemberAuditManager.shared.add(
+            StaffMemberAuditEntry(entry: formatted)
+        )
+    }
+
+    /// Fetch recent audit entries for this staff member.
+    /// - Parameter limit: Maximum entries to retrieve.
+    func recentAuditEntries(limit: Int = 20) async -> [StaffMemberAuditEntry] {
+        await StaffMemberAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export audit log as JSON string.
+    func exportAuditLogJSON() async -> String {
+        await StaffMemberAuditManager.shared.exportJSON()
+    }
 }
 
 // MARK: - StaffRole (RBAC, Tokenized, Auditable Staff Roles)

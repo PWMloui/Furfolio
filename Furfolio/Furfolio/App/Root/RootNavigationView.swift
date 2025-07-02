@@ -1,13 +1,57 @@
 import SwiftUI
 
-// MARK: - Analytics/Audit Protocol
+// MARK: - Audit Context (Set on login/session)
+public struct RootNavigationAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "RootNavigationView"
+}
+
+// MARK: - Analytics/Audit Protocol (Role/Staff/Context/Escalation)
 
 public protocol RootNavigationAnalyticsLogger {
-    func log(event: String, info: String?)
+    var testMode: Bool { get }
+    func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async
+    func fetchRecentEvents(maxCount: Int) async -> [(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool, date: Date)]
 }
+
+/// Default no-operation analytics logger.
 public struct NullRootNavigationAnalyticsLogger: RootNavigationAnalyticsLogger {
+    public let testMode: Bool = false
     public init() {}
-    public func log(event: String, info: String?) {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async {}
+    public func fetchRecentEvents(maxCount: Int) async -> [(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool, date: Date)] { [] }
+}
+
+/// In-memory analytics logger for diagnostics/testMode, with full context and escalation.
+public final class InMemoryRootNavigationAnalyticsLogger: RootNavigationAnalyticsLogger {
+    public private(set) var testMode: Bool
+    private let maxEventsStored = 20
+    private var events: [(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool, date: Date)] = []
+    private let queue = DispatchQueue(label: "InMemoryRootNavigationAnalyticsLogger.queue", attributes: .concurrent)
+
+    public init(testMode: Bool = false) { self.testMode = testMode }
+
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async {
+        let logEntry = (event: event, info: info, role: role, staffID: staffID, context: context, escalate: escalate, date: Date())
+        queue.async(flags: .barrier) {
+            if self.events.count >= self.maxEventsStored {
+                self.events.removeFirst()
+            }
+            self.events.append(logEntry)
+        }
+        if testMode {
+            print("[RootNavAnalytics] \(event): \(info ?? "") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]\(escalate ? " [ESCALATE]" : "")")
+        }
+    }
+    public func fetchRecentEvents(maxCount: Int) async -> [(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool, date: Date)] {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let slice = self.events.suffix(maxCount)
+                continuation.resume(returning: Array(slice))
+            }
+        }
+    }
 }
 
 // MARK: - RootNavigationView (Audit, Token, Accessible, Trust Center–Ready)
@@ -16,43 +60,96 @@ struct RootNavigationView: View {
     @EnvironmentObject var appState: AppState
     @State private var selection: NavigationItem? = .dashboard
 
-    // Analytics logger (swap for QA/Trust Center/print as needed)
+    /// Shared analytics logger instance (DI for QA/Trust Center/admin as needed).
     static var analyticsLogger: RootNavigationAnalyticsLogger = NullRootNavigationAnalyticsLogger()
+
+    // Helper to provide audit context
+    private func logNavEvent(_ event: String, info: String?, escalate: Bool = false) {
+        Task {
+            await Self.analyticsLogger.log(
+                event: event,
+                info: info,
+                role: RootNavigationAuditContext.role,
+                staffID: RootNavigationAuditContext.staffID,
+                context: RootNavigationAuditContext.context,
+                escalate: escalate
+            )
+        }
+    }
 
     var body: some View {
         NavigationSplitView(selection: $selection) {
             SidebarView(selection: $selection)
                 .onAppear {
-                    Self.analyticsLogger.log(event: "sidebar_appear", info: appState.currentUserRole.description)
+                    logNavEvent(
+                        NSLocalizedString("sidebar_appear", comment: "Sidebar appeared event"),
+                        info: appState.currentUserRole.description
+                    )
                 }
         } detail: {
             switch selection {
             case .dashboard:
                 DashboardView()
-                    .onAppear { Self.analyticsLogger.log(event: "dashboard_view_appear", info: nil) }
+                    .onAppear {
+                        logNavEvent(
+                            NSLocalizedString("dashboard_view_appear", comment: "Dashboard view appeared event"),
+                            info: nil
+                        )
+                    }
             case .owners:
                 OwnersView()
-                    .onAppear { Self.analyticsLogger.log(event: "owners_view_appear", info: nil) }
+                    .onAppear {
+                        logNavEvent(
+                            NSLocalizedString("owners_view_appear", comment: "Owners view appeared event"),
+                            info: nil
+                        )
+                    }
             case .appointments:
                 AppointmentsView()
-                    .onAppear { Self.analyticsLogger.log(event: "appointments_view_appear", info: nil) }
+                    .onAppear {
+                        logNavEvent(
+                            NSLocalizedString("appointments_view_appear", comment: "Appointments view appeared event"),
+                            info: nil
+                        )
+                    }
             case .charges:
                 ChargesView()
-                    .onAppear { Self.analyticsLogger.log(event: "charges_view_appear", info: nil) }
+                    .onAppear {
+                        logNavEvent(
+                            NSLocalizedString("charges_view_appear", comment: "Charges view appeared event"),
+                            info: nil
+                        )
+                    }
             case .admin:
                 AdminView()
-                    .onAppear { Self.analyticsLogger.log(event: "admin_view_appear", info: nil) }
+                    .onAppear {
+                        logNavEvent(
+                            NSLocalizedString("admin_view_appear", comment: "Admin view appeared event"),
+                            info: nil,
+                            escalate: true // admin view access is always escalated for audit/trust center
+                        )
+                    }
             case .none:
-                Text("Select an item")
+                Text(NSLocalizedString("select_an_item", comment: "Prompt when no navigation item selected"))
                     .font(AppFonts.body)
                     .foregroundColor(AppColors.accent)
                     .background(AppColors.background)
-                    .accessibilityLabel("No item selected")
-                    .onAppear { Self.analyticsLogger.log(event: "no_selection", info: nil) }
+                    .accessibilityLabel(NSLocalizedString("no_item_selected", comment: "Accessibility label for no selection"))
+                    .onAppear {
+                        logNavEvent(
+                            NSLocalizedString("no_selection", comment: "No navigation selection event"),
+                            info: nil
+                        )
+                    }
             }
         }
         .accessibilityElement(children: .contain)
-        .navigationTitle("Furfolio Navigation Root")
+        .navigationTitle(NSLocalizedString("furfolio_navigation_root_title", comment: "Navigation root title"))
+    }
+
+    /// Public API to retrieve last N analytics events for diagnostics/admin/trust center UI.
+    public static func fetchLastAnalyticsEvents(_ maxCount: Int = 20) async -> [(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool, date: Date)] {
+        await analyticsLogger.fetchRecentEvents(maxCount: maxCount)
     }
 }
 
@@ -62,40 +159,6 @@ struct SidebarView: View {
     @EnvironmentObject var appState: AppState
     @Binding var selection: NavigationItem?
 
-    var body: some View {
-        List(selection: $selection) {
-            Section(header: Text("Main")
-                        .font(AppFonts.body)
-                        .accessibilityAddTraits(.isHeader)) {
-                navLink(.dashboard, label: "Dashboard", hint: "Navigate to the dashboard overview")
-            }
-
-            Section(header: Text("Business")
-                        .font(AppFonts.body)
-                        .accessibilityAddTraits(.isHeader)) {
-                navLink(.owners, label: "Dog Owners", hint: "Navigate to dog owners list")
-                navLink(.appointments, label: "Appointments", hint: "Navigate to appointments schedule")
-                navLink(.charges, label: "Charges", hint: "Navigate to charges and billing")
-            }
-
-            if appState.currentUserRole == .owner {
-                Section(header: Text("Admin")
-                            .font(AppFonts.body)
-                            .accessibilityAddTraits(.isHeader)) {
-                    navLink(.admin, label: "Admin", hint: "Navigate to administrative tools", isSensitive: true)
-                }
-            }
-        }
-        .listRowBackground(AppColors.card)
-        .background(AppColors.background)
-        .cornerRadius(BorderRadius.medium)
-        .navigationTitle("Furfolio")
-        .font(AppFonts.body)
-        .accessibilityLabel("Furfolio Navigation Sidebar")
-        .accessibilityElement(children: .contain)
-    }
-
-    /// Generates a standardized, audit-logged NavigationLink for a sidebar item.
     private func navLink(
         _ item: NavigationItem,
         label: String,
@@ -110,60 +173,98 @@ struct SidebarView: View {
         .accessibilityLabel(label)
         .accessibilityHint(hint)
         .onTapGesture {
-            RootNavigationView.analyticsLogger.log(
-                event: isSensitive ? "admin_nav_tap" : "\(item)_nav_tap",
-                info: appState.currentUserRole.description
-            )
-            // Trust Center/Audit: Here you can add more permission/audit checks as needed.
+            Task {
+                await RootNavigationView.analyticsLogger.log(
+                    event: isSensitive
+                        ? NSLocalizedString("admin_nav_tap", comment: "Admin navigation tap event")
+                        : NSLocalizedString("\(item)_nav_tap", comment: "Navigation tap event for item"),
+                    info: appState.currentUserRole.description,
+                    role: RootNavigationAuditContext.role,
+                    staffID: RootNavigationAuditContext.staffID,
+                    context: RootNavigationAuditContext.context,
+                    escalate: isSensitive // escalate for admin nav
+                )
+            }
         }
+    }
+
+    var body: some View {
+        List(selection: $selection) {
+            Section(header: Text(NSLocalizedString("main_section_header", comment: "Main section header"))
+                        .font(AppFonts.body)
+                        .accessibilityAddTraits(.isHeader)) {
+                navLink(.dashboard, label: NSLocalizedString("dashboard_label", comment: "Dashboard label"), hint: NSLocalizedString("dashboard_hint", comment: "Dashboard navigation hint"))
+            }
+            Section(header: Text(NSLocalizedString("business_section_header", comment: "Business section header"))
+                        .font(AppFonts.body)
+                        .accessibilityAddTraits(.isHeader)) {
+                navLink(.owners, label: NSLocalizedString("dog_owners_label", comment: "Dog Owners label"), hint: NSLocalizedString("dog_owners_hint", comment: "Dog Owners navigation hint"))
+                navLink(.appointments, label: NSLocalizedString("appointments_label", comment: "Appointments label"), hint: NSLocalizedString("appointments_hint", comment: "Appointments navigation hint"))
+                navLink(.charges, label: NSLocalizedString("charges_label", comment: "Charges label"), hint: NSLocalizedString("charges_hint", comment: "Charges navigation hint"))
+            }
+            if appState.currentUserRole == .owner {
+                Section(header: Text(NSLocalizedString("admin_section_header", comment: "Admin section header"))
+                            .font(AppFonts.body)
+                            .accessibilityAddTraits(.isHeader)) {
+                    navLink(.admin, label: NSLocalizedString("admin_label", comment: "Admin label"), hint: NSLocalizedString("admin_hint", comment: "Admin navigation hint"), isSensitive: true)
+                }
+            }
+        }
+        .listRowBackground(AppColors.card)
+        .background(AppColors.background)
+        .cornerRadius(BorderRadius.medium)
+        .navigationTitle(NSLocalizedString("furfolio_navigation_sidebar_title", comment: "Sidebar navigation title"))
+        .font(AppFonts.body)
+        .accessibilityLabel(NSLocalizedString("furfolio_navigation_sidebar_accessibility_label", comment: "Sidebar accessibility label"))
+        .accessibilityElement(children: .contain)
     }
 }
 
-// MARK: - NavigationItem Enum (Audit, Role Expandable)
+// MARK: - NavigationItem Enum
 
 enum NavigationItem: Hashable {
     case dashboard, owners, appointments, charges, admin
 }
 
-// MARK: - Placeholder Views for Detail
+// MARK: - Placeholder Detail Views
 
 struct OwnersView: View {
     var body: some View {
-        Text("Owners View - To be implemented")
+        Text(NSLocalizedString("owners_view_placeholder", comment: "Owners View placeholder text"))
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
-            .accessibilityLabel("Owners View Placeholder")
+            .accessibilityLabel(NSLocalizedString("owners_view_accessibility_label", comment: "Owners View accessibility label"))
     }
 }
 
 struct AppointmentsView: View {
     var body: some View {
-        Text("Appointments View - To be implemented")
+        Text(NSLocalizedString("appointments_view_placeholder", comment: "Appointments View placeholder text"))
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
-            .accessibilityLabel("Appointments View Placeholder")
+            .accessibilityLabel(NSLocalizedString("appointments_view_accessibility_label", comment: "Appointments View accessibility label"))
     }
 }
 
 struct ChargesView: View {
     var body: some View {
-        Text("Charges View - To be implemented")
+        Text(NSLocalizedString("charges_view_placeholder", comment: "Charges View placeholder text"))
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
-            .accessibilityLabel("Charges View Placeholder")
+            .accessibilityLabel(NSLocalizedString("charges_view_accessibility_label", comment: "Charges View accessibility label"))
     }
 }
 
 struct AdminView: View {
     var body: some View {
-        Text("Admin View - To be implemented")
+        Text(NSLocalizedString("admin_view_placeholder", comment: "Admin View placeholder text"))
             .font(AppFonts.body)
             .foregroundColor(AppColors.accent)
             .background(AppColors.background)
-            .accessibilityLabel("Admin View Placeholder")
+            .accessibilityLabel(NSLocalizedString("admin_view_accessibility_label", comment: "Admin View accessibility label"))
     }
 }
 
@@ -171,12 +272,17 @@ struct AdminView: View {
 
 struct RootNavigationView_Previews: PreviewProvider {
     struct SpyLogger: RootNavigationAnalyticsLogger {
-        func log(event: String, info: String?) {
-            print("[RootNavAnalytics] \(event): \(info ?? "")")
+        let testMode: Bool = true
+        func log(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool) async {
+            print("[RootNavAnalytics] \(event): \(info ?? "") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]\(escalate ? " [ESCALATE]" : "")")
         }
+        func fetchRecentEvents(maxCount: Int) async -> [(event: String, info: String?, role: String?, staffID: String?, context: String?, escalate: Bool, date: Date)] { [] }
     }
     static var previews: some View {
         RootNavigationView.analyticsLogger = SpyLogger()
+        RootNavigationAuditContext.role = "Owner"
+        RootNavigationAuditContext.staffID = "staff001"
+        RootNavigationAuditContext.context = "RootNavigationPreview"
         return Group {
             RootNavigationView()
                 .environmentObject(AppState())

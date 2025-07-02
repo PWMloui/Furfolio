@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Charts
+import AVFoundation
 
 // MARK: - Audit/Event Logging
 
@@ -53,6 +54,36 @@ fileprivate final class AppointmentVolumeChartAudit {
 
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No appointment volume chart events recorded."
+    }
+
+    // MARK: - Analytics Enhancements
+
+    /// Computes the average number of appointments (pointCount) across all logged events.
+    static var averageAppointments: Double {
+        guard !log.isEmpty else { return 0.0 }
+        let total = log.reduce(0) { $0 + $1.pointCount }
+        return Double(total) / Double(log.count)
+    }
+
+    /// Finds the minValue that appears most frequently in the log.
+    static var mostFrequentMinValue: Int? {
+        guard !log.isEmpty else { return nil }
+        let frequency = Dictionary(grouping: log, by: { $0.minValue })
+            .mapValues { $0.count }
+        return frequency.max(by: { $0.value < $1.value })?.key
+    }
+
+    // MARK: - CSV Export Enhancement
+
+    /// Exports the last audit event as a CSV string with columns: timestamp,pointCount,dateRange,minValue,maxValue,tags
+    static func exportCSV() -> String? {
+        guard let last = log.last else { return nil }
+        let formatter = ISO8601DateFormatter()
+        let timestampStr = formatter.string(from: last.timestamp)
+        let tagsStr = last.tags.joined(separator: ";")
+        let csvLine = "\"\(timestampStr)\",\(last.pointCount),\"\(last.dateRange)\",\(last.minValue),\(last.maxValue),\"\(tagsStr)\""
+        let header = "timestamp,pointCount,dateRange,minValue,maxValue,tags"
+        return "\(header)\n\(csvLine)"
     }
 }
 
@@ -136,7 +167,47 @@ struct AppointmentVolumeChart: View {
                 minValue: minValue,
                 maxValue: maxValue
             )
+            // Accessibility Enhancement: VoiceOver announcement if minValue is zero
+            if minValue == 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    UIAccessibility.post(notification: .announcement, argument: "Some days had zero appointments.")
+                }
+            }
         }
+        #if DEBUG
+        .overlay(
+            // DEV Overlay: Show last 3 audit events, averageAppointments, and mostFrequentMinValue
+            VStack(alignment: .leading, spacing: 4) {
+                Text("DEV Audit Overlay")
+                    .font(.caption).bold()
+                    .foregroundColor(.white)
+                ForEach(AppointmentVolumeChartAudit.log.suffix(3).reversed(), id: \.timestamp) { event in
+                    Text(event.accessibilityLabel)
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                }
+                Text(String(format: "Avg Appointments: %.2f", AppointmentVolumeChartAudit.averageAppointments))
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                if let mostFreqMin = AppointmentVolumeChartAudit.mostFrequentMinValue {
+                    Text("Most Frequent Min Value: \(mostFreqMin)")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                } else {
+                    Text("Most Frequent Min Value: n/a")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.7))
+            .cornerRadius(8)
+            .padding(),
+            alignment: .bottomLeading
+        )
+        #endif
     }
 }
 
@@ -148,6 +219,13 @@ public enum AppointmentVolumeChartAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         AppointmentVolumeChartAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
+
+    // Expose analytics properties
+    public static var averageAppointments: Double { AppointmentVolumeChartAudit.averageAppointments }
+    public static var mostFrequentMinValue: Int? { AppointmentVolumeChartAudit.mostFrequentMinValue }
+
+    // Expose CSV export
+    public static func exportCSV() -> String? { AppointmentVolumeChartAudit.exportCSV() }
 }
 
 #if DEBUG

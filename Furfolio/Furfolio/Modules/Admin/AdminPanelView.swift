@@ -6,59 +6,98 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - AdminPanel Audit/Event Logging
+// MARK: - Analytics & Audit Protocols
 
-fileprivate struct AdminPanelAuditEvent: Codable {
-    let timestamp: Date
-    let operation: String       // "featureFlagChange", "wipeData", "populateDemo", "integrityCheck", "viewCrashLogs"
-    let detail: String?
-    let tags: [String]
-    let actor: String?
-    let context: String?
-    let result: String?
-    var accessibilityLabel: String {
-        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
-        let op = operation.capitalized
-        let tagStr = tags.joined(separator: ",")
-        let res = result ?? ""
-        return "[\(op)] (\(tagStr)) at \(dateStr)\(detail != nil ? ": \(detail!)" : "")\(res.isEmpty ? "" : " → \(res)")"
-    }
+public protocol AdminPanelAnalyticsLogger {
+    /// Log an admin panel event asynchronously.
+    func log(event: String, detail: String?, tags: [String], actor: String?, context: String?, result: String?) async
 }
 
-fileprivate final class AdminPanelAudit {
-    static private(set) var log: [AdminPanelAuditEvent] = []
+public protocol AdminPanelAuditLogger {
+    /// Record an admin panel audit entry asynchronously.
+    func record(event: String, detail: String?, tags: [String], actor: String?, context: String?, result: String?) async
+}
 
-    static func record(
-        operation: String,
+public struct NullAdminPanelAnalyticsLogger: AdminPanelAnalyticsLogger {
+    public init() {}
+    public func log(event: String, detail: String?, tags: [String], actor: String?, context: String?, result: String?) async {}
+}
+
+public struct NullAdminPanelAuditLogger: AdminPanelAuditLogger {
+    public init() {}
+    public func record(event: String, detail: String?, tags: [String], actor: String?, context: String?, result: String?) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of an admin panel audit event.
+public struct AdminPanelAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let detail: String?
+    public let tags: [String]
+    public let actor: String?
+    public let context: String?
+    public let result: String?
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        event: String,
         detail: String? = nil,
         tags: [String] = [],
-        actor: String? = "admin",
+        actor: String? = nil,
         context: String? = nil,
         result: String? = nil
     ) {
-        let event = AdminPanelAuditEvent(
-            timestamp: Date(),
-            operation: operation,
-            detail: detail,
-            tags: tags,
-            actor: actor,
-            context: context,
-            result: result
-        )
-        log.append(event)
-        if log.count > 1000 { log.removeFirst() }
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.detail = detail
+        self.tags = tags
+        self.actor = actor
+        self.context = context
+        self.result = result
     }
 
-    static func exportLastJSON() -> String? {
-        guard let last = log.last else { return nil }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
-        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
-    }
-
-    static var accessibilitySummary: String {
-        log.last?.accessibilityLabel ?? "No admin events recorded."
+    public var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        let tagStr = tags.joined(separator: ",")
+        let res = result ?? ""
+        return "[\(event.capitalized)] (\(tagStr)) at \(dateStr)\(detail.map { ": \($0)" } ?? "")\(res.isEmpty ? "" : " → \(res)")"
     }
 }
+
+/// Actor for concurrency-safe logging of admin panel events.
+public actor AdminPanelAuditManager {
+    private var buffer: [AdminPanelAuditEntry] = []
+    private let maxEntries = 1000
+    public static let shared = AdminPanelAuditManager()
+
+    public func add(_ entry: AdminPanelAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    public func recent(limit: Int = 100) -> [AdminPanelAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
+
 
 // MARK: - AdminPanelView (Modular, Tokenized, Auditable Admin/Developer Panel)
 
@@ -83,6 +122,18 @@ struct AdminPanelView: View {
     /// Optional: Expose audit summary for Trust Center/dev/QA UI
     @State private var showAuditSheet = false
 
+    // Analytics & Audit
+    let analytics: AdminPanelAnalyticsLogger
+    let audit: AdminPanelAuditLogger
+
+    public init(
+        analytics: AdminPanelAnalyticsLogger = NullAdminPanelAnalyticsLogger(),
+        audit: AdminPanelAuditLogger = NullAdminPanelAuditLogger()
+    ) {
+        self.analytics = analytics
+        self.audit = audit
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -106,13 +157,34 @@ struct AdminPanelView: View {
                                 get: { featureManager.isEnabled(flag) },
                                 set: { enabled in
                                     featureManager.set(flag, enabled: enabled)
-                                    AdminPanelAudit.record(
-                                        operation: "featureFlagChange",
-                                        detail: "\(flag.rawValue): \(enabled)",
-                                        tags: ["featureFlag", flag.rawValue, enabled ? "enabled" : "disabled"],
-                                        actor: "admin",
-                                        context: "adminPanel"
-                                    )
+                                    Task {
+                                        await analytics.log(
+                                            event: "featureFlagChange",
+                                            detail: "\(flag.rawValue): \(enabled)",
+                                            tags: ["featureFlag", flag.rawValue, enabled ? "enabled" : "disabled"],
+                                            actor: "admin",
+                                            context: "adminPanel",
+                                            result: nil
+                                        )
+                                        await audit.record(
+                                            event: "featureFlagChange",
+                                            detail: "\(flag.rawValue): \(enabled)",
+                                            tags: ["featureFlag", flag.rawValue, enabled ? "enabled" : "disabled"],
+                                            actor: "admin",
+                                            context: "adminPanel",
+                                            result: nil
+                                        )
+                                        await AdminPanelAuditManager.shared.add(
+                                            AdminPanelAuditEntry(
+                                                event: "featureFlagChange",
+                                                detail: "\(flag.rawValue): \(enabled)",
+                                                tags: ["featureFlag", flag.rawValue, enabled ? "enabled" : "disabled"],
+                                                actor: "admin",
+                                                context: "adminPanel",
+                                                result: nil
+                                            )
+                                        )
+                                    }
                                 }
                             )
                         )
@@ -123,25 +195,67 @@ struct AdminPanelView: View {
                 // MARK: - Data Management Section
                 Section(header: Text("Data Management").font(AppFonts.sectionHeader)) {
                     Button("Populate with Demo Data") {
-                        AdminPanelAudit.record(
-                            operation: "populateDemo",
-                            detail: "User prompted",
-                            tags: ["data", "populate", "demo"],
-                            actor: "admin",
-                            context: "adminPanel"
-                        )
+                        Task {
+                            await analytics.log(
+                                event: "populateDemo",
+                                detail: "User prompted",
+                                tags: ["data", "populate", "demo"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: nil
+                            )
+                            await audit.record(
+                                event: "populateDemo",
+                                detail: "User prompted",
+                                tags: ["data", "populate", "demo"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: nil
+                            )
+                            await AdminPanelAuditManager.shared.add(
+                                AdminPanelAuditEntry(
+                                    event: "populateDemo",
+                                    detail: "User prompted",
+                                    tags: ["data", "populate", "demo"],
+                                    actor: "admin",
+                                    context: "adminPanel",
+                                    result: nil
+                                )
+                            )
+                        }
                         showPopulateDataAlert = true
                     }
                     .font(AppFonts.body)
 
                     Button("Wipe All App Data", role: .destructive) {
-                        AdminPanelAudit.record(
-                            operation: "wipeData",
-                            detail: "User prompted",
-                            tags: ["data", "wipe", "destructive"],
-                            actor: "admin",
-                            context: "adminPanel"
-                        )
+                        Task {
+                            await analytics.log(
+                                event: "wipeData",
+                                detail: "User prompted",
+                                tags: ["data", "wipe", "destructive"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: nil
+                            )
+                            await audit.record(
+                                event: "wipeData",
+                                detail: "User prompted",
+                                tags: ["data", "wipe", "destructive"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: nil
+                            )
+                            await AdminPanelAuditManager.shared.add(
+                                AdminPanelAuditEntry(
+                                    event: "wipeData",
+                                    detail: "User prompted",
+                                    tags: ["data", "wipe", "destructive"],
+                                    actor: "admin",
+                                    context: "adminPanel",
+                                    result: nil
+                                )
+                            )
+                        }
                         showWipeDataAlert = true
                     }
                     .font(AppFonts.body)
@@ -151,13 +265,34 @@ struct AdminPanelView: View {
                 // MARK: - Diagnostics Section
                 Section(header: Text("Diagnostics").font(AppFonts.sectionHeader)) {
                     Button("Run Database Integrity Check") {
-                        AdminPanelAudit.record(
-                            operation: "integrityCheck",
-                            detail: "Triggered",
-                            tags: ["diagnostics", "integrity"],
-                            actor: "admin",
-                            context: "adminPanel"
-                        )
+                        Task {
+                            await analytics.log(
+                                event: "integrityCheck",
+                                detail: "Triggered",
+                                tags: ["diagnostics", "integrity"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: nil
+                            )
+                            await audit.record(
+                                event: "integrityCheck",
+                                detail: "Triggered",
+                                tags: ["diagnostics", "integrity"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: nil
+                            )
+                            await AdminPanelAuditManager.shared.add(
+                                AdminPanelAuditEntry(
+                                    event: "integrityCheck",
+                                    detail: "Triggered",
+                                    tags: ["diagnostics", "integrity"],
+                                    actor: "admin",
+                                    context: "adminPanel",
+                                    result: nil
+                                )
+                            )
+                        }
                         runIntegrityCheck()
                     }
                     .font(AppFonts.body)
@@ -180,24 +315,64 @@ struct AdminPanelView: View {
             .alert("Populate Demo Data?", isPresented: $showPopulateDataAlert) {
                 Button("Populate") {
                     populateDemoData()
-                    AdminPanelAudit.record(
-                        operation: "populateDemo",
-                        detail: "Demo data populated",
-                        tags: ["data", "populate", "demo"],
-                        actor: "admin",
-                        context: "adminPanel",
-                        result: "success"
-                    )
+                    Task {
+                        await analytics.log(
+                            event: "populateDemo",
+                            detail: "Demo data populated",
+                            tags: ["data", "populate", "demo"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "success"
+                        )
+                        await audit.record(
+                            event: "populateDemo",
+                            detail: "Demo data populated",
+                            tags: ["data", "populate", "demo"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "success"
+                        )
+                        await AdminPanelAuditManager.shared.add(
+                            AdminPanelAuditEntry(
+                                event: "populateDemo",
+                                detail: "Demo data populated",
+                                tags: ["data", "populate", "demo"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: "success"
+                            )
+                        )
+                    }
                 }
                 Button("Cancel", role: .cancel) {
-                    AdminPanelAudit.record(
-                        operation: "populateDemo",
-                        detail: "Demo data populate canceled",
-                        tags: ["data", "populate", "demo"],
-                        actor: "admin",
-                        context: "adminPanel",
-                        result: "canceled"
-                    )
+                    Task {
+                        await analytics.log(
+                            event: "populateDemo",
+                            detail: "Demo data populate canceled",
+                            tags: ["data", "populate", "demo"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "canceled"
+                        )
+                        await audit.record(
+                            event: "populateDemo",
+                            detail: "Demo data populate canceled",
+                            tags: ["data", "populate", "demo"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "canceled"
+                        )
+                        await AdminPanelAuditManager.shared.add(
+                            AdminPanelAuditEntry(
+                                event: "populateDemo",
+                                detail: "Demo data populate canceled",
+                                tags: ["data", "populate", "demo"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: "canceled"
+                            )
+                        )
+                    }
                 }
             } message: {
                 Text("This will first wipe all existing data and then add the standard demo data set.")
@@ -206,24 +381,64 @@ struct AdminPanelView: View {
             .alert("Wipe All Data?", isPresented: $showWipeDataAlert) {
                 Button("Wipe Data", role: .destructive) {
                     wipeAllData()
-                    AdminPanelAudit.record(
-                        operation: "wipeData",
-                        detail: "Data wiped",
-                        tags: ["data", "wipe", "destructive"],
-                        actor: "admin",
-                        context: "adminPanel",
-                        result: "success"
-                    )
+                    Task {
+                        await analytics.log(
+                            event: "wipeData",
+                            detail: "Data wiped",
+                            tags: ["data", "wipe", "destructive"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "success"
+                        )
+                        await audit.record(
+                            event: "wipeData",
+                            detail: "Data wiped",
+                            tags: ["data", "wipe", "destructive"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "success"
+                        )
+                        await AdminPanelAuditManager.shared.add(
+                            AdminPanelAuditEntry(
+                                event: "wipeData",
+                                detail: "Data wiped",
+                                tags: ["data", "wipe", "destructive"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: "success"
+                            )
+                        )
+                    }
                 }
                 Button("Cancel", role: .cancel) {
-                    AdminPanelAudit.record(
-                        operation: "wipeData",
-                        detail: "Wipe data canceled",
-                        tags: ["data", "wipe", "destructive"],
-                        actor: "admin",
-                        context: "adminPanel",
-                        result: "canceled"
-                    )
+                    Task {
+                        await analytics.log(
+                            event: "wipeData",
+                            detail: "Wipe data canceled",
+                            tags: ["data", "wipe", "destructive"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "canceled"
+                        )
+                        await audit.record(
+                            event: "wipeData",
+                            detail: "Wipe data canceled",
+                            tags: ["data", "wipe", "destructive"],
+                            actor: "admin",
+                            context: "adminPanel",
+                            result: "canceled"
+                        )
+                        await AdminPanelAuditManager.shared.add(
+                            AdminPanelAuditEntry(
+                                event: "wipeData",
+                                detail: "Wipe data canceled",
+                                tags: ["data", "wipe", "destructive"],
+                                actor: "admin",
+                                context: "adminPanel",
+                                result: "canceled"
+                            )
+                        )
+                    }
                 }
             } message: {
                 Text("This action is irreversible and will delete all owners, dogs, appointments, and charges from the device.")
@@ -238,13 +453,34 @@ struct AdminPanelView: View {
     /// Loads initial data such as crash reports for display.
     private func loadInitialData() {
         self.crashReports = CrashReporter.shared.fetchReports(context: modelContext, includeResolved: true)
-        AdminPanelAudit.record(
-            operation: "viewCrashLogs",
-            detail: "Crash logs loaded",
-            tags: ["diagnostics", "crashlog"],
-            actor: "admin",
-            context: "adminPanel"
-        )
+        Task {
+            await analytics.log(
+                event: "viewCrashLogs",
+                detail: "Crash logs loaded",
+                tags: ["diagnostics", "crashlog"],
+                actor: "admin",
+                context: "adminPanel",
+                result: nil
+            )
+            await audit.record(
+                event: "viewCrashLogs",
+                detail: "Crash logs loaded",
+                tags: ["diagnostics", "crashlog"],
+                actor: "admin",
+                context: "adminPanel",
+                result: nil
+            )
+            await AdminPanelAuditManager.shared.add(
+                AdminPanelAuditEntry(
+                    event: "viewCrashLogs",
+                    detail: "Crash logs loaded",
+                    tags: ["diagnostics", "crashlog"],
+                    actor: "admin",
+                    context: "adminPanel",
+                    result: nil
+                )
+            )
+        }
     }
 
     /// Runs a comprehensive database integrity check.
@@ -255,14 +491,32 @@ struct AdminPanelView: View {
             self.integrityIssues = DatabaseIntegrityChecker.shared.runAllChecks(
                 owners: owners, dogs: dogs, appointments: [], charges: [], staff: [], users: [], tasks: [], vaccinationRecords: []
             )
-
-            AdminPanelAudit.record(
-                operation: "integrityCheck",
+            let resultStr = integrityIssues.isEmpty ? "ok" : "issues: \(integrityIssues.count)"
+            await analytics.log(
+                event: "integrityCheck",
                 detail: "Check completed",
                 tags: ["diagnostics", "integrity"],
                 actor: "admin",
                 context: "adminPanel",
-                result: integrityIssues.isEmpty ? "ok" : "issues: \(integrityIssues.count)"
+                result: resultStr
+            )
+            await audit.record(
+                event: "integrityCheck",
+                detail: "Check completed",
+                tags: ["diagnostics", "integrity"],
+                actor: "admin",
+                context: "adminPanel",
+                result: resultStr
+            )
+            await AdminPanelAuditManager.shared.add(
+                AdminPanelAuditEntry(
+                    event: "integrityCheck",
+                    detail: "Check completed",
+                    tags: ["diagnostics", "integrity"],
+                    actor: "admin",
+                    context: "adminPanel",
+                    result: resultStr
+                )
             )
         }
     }
@@ -286,23 +540,24 @@ struct AdminPanelView: View {
 
 private struct AdminAuditSheetView: View {
     @Binding var isPresented: Bool
+    @State private var entries: [AdminPanelAuditEntry] = []
 
     var body: some View {
         NavigationStack {
             List {
-                if AdminPanelAudit.log.isEmpty {
+                if entries.isEmpty {
                     ContentUnavailableView("No admin events yet", systemImage: "doc.text.magnifyingglass")
                 } else {
-                    ForEach(AdminPanelAudit.log.suffix(40).reversed(), id: \.timestamp) { event in
+                    ForEach(entries.reversed()) { event in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(event.accessibilityLabel)
                                 .font(.footnote)
                                 .foregroundColor(.primary)
-                            if let context = event.context, !context.isEmpty {
+                            if let context = event.context {
                                 Text("Context: \(context)").font(.caption2).foregroundColor(.secondary)
                             }
-                            if let res = event.result, !res.isEmpty {
-                                Text("Result: \(res)").font(.caption2).foregroundColor(.secondary)
+                            if let result = event.result {
+                                Text("Result: \(result)").font(.caption2).foregroundColor(.secondary)
                             }
                         }
                         .padding(.vertical, 4)
@@ -315,17 +570,31 @@ private struct AdminAuditSheetView: View {
                     Button("Close") { isPresented = false }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if let json = AdminPanelAudit.exportLastJSON() {
-                        Button {
-                            UIPasteboard.general.string = json
-                        } label: {
-                            Label("Copy Last as JSON", systemImage: "doc.on.doc")
-                        }
-                        .font(.caption)
+                    Button {
+                        UIPasteboard.general.string = await AdminPanelAuditManager.shared.exportJSON()
+                    } label: {
+                        Label("Copy Last as JSON", systemImage: "doc.on.doc")
                     }
+                    .font(.caption)
                 }
             }
+            .task {
+                entries = await AdminPanelAuditManager.shared.recent(limit: 40)
+            }
         }
+    }
+}
+# MARK: - Diagnostics
+
+public extension AdminPanelView {
+    /// Fetch recent admin panel audit entries.
+    static func recentAuditEntries(limit: Int = 100) async -> [AdminPanelAuditEntry] {
+        await AdminPanelAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export full admin panel audit log as JSON.
+    static func exportAuditLogJSON() async -> String {
+        await AdminPanelAuditManager.shared.exportJSON()
     }
 }
 

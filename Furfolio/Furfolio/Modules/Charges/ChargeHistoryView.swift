@@ -8,6 +8,8 @@
 //
 
 import SwiftUI
+import Combine
+import AVFoundation
 
 // MARK: - Audit/Event Logging
 
@@ -39,6 +41,7 @@ fileprivate struct ChargeHistoryAuditEvent: Codable {
 fileprivate final class ChargeHistoryAudit {
     static private(set) var log: [ChargeHistoryAuditEvent] = []
 
+    // MARK: - Record an audit event with optional charge and search text
     static func record(
         operation: String,
         charge: Charge? = nil,
@@ -59,15 +62,74 @@ fileprivate final class ChargeHistoryAudit {
         )
         log.append(event)
         if log.count > 150 { log.removeFirst() }
+
+        // Accessibility: Post VoiceOver announcement on add, delete, or select
+        if ["add", "delete", "select"].contains(operation), let chargeType = charge?.type {
+            let announcement = "Charge for \(chargeType) \(operation)ed"
+            UIAccessibility.post(notification: .announcement, argument: announcement)
+        }
     }
 
+    // MARK: - Export last event as JSON string
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+
+    // MARK: - Export all audit events as CSV string
+    /// CSV includes: timestamp,operation,chargeID,type,amount,notes,searchText,tags,detail
+    static func exportCSV() -> String {
+        let header = "timestamp,operation,chargeID,type,amount,notes,searchText,tags,detail"
+        let rows = log.map { event -> String in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let chargeIDStr = event.chargeID?.uuidString ?? ""
+            let typeStr = event.type?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let amountStr = event.amount != nil ? String(format: "%.2f", event.amount!) : ""
+            let notesStr = event.notes?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let searchTextStr = event.searchText?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let tagsStr = event.tags.joined(separator: ";").replacingOccurrences(of: "\"", with: "\"\"")
+            let detailStr = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+
+            // CSV fields are wrapped in quotes if they contain commas or quotes
+            func csvField(_ str: String) -> String {
+                if str.contains(",") || str.contains("\"") || str.contains("\n") {
+                    return "\"\(str)\""
+                } else {
+                    return str
+                }
+            }
+
+            return [
+                csvField(timestampStr),
+                csvField(event.operation),
+                csvField(chargeIDStr),
+                csvField(typeStr),
+                csvField(amountStr),
+                csvField(notesStr),
+                csvField(searchTextStr),
+                csvField(tagsStr),
+                csvField(detailStr)
+            ].joined(separator: ",")
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    // MARK: - Accessibility summary of last event
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No charge history events recorded."
+    }
+
+    // MARK: - Analytics: Most frequent charge type among add/select/delete events
+    static var mostFrequentChargeType: String? {
+        let relevantEvents = log.filter { ["add", "select", "delete"].contains($0.operation) && $0.type != nil }
+        let frequency = Dictionary(grouping: relevantEvents, by: { $0.type! }).mapValues { $0.count }
+        return frequency.max(by: { $0.value < $1.value })?.key
+    }
+
+    // MARK: - Analytics: Total number of "add" events
+    static var totalChargesAdded: Int {
+        log.filter { $0.operation == "add" }.count
     }
 }
 
@@ -163,6 +225,43 @@ struct ChargeHistoryView: View {
                 }
             }
             .onAppear(perform: loadCharges)
+            // DEV overlay: Show last 3 audit events and most frequent charge type in DEBUG builds
+            #if DEBUG
+            .overlay(
+                VStack(spacing: 4) {
+                    Spacer()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Audit Events (Last 3):")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .bold()
+                        ForEach(Array(ChargeHistoryAudit.log.suffix(3).enumerated()), id: \.offset) { _, event in
+                            Text(event.accessibilityLabel)
+                                .font(.caption2)
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        if let frequentType = ChargeHistoryAudit.mostFrequentChargeType {
+                            Text("Most Frequent Charge Type: \(frequentType)")
+                                .font(.caption)
+                                .foregroundColor(.yellow)
+                                .bold()
+                        } else {
+                            Text("Most Frequent Charge Type: None")
+                                .font(.caption)
+                                .foregroundColor(.yellow)
+                                .bold()
+                        }
+                    }
+                    .padding(8)
+                    .background(Color.black.opacity(0.75))
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
+            )
+            #endif
         } detail: {
             if let charge = selectedCharge {
                 ChargeDetailView(charge: charge)
@@ -197,9 +296,12 @@ struct ChargeHistoryView: View {
 public enum ChargeHistoryAuditAdmin {
     public static var lastSummary: String { ChargeHistoryAudit.accessibilitySummary }
     public static var lastJSON: String? { ChargeHistoryAudit.exportLastJSON() }
-    public static func recentEvents(limit: Int = 5) -> [String] {
-        ChargeHistoryAudit.log.suffix(limit).map { $0.accessibilityLabel }
-    }
+    /// Export all audit events as CSV string
+    public static func exportCSV() -> String { ChargeHistoryAudit.exportCSV() }
+    /// Most frequent charge type among add/select/delete events
+    public static var mostFrequentChargeType: String? { ChargeHistoryAudit.mostFrequentChargeType }
+    /// Total number of "add" events recorded
+    public static var totalChargesAdded: Int { ChargeHistoryAudit.totalChargesAdded }
 }
 
 // MARK: - Charge Row View

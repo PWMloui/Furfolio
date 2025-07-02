@@ -10,6 +10,14 @@
 import Foundation
 import SwiftData
 
+/**
+ InventoryItem is a comprehensive SwiftData model designed for robust inventory management within Furfolio. Architected with concurrency in mind, it leverages Swift's async/await capabilities to ensure thread-safe audit logging and data consistency. The model supports detailed audit trails and analytics readiness through structured audit entries managed by a dedicated actor, facilitating efficient diagnostics and historical tracking.
+
+ Localization is integrated into audit entries to support internationalization, while accessibility features provide descriptive labels to enhance usability for assistive technologies. The model encapsulates detailed business logic for stock management, expiration monitoring, and reorder suggestions.
+
+ For development and testing, a SwiftUI preview is included, demonstrating typical use cases and UI integration. This design ensures maintainability, scalability, and compliance with best practices for modern Swift application architectures.
+ */
+
 /// Represents a single trackable inventory item, such as a bottle of shampoo, a bag of treats, or a grooming tool.
 @Model
 final class InventoryItem: Identifiable, ObservableObject {
@@ -29,7 +37,6 @@ final class InventoryItem: Identifiable, ObservableObject {
     var expirationDate: Date?
     var batchNumber: String?
     var tagTokens: [String]
-    var auditLog: [String]
     var averageMonthlyUsage: Int?
     var isArchived: Bool
     var isDiscontinued: Bool
@@ -56,57 +63,63 @@ final class InventoryItem: Identifiable, ObservableObject {
     }
 
     // MARK: - Business Intelligence
-    var stockValue: Double { Double(stockLevel) * (price ?? 0) }
-    var marginPercent: Double? {
+    @Attribute(.transient) var stockValue: Double { Double(stockLevel) * (price ?? 0) }
+    @Attribute(.transient) var marginPercent: Double? {
         guard let price, price > 0 else { return nil }
         return (price - cost) / price * 100
     }
-    var isExpiringSoon: Bool {
+    @Attribute(.transient) var isExpiringSoon: Bool {
         guard let expirationDate else { return false }
         return Calendar.current.isDateInToday(expirationDate)
             || (expirationDate.timeIntervalSinceNow < 60*60*24*30 && expirationDate > Date())
     }
-    var isExpired: Bool {
+    @Attribute(.transient) var isExpired: Bool {
         guard let expirationDate else { return false }
         return expirationDate < Date()
     }
-    var suggestedReorderQuantity: Int {
+    @Attribute(.transient) var suggestedReorderQuantity: Int {
         // Simple model: replenish up to 2x average usage (or threshold if unavailable)
         let avg = averageMonthlyUsage ?? lowStockThreshold
         return max(0, avg * 2 - stockLevel)
     }
 
     // MARK: - Stock and Audit Automation
-    func changeStock(by amount: Int, user: String? = nil, reason: String? = nil) {
+    public func changeStock(by amount: Int, user: String? = nil, reason: String? = nil) async {
         let before = stockLevel
         stockLevel += amount
         lastStockChangedBy = user
         lastStockChangeDate = Date()
         lastUpdated = Date()
         let reasonText = reason != nil ? " (\(reason!))" : ""
-        addAudit("Stock changed from \(before) to \(stockLevel) by \(user ?? \"system\")\(reasonText)")
+        await addAudit("Stock changed from \(before) to \(stockLevel) by \(user ?? \"system\")\(reasonText)")
         if stockLevel <= lowStockThreshold && !pendingReorder {
             pendingReorder = true
             lastNotificationType = "LowStock"
         }
     }
-    func archiveItem() {
+    public func archiveItem() async {
         isArchived = true
-        addAudit("Item archived")
+        await addAudit("Item archived")
     }
-    func discontinueItem() {
+    public func discontinueItem() async {
         isDiscontinued = true
         addTag(.discontinued)
-        addAudit("Item marked as discontinued")
+        await addAudit("Item marked as discontinued")
     }
 
     // MARK: - Audit
-    func addAudit(_ entry: String) {
-        let ts = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
-        auditLog.append("[\(ts)] \(entry)")
+    public func addAudit(_ entry: String) async {
+        let tsEntry = NSLocalizedString(entry, comment: "Inventory audit log entry")
+        let auditEntry = InventoryAuditEntry(id: UUID(), timestamp: Date(), entry: tsEntry)
+        await InventoryAuditManager.shared.add(auditEntry)
         lastUpdated = Date()
     }
-    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+    public func recentAuditEntries(limit: Int = 3) async -> [InventoryAuditEntry] {
+        await InventoryAuditManager.shared.recent(limit: limit)
+    }
+    public func exportAuditJSON() async -> String {
+        await InventoryAuditManager.shared.exportJSON()
+    }
 
     // MARK: - Export
     func exportJSON() -> String? {
@@ -123,32 +136,65 @@ final class InventoryItem: Identifiable, ObservableObject {
     }
 
     // MARK: - Accessibility
-    var accessibilityLabel: String {
-        \"Inventory item: \(name). Category: \(category.displayName). \(isInStock ? \"In stock: \(stockLevel).\" : \"Out of stock.\") \(isDiscontinued ? \"Discontinued.\" : \"\") \(isArchived ? \"Archived.\" : \"\")\"
+    @Attribute(.transient) var accessibilityLabel: String {
+        "Inventory item: \(name). Category: \(category.displayName). \(isInStock ? "In stock: \(stockLevel)." : "Out of stock.") \(isDiscontinued ? "Discontinued." : "") \(isArchived ? "Archived." : "")"
     }
 
     // MARK: - Computed
-    var isInStock: Bool { !isArchived && stockLevel > 0 }
-    var isLowStock: Bool { isInStock && stockLevel <= lowStockThreshold }
+    @Attribute(.transient) var isInStock: Bool { !isArchived && stockLevel > 0 }
+    @Attribute(.transient) var isLowStock: Bool { isInStock && stockLevel <= lowStockThreshold }
 
     // MARK: - Initializer
     init(
         id: UUID = UUID(), name: String, sku: String? = nil, notes: String? = nil, category: ItemCategory = .supplies,
         stockLevel: Int = 0, lowStockThreshold: Int = 5, cost: Double = 0.0, price: Double? = nil, lastUpdated: Date = Date(),
-        expirationDate: Date? = nil, batchNumber: String? = nil, tagTokens: [String] = [], auditLog: [String] = [],
+        expirationDate: Date? = nil, batchNumber: String? = nil, tagTokens: [String] = [],
         averageMonthlyUsage: Int? = nil, isArchived: Bool = false, isDiscontinued: Bool = false, pendingReorder: Bool = false,
         vendorName: String? = nil, lotTraceURL: URL? = nil, lastStockChangedBy: String? = nil, lastStockChangeDate: Date? = nil,
         lastNotificationType: String? = nil
     ) {
         self.id = id; self.name = name; self.sku = sku; self.notes = notes; self.category = category; self.stockLevel = stockLevel
         self.lowStockThreshold = lowStockThreshold; self.cost = cost; self.price = price; self.lastUpdated = lastUpdated
-        self.expirationDate = expirationDate; self.batchNumber = batchNumber; self.tagTokens = tagTokens; self.auditLog = auditLog
+        self.expirationDate = expirationDate; self.batchNumber = batchNumber; self.tagTokens = tagTokens
         self.averageMonthlyUsage = averageMonthlyUsage; self.isArchived = isArchived; self.isDiscontinued = isDiscontinued
         self.pendingReorder = pendingReorder; self.vendorName = vendorName; self.lotTraceURL = lotTraceURL
         self.lastStockChangedBy = lastStockChangedBy; self.lastStockChangeDate = lastStockChangeDate
         self.lastNotificationType = lastNotificationType
     }
 }
+
+// MARK: - Audit Entry and Manager
+
+@Model public struct InventoryAuditEntry: Identifiable {
+    @Attribute(.unique) var id: UUID
+    let timestamp: Date
+    let entry: String
+}
+
+actor InventoryAuditManager {
+    private var buffer: [InventoryAuditEntry] = []
+    let maxEntries = 100
+    static let shared = InventoryAuditManager()
+
+    func add(_ entry: InventoryAuditEntry) async {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    func recent(limit: Int) async -> [InventoryAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    func exportJSON() async -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        guard let data = try? encoder.encode(buffer) else { return "[]" }
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG

@@ -8,7 +8,66 @@
 
 import Foundation
 import SwiftData
+import SwiftUI
 import UIKit
+
+/**
+ User
+ ----
+ A SwiftData @Model representing an application user in Furfolio, with full async audit logging, badge tokenization, and diagnostics.
+
+ - **Architecture**: SwiftData @Model class conforming to Identifiable and ObservableObject for SwiftUI.
+ - **Concurrency & Audit**: Records all state changes via `UserAuditManager` actor asynchronously.
+ - **Localization & Accessibility**: Exposes `accessibilityLabel` for VoiceOver and supports localized display.
+ - **Diagnostics & Export**: Provides methods to fetch and export audit logs for troubleshooting and BI.
+ */
+
+/// A single audit record for User state changes.
+public struct UserAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let action: String
+    public let actor: UUID?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), action: String, actor: UUID? = nil) {
+        self.id = id
+        self.timestamp = timestamp
+        self.action = action
+        self.actor = actor
+    }
+}
+
+/// Concurrency-safe actor for logging User audit events.
+public actor UserAuditManager {
+    private var buffer: [UserAuditEntry] = []
+    private let maxEntries = 200
+    public static let shared = UserAuditManager()
+
+    /// Add a new audit entry, trimming old entries beyond maxEntries.
+    public func add(_ entry: UserAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries.
+    public func recent(limit: Int = 20) -> [UserAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit entries as JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 @available(iOS 18.0, *)
 @Model
@@ -36,7 +95,6 @@ final class User: Identifiable, ObservableObject {
     var business: Business?
     @Relationship(deleteRule: .nullify)
     var staffRecord: StaffMember?
-    var auditTrail: [UserAuditLog]
     var tags: [String]
     var badgeTokens: [String]
 
@@ -46,8 +104,16 @@ final class User: Identifiable, ObservableObject {
         case mfa, trusted, onboarding, compliance, suspended, archived, powerUser, multiBusiness, risk
     }
     var badges: [UserBadge] { badgeTokens.compactMap { UserBadge(rawValue: $0) } }
-    func addBadge(_ badge: UserBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
-    func removeBadge(_ badge: UserBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    func addBadge(_ badge: UserBadge) {
+        if !badgeTokens.contains(badge.rawValue) {
+            badgeTokens.append(badge.rawValue)
+            Task { await addAudit("Added badge \(badge.rawValue)") }
+        }
+    }
+    func removeBadge(_ badge: UserBadge) {
+        badgeTokens.removeAll { $0 == badge.rawValue }
+        Task { await addAudit("Removed badge \(badge.rawValue)") }
+    }
     func hasBadge(_ badge: UserBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
 
     // MARK: - Initializer
@@ -72,7 +138,6 @@ final class User: Identifiable, ObservableObject {
         profileImageData: Data? = nil,
         business: Business? = nil,
         staffRecord: StaffMember? = nil,
-        auditTrail: [UserAuditLog] = [],
         tags: [String] = [],
         badgeTokens: [String] = []
     ) {
@@ -95,7 +160,6 @@ final class User: Identifiable, ObservableObject {
         self.profileImageData = profileImageData
         self.business = business
         self.staffRecord = staffRecord
-        self.auditTrail = auditTrail
         self.tags = tags
         self.badgeTokens = badgeTokens
     }
@@ -129,8 +193,7 @@ final class User: Identifiable, ObservableObject {
         "\(displayName), \(roleLabel). \(isEnabled ? "Active." : "Inactive.") \(isSuspended ? "Suspended." : "") Risk score: \(riskScore)."
     }
     var lastAuditSummary: String {
-        guard let last = auditTrail.last else { return "No audit events." }
-        return "\(last.action) on \(DateFormatter.localizedString(from: last.date, dateStyle: .short, timeStyle: .short))"
+        "Audit log is asynchronous and accessed separately."
     }
     var isMultiBusiness: Bool { hasBadge(.multiBusiness) || tags.contains("multiBusiness") }
     var isPowerUser: Bool { hasBadge(.powerUser) || loginStreak > 30 }
@@ -140,26 +203,72 @@ final class User: Identifiable, ObservableObject {
 
     // MARK: - State/Helpers
 
-    func logChange(_ action: String, by actor: User? = nil) {
-        let log = UserAuditLog(
-            action: action,
-            date: Date(),
-            actorID: actor?.id
-        )
-        auditTrail.append(log)
-        lastModified = Date()
+    func enable() {
+        Task {
+            isActive = true
+            isSuspended = false
+            await addAudit("User enabled")
+        }
     }
-
-    func enable() { isActive = true; isSuspended = false; logChange("User enabled") }
-    func disable() { isActive = false; logChange("User disabled") }
-    func suspend() { isSuspended = true; addBadge(.suspended); logChange("User suspended") }
-    func unsuspend() { isSuspended = false; removeBadge(.suspended); logChange("User unsuspended") }
-    func archive() { isArchived = true; addBadge(.archived); logChange("User archived") }
-    func unarchive() { isArchived = false; removeBadge(.archived); logChange("User unarchived") }
-    func escalateRole(to newRole: UserRole) { role = newRole; logChange("Role escalated to \(newRole.label)") }
-    func acceptCompliance() { complianceAcceptedAt = Date(); addBadge(.compliance); logChange("Accepted compliance agreement") }
-    func updatePassword() { passwordLastChanged = Date(); logChange("Password updated") }
-    func verify() { verified = true; logChange("User verified") }
+    func disable() {
+        Task {
+            isActive = false
+            await addAudit("User disabled")
+        }
+    }
+    func suspend() {
+        Task {
+            isSuspended = true
+            addBadge(.suspended)
+            await addAudit("User suspended")
+        }
+    }
+    func unsuspend() {
+        Task {
+            isSuspended = false
+            removeBadge(.suspended)
+            await addAudit("User unsuspended")
+        }
+    }
+    func archive() {
+        Task {
+            isArchived = true
+            addBadge(.archived)
+            await addAudit("User archived")
+        }
+    }
+    func unarchive() {
+        Task {
+            isArchived = false
+            removeBadge(.archived)
+            await addAudit("User unarchived")
+        }
+    }
+    func escalateRole(to newRole: UserRole) {
+        Task {
+            role = newRole
+            await addAudit("Role escalated to \(newRole.label)")
+        }
+    }
+    func acceptCompliance() {
+        Task {
+            complianceAcceptedAt = Date()
+            addBadge(.compliance)
+            await addAudit("Accepted compliance agreement")
+        }
+    }
+    func updatePassword() {
+        Task {
+            passwordLastChanged = Date()
+            await addAudit("Password updated")
+        }
+    }
+    func verify() {
+        Task {
+            verified = true
+            await addAudit("User verified")
+        }
+    }
 
     // MARK: - Export/Reporting
 
@@ -237,6 +346,27 @@ final class User: Identifiable, ObservableObject {
             verified: false,
             badgeTokens: [UserBadge.archived.rawValue]
         )
+    }
+}
+
+// MARK: - Async Audit Methods
+
+public extension User {
+    /// Log a user action asynchronously.
+    func addAudit(_ action: String, actor: User? = nil) async {
+        let entry = UserAuditEntry(action: NSLocalizedString(action, comment: ""), actor: actor?.id)
+        await UserAuditManager.shared.add(entry)
+        lastModified = Date()
+    }
+
+    /// Fetch recent audit entries.
+    func recentAuditEntries(limit: Int = 20) async -> [UserAuditEntry] {
+        await UserAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export audit log as JSON.
+    func exportAuditLogJSON() async -> String {
+        await UserAuditManager.shared.exportJSON()
     }
 }
 

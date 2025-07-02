@@ -3,11 +3,12 @@
 import SwiftUI
 import Combine
 import UniformTypeIdentifiers
+import SwiftData
 
 // MARK: - Protocols
 
 protocol FeedbackSubmitting {
-    func submitFeedback(_ submission: FeedbackSubmission, completion: @escaping (Bool) -> Void)
+    func submitFeedback(_ submission: FeedbackSubmission) async throws -> Bool
 }
 
 protocol AnalyticsLogging {
@@ -20,6 +21,7 @@ protocol ErrorLogging {
 
 // MARK: - ViewModel
 
+@MainActor
 final class FeedbackAndSupportViewModel: ObservableObject {
     @Published var feedback: String = ""
     @Published var category: FeedbackCategory = .general
@@ -47,7 +49,7 @@ final class FeedbackAndSupportViewModel: ObservableObject {
         self.queuedCount = offlineStore.count
     }
 
-    func submitFeedback() {
+    func submitFeedback() async {
         let trimmed = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isSubmitting = true
@@ -58,49 +60,57 @@ final class FeedbackAndSupportViewModel: ObservableObject {
             attachment: attachment
         )
 
-        feedbackService.submitFeedback(submission) { [weak self] success in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.isSubmitting = false
-                if success {
-                    self.analytics.logEvent("feedback_submitted", parameters: submission.analyticsPayload)
-                    self.feedback = ""
-                    self.attachment = nil
-                    self.showSuccessAlert = true
-                    self.category = .general
-                    // Haptic feedback for success
-                    #if os(iOS)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    #endif
-                } else {
-                    self.offlineStore.enqueue(submission)
-                    self.queuedCount = self.offlineStore.count
-                    self.analytics.logEvent("feedback_queued_offline", parameters: submission.analyticsPayload)
-                    self.showErrorAlert = true
-                    // Haptic feedback for error
-                    #if os(iOS)
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                    #endif
-                }
+        do {
+            let success = try await feedbackService.submitFeedback(submission)
+            isSubmitting = false
+            if success {
+                analytics.logEvent("feedback_submitted", parameters: submission.analyticsPayload)
+                feedback = ""
+                attachment = nil
+                showSuccessAlert = true
+                category = .general
+                // Haptic feedback for success
+                #if os(iOS)
+                await FeedbackAndSupportViewModel.generateHapticSuccess()
+                #endif
+            } else {
+                offlineStore.enqueue(submission)
+                queuedCount = offlineStore.count
+                analytics.logEvent("feedback_queued_offline", parameters: submission.analyticsPayload)
+                showErrorAlert = true
+                #if os(iOS)
+                await FeedbackAndSupportViewModel.generateHapticError()
+                #endif
             }
+        } catch {
+            isSubmitting = false
+            offlineStore.enqueue(submission)
+            queuedCount = offlineStore.count
+            analytics.logEvent("feedback_queued_offline", parameters: submission.analyticsPayload)
+            showErrorAlert = true
+            errorLogger.logError(error, context: "submitFeedback")
+            #if os(iOS)
+            await FeedbackAndSupportViewModel.generateHapticError()
+            #endif
         }
     }
 
-    func retryQueuedFeedbackIfNeeded() {
+    func retryQueuedFeedbackIfNeeded() async {
         guard offlineStore.count > 0 else { return }
         let toRetry = offlineStore.dequeueAll()
         for submission in toRetry {
-            feedbackService.submitFeedback(submission) { [weak self] success in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if success {
-                        self.analytics.logEvent("feedback_submitted_from_queue", parameters: submission.analyticsPayload)
-                    } else {
-                        self.offlineStore.enqueue(submission) // Re-queue if failed again
-                    }
-                    self.queuedCount = self.offlineStore.count
+            do {
+                let success = try await feedbackService.submitFeedback(submission)
+                if success {
+                    analytics.logEvent("feedback_submitted_from_queue", parameters: submission.analyticsPayload)
+                } else {
+                    offlineStore.enqueue(submission)
                 }
+            } catch {
+                offlineStore.enqueue(submission)
+                errorLogger.logError(error, context: "retryQueuedFeedbackIfNeeded")
             }
+            queuedCount = offlineStore.count
         }
     }
 
@@ -120,16 +130,32 @@ final class FeedbackAndSupportViewModel: ObservableObject {
         attachment = nil
         category = .general
     }
+
+#if os(iOS)
+    // Swift Concurrency haptic helpers
+    static func generateHapticSuccess() async {
+        await MainActor.run {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+    static func generateHapticError() async {
+        await MainActor.run {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+    }
+#endif
 }
 
 // MARK: - Feedback Submission Model
 
-struct FeedbackSubmission: Identifiable, Codable {
-    let id: UUID = UUID()
+@Model public
+struct FeedbackSubmission: Identifiable {
+    @Attribute(.unique) var id: UUID = UUID()
     let message: String
     let category: FeedbackCategory
     let attachment: FeedbackAttachment?
 
+    @Attribute(.transient)
     var analyticsPayload: [String: Any] {
         [
             "id": id.uuidString,
@@ -201,7 +227,7 @@ struct FeedbackAndSupportView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: AppSpacing.xLarge ?? 24) {
+            VStack(spacing: AppSpacing.xLarge ?? 28) {
                 headerSection
                 descriptionText
                 categoryPicker
@@ -210,7 +236,7 @@ struct FeedbackAndSupportView: View {
                 submitButton
                 helpAndQueueSection
             }
-            .padding(AppSpacing.medium ?? 16)
+            .padding(AppSpacing.medium ?? 18)
             .onTapGesture { isTextEditorFocused = false }
         }
         .background(AppColors.background ?? Color(UIColor.systemBackground))
@@ -236,6 +262,14 @@ struct FeedbackAndSupportView: View {
                 tempAttachment = nil
             }
         }
+        .refreshable {
+            await viewModel.retryQueuedFeedbackIfNeeded()
+        }
+        .onAppear {
+            Task {
+                await viewModel.retryQueuedFeedbackIfNeeded()
+            }
+        }
     }
 
     // MARK: - UI Sections
@@ -244,11 +278,12 @@ struct FeedbackAndSupportView: View {
         Image(systemName: "bubble.left.and.bubble.right.fill")
             .resizable()
             .scaledToFit()
-            .frame(width: AppSpacing.xxxLarge ?? 64, height: AppSpacing.xxxLarge ?? 64)
+            .frame(width: AppSpacing.xxxLarge ?? 72, height: AppSpacing.xxxLarge ?? 72)
             .foregroundStyle(AppColors.accent ?? Color.accentColor)
-            .padding(.top, AppSpacing.large ?? 20)
-            .accessibilityLabel(LocalizedStringKey("Feedback and Support Icon"))
-            .accessibilityHint(LocalizedStringKey("Decorative header image representing feedback and support"))
+            .padding(.top, AppSpacing.large ?? 24)
+            .accessibilityLabel(Text(NSLocalizedString("Feedback and Support Icon", comment: "Feedback header icon")))
+            .accessibilityHint(Text(NSLocalizedString("Decorative header image representing feedback and support", comment: "Header icon hint")))
+            .accessibilityIdentifier("headerImage")
     }
 
     private var descriptionText: some View {
@@ -271,13 +306,15 @@ struct FeedbackAndSupportView: View {
             }
         }
         .pickerStyle(SegmentedPickerStyle())
-        .padding(.horizontal, AppSpacing.medium ?? 16)
-        .accessibilityLabel(LocalizedStringKey("Feedback category"))
-        .accessibilityHint(LocalizedStringKey("Select the type of feedback"))
+        .padding(.horizontal, AppSpacing.medium ?? 18)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(NSLocalizedString("Feedback category", comment: "Picker label")))
+        .accessibilityHint(Text(NSLocalizedString("Select the type of feedback", comment: "Picker hint")))
+        .accessibilityIdentifier("categoryPicker")
     }
 
     private var feedbackForm: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.small ?? 8) {
+        VStack(alignment: .leading, spacing: AppSpacing.small ?? 10) {
             Text(LocalizedStringKey("Your Feedback"))
                 .font(AppFonts.headline ?? .headline)
             ZStack(alignment: .topLeading) {
@@ -285,24 +322,25 @@ struct FeedbackAndSupportView: View {
                     Text(LocalizedStringKey("Type your message here…"))
                         .foregroundStyle(AppColors.secondaryText ?? .secondary)
                         .padding(.top, AppSpacing.small ?? 8)
-                        .padding(.horizontal, AppSpacing.xxSmall ?? 4)
+                        .padding(.horizontal, AppSpacing.xxSmall ?? 6)
                         .accessibilityHidden(true)
                 }
                 TextEditor(text: $viewModel.feedback)
                     .focused($isTextEditorFocused)
-                    .frame(height: 140)
-                    .padding(AppSpacing.xxSmall ?? 4)
+                    .frame(height: 150)
+                    .padding(AppSpacing.xxSmall ?? 6)
                     .background(AppColors.secondaryBackground ?? Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: AppSpacing.large ?? 10))
-                    .accessibilityLabel(LocalizedStringKey("Feedback text"))
-                    .accessibilityHint(LocalizedStringKey("Enter your feedback or support request here"))
+                    .clipShape(RoundedRectangle(cornerRadius: AppSpacing.large ?? 12))
+                    .accessibilityLabel(Text(NSLocalizedString("Feedback text", comment: "Feedback texteditor label")))
+                    .accessibilityHint(Text(NSLocalizedString("Enter your feedback or support request here", comment: "Feedback editor hint")))
+                    .accessibilityIdentifier("feedbackTextEditor")
             }
         }
-        .padding(.horizontal, AppSpacing.medium ?? 16)
+        .padding(.horizontal, AppSpacing.medium ?? 18)
     }
 
     private var attachmentSection: some View {
-        HStack(spacing: AppSpacing.small ?? 8) {
+        HStack(spacing: AppSpacing.small ?? 12) {
             Button {
                 showAttachmentPicker = true
             } label: {
@@ -311,27 +349,45 @@ struct FeedbackAndSupportView: View {
                         ? NSLocalizedString("Add Attachment", comment: "")
                         : NSLocalizedString("Replace Attachment", comment: ""),
                     systemImage: "paperclip")
+                    .labelStyle(.titleAndIcon)
+                    .font(.body.weight(.semibold))
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 10)
             }
-            .accessibilityLabel(LocalizedStringKey("Add or replace attachment"))
-            .accessibilityHint(LocalizedStringKey("Attach a file or screenshot"))
+            .accessibilityLabel(Text(NSLocalizedString("Add or replace attachment", comment: "Attachment button label")))
+            .accessibilityHint(Text(NSLocalizedString("Attach a file or screenshot", comment: "Attachment button hint")))
+            .accessibilityIdentifier("attachmentButton")
+            .background(
+                (AppColors.secondaryBackground ?? Color.secondary.opacity(0.07))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             if let attachment = viewModel.attachment {
                 Text(attachment.filename)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .font(AppFonts.footnote ?? .footnote)
+                    .accessibilityIdentifier("attachmentFilename")
                 Button(action: { viewModel.removeAttachment() }) {
                     Image(systemName: "xmark.circle")
-                        .accessibilityLabel(LocalizedStringKey("Remove attachment"))
+                        .imageScale(.large)
+                        .accessibilityLabel(Text(NSLocalizedString("Remove attachment", comment: "Remove attachment button label")))
+                        .accessibilityHint(Text(NSLocalizedString("Remove the current attachment", comment: "Remove attachment button hint")))
+                        .accessibilityIdentifier("removeAttachmentButton")
                 }
+                .padding(.leading, 4)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
             Spacer()
         }
-        .padding(.horizontal, AppSpacing.medium ?? 16)
+        .padding(.horizontal, AppSpacing.medium ?? 18)
     }
 
     private var submitButton: some View {
         Button(action: {
-            viewModel.submitFeedback()
+            Task {
+                await viewModel.submitFeedback()
+            }
             isTextEditorFocused = false
         }) {
             HStack {
@@ -340,70 +396,95 @@ struct FeedbackAndSupportView: View {
                         .progressViewStyle(.circular)
                         .scaleEffect(1.1)
                         .tint(AppColors.accent ?? .accentColor)
-                        .padding(.trailing, 6)
+                        .padding(.trailing, 8)
                 }
                 Text(LocalizedStringKey("Send Feedback"))
                     .font(AppFonts.button ?? .headline)
                     .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity)
-            .padding(AppSpacing.medium ?? 16)
+            .frame(minHeight: 48)
+            .padding(AppSpacing.medium ?? 18)
             .background(
                 (viewModel.isSubmitting || viewModel.feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 ? (AppColors.accent ?? .accentColor).opacity(0.09)
                 : (AppColors.accent ?? .accentColor).opacity(0.19)
             )
             .foregroundStyle(AppColors.accent ?? .accentColor)
-            .clipShape(RoundedRectangle(cornerRadius: AppSpacing.large ?? 10))
+            .clipShape(RoundedRectangle(cornerRadius: AppSpacing.large ?? 12))
             .animation(.easeInOut(duration: 0.15), value: viewModel.isSubmitting)
         }
         .disabled(viewModel.feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSubmitting)
-        .padding(.horizontal, AppSpacing.medium ?? 16)
-        .accessibilityLabel(LocalizedStringKey("Send Feedback"))
-        .accessibilityHint(LocalizedStringKey("Send your feedback to the Furfolio team"))
+        .padding(.horizontal, AppSpacing.medium ?? 18)
+        .accessibilityLabel(Text(NSLocalizedString("Send Feedback", comment: "Send feedback button label")))
+        .accessibilityHint(Text(NSLocalizedString("Send your feedback to the Furfolio team", comment: "Send feedback button hint")))
+        .accessibilityIdentifier("sendFeedbackButton")
     }
 
     private var helpAndQueueSection: some View {
-        VStack(spacing: AppSpacing.xSmall ?? 6) {
+        VStack(spacing: AppSpacing.xSmall ?? 10) {
             Link(LocalizedStringKey("Visit Help Center"), destination: URL(string: "https://furfolio.app/help")!)
                 .font(AppFonts.footnote ?? .footnote)
+                .accessibilityLabel(Text(NSLocalizedString("Visit Help Center", comment: "Help center link label")))
+                .accessibilityHint(Text(NSLocalizedString("Opens the Furfolio Help Center in your browser", comment: "Help center link hint")))
+                .accessibilityIdentifier("helpCenterLink")
             if viewModel.queuedCount > 0 {
                 HStack {
                     Image(systemName: "tray.full.fill")
                         .foregroundColor(AppColors.warning ?? .orange)
+                        .accessibilityHidden(true)
                     Text(LocalizedStringKey("Queued feedback:"))
                     Text("\(viewModel.queuedCount)")
                         .fontWeight(.bold)
+                        .accessibilityIdentifier("queuedFeedbackCount")
                 }
                 .font(AppFonts.footnote ?? .footnote)
                 .foregroundStyle(AppColors.warning ?? .orange)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text(NSLocalizedString("Queued feedback", comment: "Queued feedback label")))
+                .accessibilityHint(Text(NSLocalizedString("Number of feedback messages queued to send", comment: "Queued feedback hint")))
+                .accessibilityIdentifier("queuedFeedbackSection")
             }
         }
-        .padding(.top, AppSpacing.xLarge ?? 24)
-        .padding(.bottom, AppSpacing.large ?? 12)
+        .padding(.top, AppSpacing.xLarge ?? 28)
+        .padding(.bottom, AppSpacing.large ?? 16)
     }
 }
 
-// MARK: - Attachment Picker (Demo)
+// MARK: - Attachment Picker (PHPicker)
+
+import PhotosUI
 
 struct AttachmentPicker: UIViewControllerRepresentable {
     @Binding var attachment: FeedbackAttachment?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.image, UTType.pdf, UTType.text])
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var configuration = PHPickerConfiguration()
+        configuration.filter = .any(of: [.images, .livePhotos])
+        configuration.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = context.coordinator
         return picker
     }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
 
-    class Coordinator: NSObject, UIDocumentPickerDelegate {
+    class Coordinator: NSObject, PHPickerViewControllerDelegate {
         let parent: AttachmentPicker
         init(_ parent: AttachmentPicker) { self.parent = parent }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first, let data = try? Data(contentsOf: url) else { return }
-            let attachment = FeedbackAttachment(filename: url.lastPathComponent, fileType: url.pathExtension, data: data)
-            parent.attachment = attachment
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard let itemProvider = results.first?.itemProvider else { return }
+            if itemProvider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                itemProvider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                    guard let data = data else { return }
+                    let filename = itemProvider.suggestedName ?? "Image.jpg"
+                    let attachment = FeedbackAttachment(filename: filename, fileType: "jpg", data: data)
+                    DispatchQueue.main.async {
+                        self.parent.attachment = attachment
+                    }
+                }
+            }
         }
     }
 }
@@ -411,11 +492,10 @@ struct AttachmentPicker: UIViewControllerRepresentable {
 // MARK: - Demo Defaults & Previews
 
 final class DefaultFeedbackService: FeedbackSubmitting {
-    func submitFeedback(_ submission: FeedbackSubmission, completion: @escaping (Bool) -> Void) {
-        // Simulate success/fail randomly
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-            completion(Bool.random())
-        }
+    func submitFeedback(_ submission: FeedbackSubmission) async throws -> Bool {
+        // Simulate async success/fail randomly
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        return Bool.random()
     }
 }
 
@@ -463,7 +543,67 @@ struct FeedbackAndSupportView_Previews: PreviewProvider {
             }
             .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
             .previewDisplayName("Accessibility Large Text")
+
+            NavigationStack {
+                FeedbackAndSupportView(viewModel: .previewInstance)
+            }
+            .onAppear {
+                Task {
+                    await FeedbackAndSupportViewModel.previewInstance.submitFeedback()
+                }
+            }
+            .previewDisplayName("Async Submission Preview")
         }
+    }
+}
+#endif
+
+// MARK: - Unit Test Stubs
+
+#if DEBUG
+import XCTest
+
+final class FeedbackAndSupportViewModelTests: XCTestCase {
+    func testAsyncSubmissionSuccess() async {
+        let service = MockFeedbackService(result: true)
+        let analytics = DefaultAnalyticsLogger()
+        let errorLogger = DefaultErrorLogger()
+        let viewModel = FeedbackAndSupportViewModel(feedbackService: service, analytics: analytics, errorLogger: errorLogger)
+        viewModel.feedback = "Test Feedback"
+        await viewModel.submitFeedback()
+        XCTAssertTrue(viewModel.showSuccessAlert)
+        XCTAssertFalse(viewModel.showErrorAlert)
+    }
+
+    func testAsyncSubmissionFailure() async {
+        let service = MockFeedbackService(result: false)
+        let analytics = DefaultAnalyticsLogger()
+        let errorLogger = DefaultErrorLogger()
+        let viewModel = FeedbackAndSupportViewModel(feedbackService: service, analytics: analytics, errorLogger: errorLogger)
+        viewModel.feedback = "Test Feedback"
+        await viewModel.submitFeedback()
+        XCTAssertFalse(viewModel.showSuccessAlert)
+        XCTAssertTrue(viewModel.showErrorAlert)
+    }
+
+    func testRetryQueuedFeedbackIfNeeded() async {
+        let service = MockFeedbackService(result: true)
+        let analytics = DefaultAnalyticsLogger()
+        let errorLogger = DefaultErrorLogger()
+        let offlineStore = OfflineFeedbackQueue()
+        let submission = FeedbackSubmission(message: "Offline", category: .bug, attachment: nil)
+        offlineStore.enqueue(submission)
+        let viewModel = FeedbackAndSupportViewModel(feedbackService: service, analytics: analytics, errorLogger: errorLogger, offlineStore: offlineStore)
+        await viewModel.retryQueuedFeedbackIfNeeded()
+        XCTAssertEqual(viewModel.queuedCount, 0)
+    }
+}
+
+final class MockFeedbackService: FeedbackSubmitting {
+    let result: Bool
+    init(result: Bool) { self.result = result }
+    func submitFeedback(_ submission: FeedbackSubmission) async throws -> Bool {
+        return result
     }
 }
 #endif

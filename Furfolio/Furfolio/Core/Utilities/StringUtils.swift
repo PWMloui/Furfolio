@@ -6,62 +6,105 @@
 //
 
 import Foundation
+import SwiftUI
 
-// MARK: - Audit/Event Logging for StringUtils
+// MARK: - Analytics & Audit Protocols
 
-fileprivate struct StringUtilsAuditEvent: Codable {
-    let timestamp: Date
-    let function: String
-    let input: String?
-    let result: String?
-    let tags: [String]
-    let actor: String?
-    let context: String?
-    var accessibilityLabel: String {
+public protocol StringUtilsAnalyticsLogger {
+    /// Log a string utils event asynchronously.
+    func log(function: String, input: String?, result: String?, tags: [String], actor: String?, context: String?) async
+}
+
+public protocol StringUtilsAuditLogger {
+    /// Record a string utils audit entry asynchronously.
+    func record(function: String, input: String?, result: String?, tags: [String], actor: String?, context: String?) async
+}
+
+public struct NullStringUtilsAnalyticsLogger: StringUtilsAnalyticsLogger {
+    public init() {}
+    public func log(function: String, input: String?, result: String?, tags: [String], actor: String?, context: String?) async {}
+}
+
+public struct NullStringUtilsAuditLogger: StringUtilsAuditLogger {
+    public init() {}
+    public func record(function: String, input: String?, result: String?, tags: [String], actor: String?, context: String?) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a StringUtils audit event.
+public struct StringUtilsAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let function: String
+    public let input: String?
+    public let result: String?
+    public let tags: [String]
+    public let actor: String?
+    public let context: String?
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        function: String,
+        input: String?,
+        result: String?,
+        tags: [String],
+        actor: String?,
+        context: String?
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.function = function
+        self.input = input
+        self.result = result
+        self.tags = tags
+        self.actor = actor
+        self.context = context
+    }
+
+    public var accessibilityLabel: String {
         let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
         return "StringUtils \(function) [\(tags.joined(separator: ","))] at \(dateStr)"
     }
 }
 
-fileprivate final class StringUtilsAudit {
-    static private(set) var log: [StringUtilsAuditEvent] = []
+/// Concurrency-safe actor for logging StringUtils audit events.
+public actor StringUtilsAuditManager {
+    private var buffer: [StringUtilsAuditEntry] = []
+    private let maxEntries = 500
+    public static let shared = StringUtilsAuditManager()
 
-    static func record(
-        function: String,
-        input: String?,
-        result: String?,
-        tags: [String],
-        actor: String? = nil,
-        context: String? = nil
-    ) {
-        let event = StringUtilsAuditEvent(
-            timestamp: Date(),
-            function: function,
-            input: input,
-            result: result,
-            tags: tags,
-            actor: actor,
-            context: context
-        )
-        log.append(event)
-        if log.count > 500 { log.removeFirst() }
+    public func add(_ entry: StringUtilsAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
     }
 
-    static func exportLastJSON() -> String? {
-        guard let last = log.last else { return nil }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
-        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    public func recent(limit: Int = 20) -> [StringUtilsAuditEntry] {
+        Array(buffer.suffix(limit))
     }
 
-    static var accessibilitySummary: String {
-        log.last?.accessibilityLabel ?? "No StringUtils usage recorded."
+    public func exportLastJSON() -> String? {
+        guard let last = buffer.last else { return nil }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted; encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(last) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public var accessibilitySummary: String {
+        recent(limit: 1).first?.accessibilityLabel ?? "No StringUtils usage recorded."
     }
 }
 
 // MARK: - StringUtils (Modular, Tokenized, Auditable String Manipulation Utility)
 
 @frozen
-enum StringUtils {}
+enum StringUtils {
+    private static let analytics: StringUtilsAnalyticsLogger = NullStringUtilsAnalyticsLogger()
+    private static let audit: StringUtilsAuditLogger = NullStringUtilsAuditLogger()
+}
 
 
 // MARK: - Basic String Manipulations
@@ -69,7 +112,13 @@ enum StringUtils {}
 extension StringUtils {
     static func trimmed(_ string: String?, actor: String? = nil, context: String? = nil) -> String {
         let result = (string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        StringUtilsAudit.record(function: "trimmed", input: string, result: result, tags: ["trim", "cleanup"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "trimmed", input: string, result: result, tags: ["trim", "cleanup"], actor: actor, context: context)
+            await audit.record(function: "trimmed", input: string, result: result, tags: ["trim", "cleanup"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "trimmed", input: string, result: result, tags: ["trim", "cleanup"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
@@ -80,13 +129,25 @@ extension StringUtils {
         } else {
             result = ""
         }
-        StringUtilsAudit.record(function: "capitalizeFirst", input: string, result: result, tags: ["capitalize", "first"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "capitalizeFirst", input: string, result: result, tags: ["capitalize", "first"], actor: actor, context: context)
+            await audit.record(function: "capitalizeFirst", input: string, result: result, tags: ["capitalize", "first"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "capitalizeFirst", input: string, result: result, tags: ["capitalize", "first"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
     static func isNilOrEmpty(_ string: String?, actor: String? = nil, context: String? = nil) -> Bool {
         let isEmpty = string?.isEmpty ?? true
-        StringUtilsAudit.record(function: "isNilOrEmpty", input: string, result: "\(isEmpty)", tags: ["empty", "validation"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "isNilOrEmpty", input: string, result: "\(isEmpty)", tags: ["empty", "validation"], actor: actor, context: context)
+            await audit.record(function: "isNilOrEmpty", input: string, result: "\(isEmpty)", tags: ["empty", "validation"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "isNilOrEmpty", input: string, result: "\(isEmpty)", tags: ["empty", "validation"], actor: actor, context: context)
+            )
+        }
         return isEmpty
     }
 }
@@ -103,7 +164,13 @@ extension StringUtils {
         } else {
             result = ""
         }
-        StringUtilsAudit.record(function: "initials", input: name, result: result, tags: ["initials", "id"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "initials", input: name, result: result, tags: ["initials", "id"], actor: actor, context: context)
+            await audit.record(function: "initials", input: name, result: result, tags: ["initials", "id"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "initials", input: name, result: result, tags: ["initials", "id"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
@@ -117,7 +184,13 @@ extension StringUtils {
         } else {
             result = string ?? ""
         }
-        StringUtilsAudit.record(function: "mask", input: string, result: result, tags: ["mask", "privacy"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "mask", input: string, result: result, tags: ["mask", "privacy"], actor: actor, context: context)
+            await audit.record(function: "mask", input: string, result: result, tags: ["mask", "privacy"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "mask", input: string, result: result, tags: ["mask", "privacy"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
@@ -129,7 +202,13 @@ extension StringUtils {
         } else {
             result = string ?? ""
         }
-        StringUtilsAudit.record(function: "truncated", input: string, result: result, tags: ["truncate", "ellipsis"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "truncated", input: string, result: result, tags: ["truncate", "ellipsis"], actor: actor, context: context)
+            await audit.record(function: "truncated", input: string, result: result, tags: ["truncate", "ellipsis"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "truncated", input: string, result: result, tags: ["truncate", "ellipsis"], actor: actor, context: context)
+            )
+        }
         return result
     }
 }
@@ -140,19 +219,37 @@ extension StringUtils {
 extension StringUtils {
     static func isValidEmail(_ string: String?, actor: String? = nil, context: String? = nil) -> Bool {
         guard let string = string else {
-            StringUtilsAudit.record(function: "isValidEmail", input: string, result: "false", tags: ["email", "validation"], actor: actor, context: context)
+            Task {
+                await analytics.log(function: "isValidEmail", input: string, result: "false", tags: ["email", "validation"], actor: actor, context: context)
+                await audit.record(function: "isValidEmail", input: string, result: "false", tags: ["email", "validation"], actor: actor, context: context)
+                await StringUtilsAuditManager.shared.add(
+                    StringUtilsAuditEntry(function: "isValidEmail", input: string, result: "false", tags: ["email", "validation"], actor: actor, context: context)
+                )
+            }
             return false
         }
         let pattern = #"^\S+@\S+\.\S+$"#
         let result = string.range(of: pattern, options: .regularExpression) != nil
-        StringUtilsAudit.record(function: "isValidEmail", input: string, result: "\(result)", tags: ["email", "validation"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "isValidEmail", input: string, result: "\(result)", tags: ["email", "validation"], actor: actor, context: context)
+            await audit.record(function: "isValidEmail", input: string, result: "\(result)", tags: ["email", "validation"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "isValidEmail", input: string, result: "\(result)", tags: ["email", "validation"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
     static func isValidPhone(_ string: String?, actor: String? = nil, context: String? = nil) -> Bool {
         let digits = string?.filter { $0.isNumber } ?? ""
         let result = (10...15).contains(digits.count)
-        StringUtilsAudit.record(function: "isValidPhone", input: string, result: "\(result)", tags: ["phone", "validation"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "isValidPhone", input: string, result: "\(result)", tags: ["phone", "validation"], actor: actor, context: context)
+            await audit.record(function: "isValidPhone", input: string, result: "\(result)", tags: ["phone", "validation"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "isValidPhone", input: string, result: "\(result)", tags: ["phone", "validation"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
@@ -163,7 +260,13 @@ extension StringUtils {
         } else {
             result = ""
         }
-        StringUtilsAudit.record(function: "normalized", input: string, result: result, tags: ["normalize", "search"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "normalized", input: string, result: result, tags: ["normalize", "search"], actor: actor, context: context)
+            await audit.record(function: "normalized", input: string, result: result, tags: ["normalize", "search"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "normalized", input: string, result: result, tags: ["normalize", "search"], actor: actor, context: context)
+            )
+        }
         return result
     }
 }
@@ -187,13 +290,25 @@ extension StringUtils {
         } else {
             result = ""
         }
-        StringUtilsAudit.record(function: "formatUSPhone", input: string, result: result, tags: ["phone", "us", "format"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "formatUSPhone", input: string, result: result, tags: ["phone", "us", "format"], actor: actor, context: context)
+            await audit.record(function: "formatUSPhone", input: string, result: result, tags: ["phone", "us", "format"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "formatUSPhone", input: string, result: result, tags: ["phone", "us", "format"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
     static func formatInternationalPhone(_ string: String?, actor: String? = nil, context: String? = nil) -> String {
         let result = string ?? ""
-        StringUtilsAudit.record(function: "formatInternationalPhone", input: string, result: result, tags: ["phone", "intl", "format"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "formatInternationalPhone", input: string, result: result, tags: ["phone", "intl", "format"], actor: actor, context: context)
+            await audit.record(function: "formatInternationalPhone", input: string, result: result, tags: ["phone", "intl", "format"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "formatInternationalPhone", input: string, result: result, tags: ["phone", "intl", "format"], actor: actor, context: context)
+            )
+        }
         return result
     }
 }
@@ -210,7 +325,13 @@ extension StringUtils {
         } else {
             result = ""
         }
-        StringUtilsAudit.record(function: "removingSpecialCharacters", input: string, result: result, tags: ["clean", "sanitize"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "removingSpecialCharacters", input: string, result: result, tags: ["clean", "sanitize"], actor: actor, context: context)
+            await audit.record(function: "removingSpecialCharacters", input: string, result: result, tags: ["clean", "sanitize"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "removingSpecialCharacters", input: string, result: result, tags: ["clean", "sanitize"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
@@ -232,7 +353,13 @@ extension StringUtils {
             let condensed = alphanumeric.replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
             result = condensed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         }
-        StringUtilsAudit.record(function: "slugify", input: string, result: result, tags: ["slug", "url"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "slugify", input: string, result: result, tags: ["slug", "url"], actor: actor, context: context)
+            await audit.record(function: "slugify", input: string, result: result, tags: ["slug", "url"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "slugify", input: string, result: result, tags: ["slug", "url"], actor: actor, context: context)
+            )
+        }
         return result
     }
 
@@ -246,7 +373,13 @@ extension StringUtils {
             let camelSpaced = regex?.stringByReplacingMatches(in: snakeReplaced, options: [], range: range, withTemplate: "$1 $2") ?? snakeReplaced
             result = camelSpaced.capitalized
         }
-        StringUtilsAudit.record(function: "humanize", input: string, result: result, tags: ["humanize", "display"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "humanize", input: string, result: result, tags: ["humanize", "display"], actor: actor, context: context)
+            await audit.record(function: "humanize", input: string, result: result, tags: ["humanize", "display"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "humanize", input: string, result: result, tags: ["humanize", "display"], actor: actor, context: context)
+            )
+        }
         return result
     }
 }
@@ -263,7 +396,13 @@ extension StringUtils {
                 code.append(char)
             }
         }
-        StringUtilsAudit.record(function: "randomShortCode", input: "\(length)", result: code, tags: ["random", "code"], actor: actor, context: context)
+        Task {
+            await analytics.log(function: "randomShortCode", input: "\(length)", result: code, tags: ["random", "code"], actor: actor, context: context)
+            await audit.record(function: "randomShortCode", input: "\(length)", result: code, tags: ["random", "code"], actor: actor, context: context)
+            await StringUtilsAuditManager.shared.add(
+                StringUtilsAuditEntry(function: "randomShortCode", input: "\(length)", result: code, tags: ["random", "code"], actor: actor, context: context)
+            )
+        }
         return code
     }
 }
@@ -271,10 +410,15 @@ extension StringUtils {
 // MARK: - Admin/QA Accessors
 
 public enum StringUtilsAuditAdmin {
-    public static var lastSummary: String { StringUtilsAudit.accessibilitySummary }
-    public static var lastJSON: String? { StringUtilsAudit.exportLastJSON() }
-    public static func recentEvents(limit: Int = 5) -> [String] {
-        StringUtilsAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    public static func lastSummary() async -> String {
+        await StringUtilsAuditManager.shared.accessibilitySummary
+    }
+    public static func lastJSON() async -> String? {
+        await StringUtilsAuditManager.shared.exportLastJSON()
+    }
+    public static func recentEvents(limit: Int = 5) async -> [String] {
+        await StringUtilsAuditManager.shared.recent(limit: limit)
+            .map { $0.accessibilityLabel }
     }
 }
 
@@ -294,9 +438,12 @@ func stringUtilsDemo() {
     _ = StringUtils.humanize("firstName", actor: "unit-test")
     _ = StringUtils.randomShortCode(length: 8, actor: "test")
     print("StringUtils audit log:")
-    for event in StringUtilsAudit.log { print(event.accessibilityLabel) }
-    if let json = StringUtilsAudit.exportLastJSON() {
-        print("Last event JSON:\n\(json)")
+    Task {
+        let events = await StringUtilsAuditManager.shared.recent(limit: 100)
+        for event in events { print(event.accessibilityLabel) }
+        if let json = await StringUtilsAuditManager.shared.exportLastJSON() {
+            print("Last event JSON:\n\(json)")
+        }
     }
 }
 #endif

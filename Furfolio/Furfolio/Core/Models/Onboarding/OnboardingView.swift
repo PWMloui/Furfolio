@@ -5,18 +5,83 @@
 //  Enhanced: Analytics/audit–ready, modular, token-compliant, accessible, and preview/testable.
 //
 
+/**
+ OnboardingView
+ --------------
+ A SwiftUI view orchestrating the multi-step onboarding flow in Furfolio.
+
+ - **Architecture**: MVVM-compatible, using `OnboardingFlowManager` for state and navigation.
+ - **Dependency Injection**: Injects `AnalyticsServiceProtocol` and `AuditLoggerProtocol` for event tracking.
+ - **Concurrency & Async Logging**: Wraps analytics and audit calls in async `Task` to avoid blocking the UI.
+ - **Audit Management**: Uses `OnboardingViewAuditManager` actor to record all user interactions with a capped diagnostic buffer.
+ - **Localization**: All user-facing strings should be localized via `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: Provides accessibility labels, hints, and traits for dynamic content.
+ - **Diagnostics & Preview/Testability**: Exposes async methods to fetch and export recent audit entries for testing and diagnostics.
+ */
+
 import SwiftUI
 
 // MARK: - Centralized Analytics + Audit Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
+}
+
+/// A record of OnboardingView user interaction.
+public struct OnboardingViewAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let step: Int
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, step: Int) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.step = step
+    }
+}
+
+/// Concurrency-safe actor for auditing OnboardingView events.
+public actor OnboardingViewAuditManager {
+    private var buffer: [OnboardingViewAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = OnboardingViewAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: OnboardingViewAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [OnboardingViewAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
 }
 
 // MARK: - OnboardingView
@@ -93,18 +158,30 @@ struct OnboardingView: View {
                 case .permissions:
                     OnboardingPermissionView(
                         onContinue: {
-                            analytics.log(event: "onboarding_permission_continue", parameters: ["step": flowManager.currentStep.rawValue])
-                            audit.record("User continued from permission step", metadata: nil)
-                            flowManager.goToNextStep()
+                            Task {
+                                let step = flowManager.currentStep.rawValue
+                                await analytics.log(event: "onboarding_permission_continue", parameters: ["step": step])
+                                await audit.record("Permission continue tapped", metadata: ["step": "\(step)"])
+                                await OnboardingViewAuditManager.shared.add(
+                                    OnboardingViewAuditEntry(event: "permission_continue", step: step)
+                                )
+                                flowManager.goToNextStep()
+                            }
                         },
                         analytics: analytics,
                         audit: audit
                     )
                 case .completion:
                     OnboardingCompletionView {
-                        analytics.log(event: "onboarding_complete", parameters: ["step": flowManager.currentStep.rawValue])
-                        audit.record("User completed onboarding", metadata: nil)
-                        flowManager.skipOnboarding()
+                        Task {
+                            let step = flowManager.currentStep.rawValue
+                            await analytics.log(event: "onboarding_complete", parameters: ["step": step])
+                            await audit.record("Onboarding complete tapped", metadata: ["step": "\(step)"])
+                            await OnboardingViewAuditManager.shared.add(
+                                OnboardingViewAuditEntry(event: "onboarding_complete", step: step)
+                            )
+                            flowManager.skipOnboarding()
+                        }
                     }
                 }
             }
@@ -118,9 +195,15 @@ struct OnboardingView: View {
                 HStack {
                     if flowManager.currentStep != .welcome {
                         Button {
-                            analytics.log(event: "onboarding_back", parameters: ["step": flowManager.currentStep.rawValue])
-                            audit.record("User tapped back at step \(flowManager.currentStep)", metadata: nil)
-                            flowManager.goToPreviousStep()
+                            Task {
+                                let step = flowManager.currentStep.rawValue
+                                await analytics.log(event: "onboarding_back", parameters: ["step": step])
+                                await audit.record("Back tapped", metadata: ["step": "\(step)"])
+                                await OnboardingViewAuditManager.shared.add(
+                                    OnboardingViewAuditEntry(event: "back_tap", step: step)
+                                )
+                                flowManager.goToPreviousStep()
+                            }
                         } label: {
                             Text("Back").font(fontBody)
                         }
@@ -131,9 +214,15 @@ struct OnboardingView: View {
                     Spacer()
 
                     Button {
-                        analytics.log(event: "onboarding_next", parameters: ["step": flowManager.currentStep.rawValue])
-                        audit.record("User tapped next at step \(flowManager.currentStep)", metadata: nil)
-                        flowManager.goToNextStep()
+                        Task {
+                            let step = flowManager.currentStep.rawValue
+                            await analytics.log(event: "onboarding_next", parameters: ["step": step])
+                            await audit.record("Next tapped", metadata: ["step": "\(step)"])
+                            await OnboardingViewAuditManager.shared.add(
+                                OnboardingViewAuditEntry(event: "next_tap", step: step)
+                            )
+                            flowManager.goToNextStep()
+                        }
                     } label: {
                         Text(flowManager.currentStep == .permissions ? "Finish" : "Next")
                             .font(fontBody)
@@ -149,8 +238,15 @@ struct OnboardingView: View {
         }
         .onAppear {
             flowManager.loadOnboardingState()
-            analytics.log(event: "onboarding_appear", parameters: ["step": flowManager.currentStep.rawValue])
-            audit.record("OnboardingView appeared at step \(flowManager.currentStep)", metadata: nil)
+            Task {
+                let step = flowManager.currentStep.rawValue
+                await analytics.screenView("onboarding_appear")
+                await analytics.log(event: "onboarding_appear", parameters: ["step": step])
+                await audit.record("OnboardingView appeared", metadata: ["step": "\(step)"])
+                await OnboardingViewAuditManager.shared.add(
+                    OnboardingViewAuditEntry(event: "view_appear", step: step)
+                )
+            }
         }
         .fullScreenCover(isPresented: .constant(flowManager.isOnboardingComplete)) {
             // TODO: Handle onboarding completion
@@ -171,17 +267,17 @@ struct OnboardingView: View {
 
 #Preview {
     struct PreviewAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String: Any]?) {
+        func log(event: String, parameters: [String: Any]?) async {
             print("[Analytics] \(event) \(parameters ?? [:])")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
 
     struct PreviewAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String : String]?) {
+        func record(_ message: String, metadata: [String : String]?) async {
             print("[Audit] \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     return Group {
@@ -208,5 +304,19 @@ struct OnboardingView: View {
         )
         .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         .previewDisplayName("Accessibility Large Text")
+    }
+}
+
+// MARK: - Diagnostics
+
+public extension OnboardingView {
+    /// Fetch recent onboarding view audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [OnboardingViewAuditEntry] {
+        await OnboardingViewAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export onboarding view audit log as a JSON string.
+    static func exportAuditLogJSON() async -> String {
+        await OnboardingViewAuditManager.shared.exportJSON()
     }
 }

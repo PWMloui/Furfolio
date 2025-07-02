@@ -5,18 +5,82 @@
 //  Enhanced: Fully tokenized, audit/analytics-ready, accessible, modular, preview/testable.
 //
 
+/**
+ OnboardingFAQView
+ -----------------
+ A SwiftUI view displaying frequently asked questions during onboarding in Furfolio.
+
+ - **Architecture**: MVVM-capable, dependency-injectable for analytics and audit logging.
+ - **Concurrency & Analytics/Audit**: Uses async/await for non-blocking event logging via protocols and actors.
+ - **Diagnostics**: Records FAQ expand/collapse events and provides async methods to fetch and export audit entries.
+ - **Localization**: All UI text and accessibility hints are localized via NSLocalizedString or LocalizedStringKey.
+ - **Accessibility**: Ensures VoiceOver-friendly labels, hints, and grouping.
+ - **Preview/Testability**: Previews use mock async loggers and support light/dark modes and dynamic type.
+ */
+
 import SwiftUI
+
+/// A record of a FAQ expand/collapse audit event.
+public struct FAQAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let question: String
+    public let action: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), question: String, action: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.question = question
+        self.action = action
+    }
+}
+
+/// Manages concurrency-safe audit logging for FAQ interactions.
+public actor FAQAuditManager {
+    private var buffer: [FAQAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = FAQAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: FAQAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [FAQAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - Centralized Logging Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
 }
 
 // MARK: - FAQ Data
@@ -92,14 +156,19 @@ struct OnboardingFAQView: View {
                                 withAnimation(.easeInOut(duration: 0.3)) {
                                     expandedID = expanded ? item.id : nil
                                     let question = String(localized: item.question)
-                                    analytics.log(
-                                        event: expanded ? "faq_expand" : "faq_collapse",
-                                        parameters: ["question": question]
-                                    )
-                                    audit.record(
-                                        "User \(expanded ? "expanded" : "collapsed") FAQ: \(question)",
-                                        metadata: nil
-                                    )
+                                    Task {
+                                        await analytics.log(
+                                            event: expanded ? "faq_expand" : "faq_collapse",
+                                            parameters: ["question": question]
+                                        )
+                                        await audit.record(
+                                            "User \(expanded ? "expanded" : "collapsed") FAQ: \(question)",
+                                            metadata: nil
+                                        )
+                                        await FAQAuditManager.shared.add(
+                                            FAQAuditEntry(question: question, action: expanded ? "expanded" : "collapsed")
+                                        )
+                                    }
                                 }
                             }
                         )
@@ -195,21 +264,32 @@ private struct FAQDisclosureGroup: View {
     }
 }
 
+public extension OnboardingFAQView {
+    /// Fetch recent FAQ audit entries.
+    static func recentFAQAuditEntries(limit: Int = 20) async -> [FAQAuditEntry] {
+        await FAQAuditManager.shared.recent(limit: limit)
+    }
+    /// Export FAQ audit log as JSON.
+    static func exportFAQAuditJSON() async -> String {
+        await FAQAuditManager.shared.exportJSON()
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
     struct MockAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String : Any]?) {
+        func log(event: String, parameters: [String : Any]?) async {
             print("[Analytics] \(event) -> \(parameters ?? [:])")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
 
     struct MockAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String : String]?) {
+        func record(_ message: String, metadata: [String : String]?) async {
             print("[Audit] \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     return Group {

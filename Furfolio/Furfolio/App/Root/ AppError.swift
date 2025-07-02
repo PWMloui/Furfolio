@@ -2,141 +2,188 @@
 //  AppError.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
+//  Updated 2025-06-30: Role-aware, audit/compliance-ready, escalatable error architecture.
 //
 
 import Foundation
 
-// MARK: - AppError (Centralized Error Handling for Furfolio)
-// Add at the top, after imports:
+// MARK: - Error Analytics/Audit Event Struct
+
+public struct AppErrorEvent: Codable, Identifiable {
+    public let id: String
+    public let timestamp: Date
+    public let event: String
+    public let error: AppError
+    public let role: String?
+    public let staffID: String?
+    public let context: String?
+    public let escalate: Bool
+
+    public init(event: String, error: AppError, role: String?, staffID: String?, context: String?, escalate: Bool = false) {
+        self.id = UUID().uuidString
+        self.timestamp = Date()
+        self.event = event
+        self.error = error
+        self.role = role
+        self.staffID = staffID
+        self.context = context
+        self.escalate = escalate
+    }
+}
+
+// MARK: - Analytics & Audit Protocol
+
 public protocol AppErrorAnalyticsLogger {
-    func log(event: String, error: AppError)
+    func log(event: AppErrorEvent) async
+    /// Optional: escalate to Trust Center/compliance if needed
+    func escalate(event: AppErrorEvent) async
 }
 public struct NullAppErrorAnalyticsLogger: AppErrorAnalyticsLogger {
     public init() {}
-    public func log(event: String, error: AppError) {}
+    public func log(event: AppErrorEvent) async {}
+    public func escalate(event: AppErrorEvent) async {}
 }
 
-// MARK: - AppError Analytics Logger (DI for audit/BI/QA)
+// MARK: - Error Logger Configuration
+
 extension AppError {
-    // Analytics logger (injectable for BI/QA/Trust Center)
+    /// Injectable analytics logger (for BI/QA/Trust Center).
     public static var analyticsLogger: AppErrorAnalyticsLogger = NullAppErrorAnalyticsLogger()
+    public static var testMode: Bool = false
+    /// Optional current role and staff context, for audit/event logs.
+    public static var currentRole: String? = nil
+    public static var currentStaffID: String? = nil
+    public static var currentContext: String? = nil
 }
-// MARK: - Application Error Handling
-/// Defines centralized error types for Furfolio's business management operations,
-/// facilitating consistent error reporting, user feedback, and debugging across the app.
-///
-/// This enum serves as the single source of truth for all error scenarios encountered in the app.
-/// Best practices include:
-/// - Use descriptive, user-friendly localized descriptions for UI feedback.
-/// - Provide recovery suggestions when possible to guide user remediation.
-/// - Utilize the `id` property for error tracking and analytics.
-/// - Wrap unknown errors to maintain consistent error handling.
-/// - Use the `demo` initializer and `allCases` array for UI previews and testing.
-///
-/// Usage patterns:
-/// - Instantiate errors with context-specific reasons to aid debugging.
-/// - Leverage `isRecoverable` to determine if user action can resolve the issue.
-/// - Use `from(_:)` to convert generic Errors into AppError for unified handling.
-/// - Implement UI components that consume `LocalizedError` properties for display.
 
-/// Represents all possible error cases encountered in Furfolio's business management workflows.
-/// Each case is documented for clarity and future maintenance, describing its role in the app's domain.
-enum AppError: Error, LocalizedError, Identifiable {
-    /// Error when loading data fails, optionally including a reason.
+// MARK: - AppError Enum (Role-aware, Escalatable)
+
+public enum AppError: Error, LocalizedError, Identifiable {
     case dataLoadFailed(reason: String? = nil)
-    /// Error when saving data fails, optionally including a reason.
     case saveFailed(reason: String? = nil)
-    /// Error indicating invalid user input, with optional details.
     case invalidInput(reason: String? = nil)
-    /// Error indicating an attempt to add a duplicate entry.
     case duplicateEntry
-    /// Error indicating network connectivity is unavailable.
     case networkUnavailable
-    /// Error indicating permission was denied, optionally specifying the permission type.
     case permissionDenied(type: String? = nil)
-    /// Error indicating unauthorized access attempt, optionally specifying the user role.
     case unauthorizedAccess(role: String? = nil)
-    /// Error related to Traveling Salesman Problem or route optimization failures.
     case tspRouteError(reason: String? = nil)
-    /// Error occurring during data encryption or security operations.
     case dataEncryptionFailed(reason: String? = nil)
-    /// Represents an unknown or external error, optionally wrapping an underlying Error.
     case unknown(error: Error? = nil)
-    
-    /// Unique identifier for the error instance, combining the case name and a UUID for analytics and audit purposes.
-    var id: String {
+
+    public var id: String {
         let caseName = String(describing: self).components(separatedBy: "(").first ?? "unknown"
         return "\(caseName)-\(UUID().uuidString)"
     }
-    
-    /// Provides a user-friendly localized description of the error.
-    var errorDescription: String? {
+
+    public var errorDescription: String? {
         switch self {
         case .dataLoadFailed(let reason):
-            return "Failed to load data." + (reason.map { "\n\($0)" } ?? "")
+            return NSLocalizedString(
+                "Failed to load data." + (reason.map { "\n\($0)" } ?? ""),
+                comment: "Error description for data load failure")
         case .saveFailed(let reason):
-            return "Could not save your changes." + (reason.map { "\n\($0)" } ?? "")
+            return NSLocalizedString(
+                "Could not save your changes." + (reason.map { "\n\($0)" } ?? ""),
+                comment: "Error description for save failure")
         case .invalidInput(let reason):
-            return "Invalid input." + (reason.map { "\n\($0)" } ?? "")
+            return NSLocalizedString(
+                "Invalid input." + (reason.map { "\n\($0)" } ?? ""),
+                comment: "Error description for invalid user input")
         case .duplicateEntry:
-            return "This item already exists."
+            return NSLocalizedString("This item already exists.", comment: "Error description for duplicate entry")
         case .networkUnavailable:
-            return "No internet connection. Please try again later."
+            return NSLocalizedString("No internet connection. Please try again later.", comment: "Error description for network unavailable")
         case .permissionDenied(let type):
-            return "Permission denied." + (type.map { " (\($0))" } ?? "")
+            return NSLocalizedString(
+                "Permission denied." + (type.map { " (\($0))" } ?? ""),
+                comment: "Error description for permission denied")
         case .unauthorizedAccess(let role):
-            return "Unauthorized access." + (role.map { " (Role: \($0))" } ?? "")
+            return NSLocalizedString(
+                "Unauthorized access." + (role.map { " (Role: \($0))" } ?? ""),
+                comment: "Error description for unauthorized access")
         case .tspRouteError(let reason):
-            return "Route optimization failed." + (reason.map { "\n\($0)" } ?? "")
+            return NSLocalizedString(
+                "Route optimization failed." + (reason.map { "\n\($0)" } ?? ""),
+                comment: "Error description for TSP route error")
         case .dataEncryptionFailed(let reason):
-            return "Data encryption failed." + (reason.map { "\n\($0)" } ?? "")
+            return NSLocalizedString(
+                "Data encryption failed." + (reason.map { "\n\($0)" } ?? ""),
+                comment: "Error description for data encryption failure")
         case .unknown(let error):
             if let error = error {
-                return "An unexpected error occurred: \(error.localizedDescription)"
+                return NSLocalizedString(
+                    "An unexpected error occurred: \(error.localizedDescription)",
+                    comment: "Error description for unknown error with underlying error")
             }
-            return "An unexpected error occurred."
+            return NSLocalizedString("An unexpected error occurred.", comment: "Error description for unknown error without underlying error")
         }
     }
-    
-    /// Provides an optional suggestion to help the user recover from the error.
-    var recoverySuggestion: String? {
+
+    public var recoverySuggestion: String? {
         switch self {
         case .networkUnavailable:
-            return "Check your internet connection and try again."
+            return NSLocalizedString("Check your internet connection and try again.", comment: "Recovery suggestion for network unavailable")
         case .permissionDenied:
-            return "Please update your app permissions in Settings."
+            return NSLocalizedString("Please update your app permissions in Settings.", comment: "Recovery suggestion for permission denied")
         case .invalidInput:
-            return "Please review the highlighted fields."
+            return NSLocalizedString("Please review the highlighted fields.", comment: "Recovery suggestion for invalid input")
         default:
             return nil
         }
     }
-    
-    /// Indicates whether the error is recoverable by the user or system.
-    var isRecoverable: Bool {
+
+    public var isRecoverable: Bool {
         switch self {
         case .invalidInput, .networkUnavailable, .permissionDenied, .unauthorizedAccess:
             return true
-        case .dataLoadFailed, .saveFailed, .duplicateEntry, .tspRouteError, .dataEncryptionFailed, .unknown:
+        default:
             return false
         }
     }
-    
-    /// Initializes an AppError from any Error instance, wrapping unknown errors and preserving AppError types.
-    /// Logs the error initialization for debugging and auditing purposes.
-    static func from(_ error: Error) -> AppError {
-        if let appError = error as? AppError {
-            print("AppError initialized from existing AppError: \(appError)")
-            return appError
-        } else {
-            print("AppError wrapping unknown error: \(error.localizedDescription)")
-            return .unknown(error: error)
+
+    /// Indicates if error is severe and should be escalated to compliance/trust center.
+    public var shouldEscalate: Bool {
+        switch self {
+        case .permissionDenied, .unauthorizedAccess, .dataEncryptionFailed, .unknown:
+            return true
+        default:
+            return false
         }
     }
-    
-    /// An array of all AppError cases with demo data, useful for UI previews and testing.
-    static let allCases: [AppError] = [
+
+    /// Logs an error event (optionally escalates if needed).
+    public func log(event: String = "app_error", escalate: Bool? = nil, context: String? = nil) {
+        guard !AppError.testMode else { return }
+        let eventObj = AppErrorEvent(
+            event: event,
+            error: self,
+            role: AppError.currentRole,
+            staffID: AppError.currentStaffID,
+            context: context ?? AppError.currentContext,
+            escalate: escalate ?? shouldEscalate
+        )
+        Task {
+            await AppError.analyticsLogger.log(event: eventObj)
+            if eventObj.escalate {
+                await AppError.analyticsLogger.escalate(event: eventObj)
+            }
+        }
+    }
+
+    /// Convert any error into AppError (logs event automatically).
+    public static func from(_ error: Error, context: String? = nil) -> AppError {
+        if let appError = error as? AppError {
+            appError.log(event: "app_error_from", context: context)
+            return appError
+        } else {
+            let wrapped = AppError.unknown(error: error)
+            wrapped.log(event: "app_error_from_unknown", context: context)
+            return wrapped
+        }
+    }
+
+    // Demo/Test/Preview utilities
+    public static let allCases: [AppError] = [
         .dataLoadFailed(reason: "Demo data load failure"),
         .saveFailed(reason: "Demo save failure"),
         .invalidInput(reason: "Demo invalid input"),
@@ -148,71 +195,54 @@ enum AppError: Error, LocalizedError, Identifiable {
         .dataEncryptionFailed(reason: "Demo encryption failure"),
         .unknown(error: nil)
     ]
-    
-    /// Enum representing each error type for demo purposes.
-    enum DemoType {
-        case dataLoadFailed
-        case saveFailed
-        case invalidInput
-        case duplicateEntry
-        case networkUnavailable
-        case permissionDenied
-        case unauthorizedAccess
-        case tspRouteError
-        case dataEncryptionFailed
-        case unknown
+    public static var allDemoLocalizedErrors: [LocalizedError] {
+        return allCases
     }
-    
-    static func demo(_ type: DemoType) -> AppError {
+    public enum DemoType {
+        case dataLoadFailed, saveFailed, invalidInput, duplicateEntry, networkUnavailable, permissionDenied, unauthorizedAccess, tspRouteError, dataEncryptionFailed, unknown
+    }
+    public static func demo(_ type: DemoType, role: String? = nil, staffID: String? = nil, context: String? = nil) -> AppError {
         let demoErr: AppError
         switch type {
-        case .dataLoadFailed:
-            demoErr = .dataLoadFailed(reason: "Demo data load failure")
-        case .saveFailed:
-            demoErr = .saveFailed(reason: "Demo save failure")
-        case .invalidInput:
-            demoErr = .invalidInput(reason: "Demo invalid input")
-        case .duplicateEntry:
-            demoErr = .duplicateEntry
-        case .networkUnavailable:
-            demoErr = .networkUnavailable
-        case .permissionDenied:
-            demoErr = .permissionDenied(type: "Camera Access")
-        case .unauthorizedAccess:
-            demoErr = .unauthorizedAccess(role: "Guest User")
-        case .tspRouteError:
-            demoErr = .tspRouteError(reason: "Demo route optimization error")
-        case .dataEncryptionFailed:
-            demoErr = .dataEncryptionFailed(reason: "Demo encryption failure")
-        case .unknown:
-            demoErr = .unknown(error: nil)
+        case .dataLoadFailed:        demoErr = .dataLoadFailed(reason: "Demo data load failure")
+        case .saveFailed:            demoErr = .saveFailed(reason: "Demo save failure")
+        case .invalidInput:          demoErr = .invalidInput(reason: "Demo invalid input")
+        case .duplicateEntry:        demoErr = .duplicateEntry
+        case .networkUnavailable:    demoErr = .networkUnavailable
+        case .permissionDenied:      demoErr = .permissionDenied(type: "Camera Access")
+        case .unauthorizedAccess:    demoErr = .unauthorizedAccess(role: "Guest User")
+        case .tspRouteError:         demoErr = .tspRouteError(reason: "Demo route optimization error")
+        case .dataEncryptionFailed:  demoErr = .dataEncryptionFailed(reason: "Demo encryption failure")
+        case .unknown:               demoErr = .unknown(error: nil)
         }
-        AppError.analyticsLogger.log(event: "demo", error: demoErr)
+        if !AppError.testMode {
+            let prevRole = AppError.currentRole
+            let prevStaff = AppError.currentStaffID
+            let prevContext = AppError.currentContext
+            AppError.currentRole = role
+            AppError.currentStaffID = staffID
+            AppError.currentContext = context
+            demoErr.log(event: "app_error_demo", escalate: demoErr.shouldEscalate)
+            AppError.currentRole = prevRole
+            AppError.currentStaffID = prevStaff
+            AppError.currentContext = prevContext
+        }
         return demoErr
     }
+}
 
 // Usage Example:
 //
-// In SwiftUI, you can present error feedback using an AppError instance:
-//
 // @State private var currentError: AppError?
 //
-// var body: some View {
-//     VStack {
-//         // Your UI here
-//     }
-//     .alert(item: $currentError) { error in
-//         Alert(
-//             title: Text("Error"),
-//             message: Text(error.errorDescription ?? "An error occurred."),
-//             dismissButton: .default(Text("OK"))
-//         )
-//     }
+// .alert(item: $currentError) { error in
+//     Alert(
+//         title: Text("Error"),
+//         message: Text(error.errorDescription ?? "An error occurred."),
+//         dismissButton: .default(Text("OK"))
+//     )
 // }
 //
-// To trigger an error:
-// currentError = AppError.demo(.networkUnavailable)
+// To trigger with role/context for audit trail:
+// currentError = AppError.demo(.networkUnavailable, role: "groomer", staffID: "staff123", context: "AppointmentScheduler")
 //
-// This approach ensures consistent and user-friendly error presentation throughout the app.
-
-// End of AppError.swift – Furfolio Business Management App

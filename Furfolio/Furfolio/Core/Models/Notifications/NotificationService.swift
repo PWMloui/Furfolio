@@ -13,11 +13,11 @@ import SwiftUI
 // MARK: - Audit/Analytics Protocols
 
 public protocol NotificationAuditLogger {
-    func log(event: NotificationAuditEvent)
+    func log(event: NotificationAuditEvent) async
 }
 public struct NullNotificationAuditLogger: NotificationAuditLogger {
     public init() {}
-    public func log(event: NotificationAuditEvent) {}
+    public func log(event: NotificationAuditEvent) async {}
 }
 public struct NotificationAuditEvent {
     public let type: String        // e.g. "schedule", "cancel", "error", "requestAuth"
@@ -34,6 +34,39 @@ public struct NotificationAuditEvent {
         self.status = status
         self.detail = detail
         self.date = date
+    }
+}
+
+/// A record of a NotificationService audit event.
+public struct NotificationServiceAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: NotificationAuditEvent
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: NotificationAuditEvent) {
+        self.id = id; self.timestamp = timestamp; self.event = event
+    }
+}
+/// Manages concurrency-safe audit logging for NotificationService.
+public actor NotificationServiceAuditManager {
+    private var buffer: [NotificationServiceAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = NotificationServiceAuditManager()
+    public func add(_ entry: NotificationServiceAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+    public func recent(limit: Int = 20) -> [NotificationServiceAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
     }
 }
 
@@ -64,7 +97,10 @@ final class NotificationService: ObservableObject {
                     status: granted ? "granted" : "denied",
                     detail: error?.localizedDescription
                 )
-                self?.auditLogger.log(event: auditEvent)
+                Task {
+                    await self?.auditLogger.log(event: auditEvent)
+                    await NotificationServiceAuditManager.shared.add(.init(event: auditEvent))
+                }
                 if let error = error {
                     self?.lastError = error
                     completion?(.failure(error))
@@ -120,7 +156,10 @@ final class NotificationService: ObservableObject {
                     status: error == nil ? "scheduled" : "failed",
                     detail: error?.localizedDescription
                 )
-                self?.auditLogger.log(event: auditEvent)
+                Task {
+                    await self?.auditLogger.log(event: auditEvent)
+                    await NotificationServiceAuditManager.shared.add(.init(event: auditEvent))
+                }
 
                 if let error = error {
                     self?.lastError = error
@@ -167,7 +206,10 @@ final class NotificationService: ObservableObject {
                 status: errors.isEmpty ? "allScheduled" : "partialFailure",
                 detail: errors.map { $0.localizedDescription }.joined(separator: "; ")
             )
-            self?.auditLogger.log(event: auditEvent)
+            Task {
+                await self?.auditLogger.log(event: auditEvent)
+                await NotificationServiceAuditManager.shared.add(.init(event: auditEvent))
+            }
 
             if errors.isEmpty {
                 self?.lastError = nil
@@ -189,22 +231,37 @@ final class NotificationService: ObservableObject {
 
     func cancelNotification(with identifier: String) {
         notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
-        auditLogger.log(event: NotificationAuditEvent(
-            type: "cancel",
-            id: identifier,
-            userID: userID,
-            status: "cancelled"
-        ))
+        Task {
+            await auditLogger.log(event: NotificationAuditEvent(
+                type: "cancel",
+                id: identifier,
+                userID: userID,
+                status: "cancelled"
+            ))
+            await NotificationServiceAuditManager.shared.add(.init(event: NotificationAuditEvent(
+                type: "cancel",
+                id: identifier,
+                userID: userID,
+                status: "cancelled"
+            )))
+        }
         logNotificationEvent(String(format: NSLocalizedString("Canceled notification with identifier %@", comment: "Notification cancellation log message"), identifier))
     }
 
     func cancelAllNotifications() {
         notificationCenter.removeAllPendingNotificationRequests()
-        auditLogger.log(event: NotificationAuditEvent(
-            type: "cancelAll",
-            userID: userID,
-            status: "allCancelled"
-        ))
+        Task {
+            await auditLogger.log(event: NotificationAuditEvent(
+                type: "cancelAll",
+                userID: userID,
+                status: "allCancelled"
+            ))
+            await NotificationServiceAuditManager.shared.add(.init(event: NotificationAuditEvent(
+                type: "cancelAll",
+                userID: userID,
+                status: "allCancelled"
+            )))
+        }
         logNotificationEvent(NSLocalizedString("Canceled all pending notifications.", comment: "All notifications cancellation log message"))
     }
 
@@ -243,6 +300,15 @@ final class NotificationService: ObservableObject {
         #if DEBUG
         print("📡 NotificationService AUDIT: \(message)")
         #endif
+    }
+
+    /// Fetch recent service audit entries asynchronously.
+    public func recentAuditEntries(limit: Int = 20) async -> [NotificationServiceAuditEntry] {
+        await NotificationServiceAuditManager.shared.recent(limit: limit)
+    }
+    /// Export service audit log as JSON.
+    public func exportAuditLogJSON() async -> String {
+        await NotificationServiceAuditManager.shared.exportJSON()
     }
 
     // MARK: - NotificationConfig Struct

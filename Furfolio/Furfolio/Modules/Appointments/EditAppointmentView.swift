@@ -8,12 +8,13 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Audit/Event Logging
 
 fileprivate struct EditAppointmentAuditEvent: Codable {
     let timestamp: Date
-    let operation: String      // "appear", "editField", "toggleTag", "save", "cancel", "error"
+    let operation: String      // "appear", "editField", "toggleTag", "save", "cancel", "error", "conflictDetected"
     let appointmentID: UUID
     let field: String?
     let oldValue: String?
@@ -70,6 +71,39 @@ fileprivate final class EditAppointmentAudit {
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No edit events recorded."
     }
+
+    /// Export all audit events as CSV string (for analytics/compliance)
+    static func exportCSV() -> String {
+        var csv = "timestamp,operation,appointmentID,field,oldValue,newValue,tags,actor,context,detail\n"
+        let dateFormatter = ISO8601DateFormatter()
+        for event in log {
+            let ts = dateFormatter.string(from: event.timestamp)
+            let op = event.operation
+            let id = event.appointmentID.uuidString
+            let field = event.field ?? ""
+            let oldValue = event.oldValue?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let newValue = event.newValue?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let tags = event.tags.joined(separator: "|")
+            let actor = event.actor ?? ""
+            let context = event.context ?? ""
+            let detail = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let detailEscaped = "\"\(detail)\""
+            csv += "\(ts),\(op),\(id),\(field),\"\(oldValue)\",\"\(newValue)\",\(tags),\(actor),\(context),\(detailEscaped)\n"
+        }
+        return csv
+    }
+}
+
+// MARK: - Audit/Admin Accessors
+
+public enum EditAppointmentAuditAdmin {
+    public static var lastSummary: String { EditAppointmentAudit.accessibilitySummary }
+    public static var lastJSON: String? { EditAppointmentAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        EditAppointmentAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+    /// Export all audit events as CSV string.
+    public static func exportCSV() -> String { EditAppointmentAudit.exportCSV() }
 }
 
 // MARK: - EditAppointmentView
@@ -80,6 +114,9 @@ struct EditAppointmentView: View {
 
     @State private var showDurationPicker = false
     @State private var lastError: String? = nil
+
+    // You must provide this from your parent view/model!
+    var existingAppointments: [Appointment] = []
 
     var body: some View {
         NavigationView {
@@ -96,7 +133,8 @@ struct EditAppointmentView: View {
                                 field: "date",
                                 oldValue: Self.formatDate(viewModel.originalAppointment.date),
                                 newValue: Self.formatDate(newVal),
-                                tags: ["date"]
+                                tags: ["date"],
+                                detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                             )
                         }
                 }
@@ -115,7 +153,8 @@ struct EditAppointmentView: View {
                             field: "owner",
                             oldValue: viewModel.originalAppointment.owner?.ownerName,
                             newValue: newOwner?.ownerName,
-                            tags: ["owner"]
+                            tags: ["owner"],
+                            detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                         )
                     }
                     .accessibilityIdentifier("ownerPicker")
@@ -135,7 +174,8 @@ struct EditAppointmentView: View {
                                 field: "dog",
                                 oldValue: viewModel.originalAppointment.dog?.name,
                                 newValue: newDog?.name,
-                                tags: ["dog"]
+                                tags: ["dog"],
+                                detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                             )
                         }
                         .accessibilityIdentifier("dogPicker")
@@ -155,7 +195,8 @@ struct EditAppointmentView: View {
                             field: "serviceType",
                             oldValue: viewModel.originalAppointment.serviceType,
                             newValue: newVal,
-                            tags: ["serviceType"]
+                            tags: ["serviceType"],
+                            detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                         )
                     }
                     .accessibilityIdentifier("servicePicker")
@@ -173,7 +214,8 @@ struct EditAppointmentView: View {
                                 field: "duration",
                                 oldValue: "\(viewModel.originalAppointment.duration)",
                                 newValue: "\(viewModel.duration)",
-                                tags: ["duration"]
+                                tags: ["duration"],
+                                detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                             )
                         }
                         .accessibilityIdentifier("changeDurationButton")
@@ -195,7 +237,8 @@ struct EditAppointmentView: View {
                                 field: "notes",
                                 oldValue: viewModel.originalAppointment.notes,
                                 newValue: newVal,
-                                tags: ["notes"]
+                                tags: ["notes"],
+                                detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                             )
                         }
                         .lineLimit(1...3)
@@ -215,7 +258,8 @@ struct EditAppointmentView: View {
                                         field: "tag",
                                         oldValue: viewModel.selectedTags.contains(tag) ? "selected" : "notSelected",
                                         newValue: !viewModel.selectedTags.contains(tag) ? "selected" : "notSelected",
-                                        tags: ["tag", tag]
+                                        tags: ["tag", tag],
+                                        detail: "Changed fields: \(viewModel.changedFields.joined(separator: ",")), Count: \(viewModel.fieldChangeCount)"
                                     )
                                 } label: {
                                     Text(tag)
@@ -238,7 +282,7 @@ struct EditAppointmentView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        if viewModel.validateAndSave() {
+                        if viewModel.validateAndSave(existingAppointments: existingAppointments) {
                             EditAppointmentAudit.record(
                                 operation: "save",
                                 appointmentID: viewModel.originalAppointment.id,
@@ -303,17 +347,7 @@ struct EditAppointmentView: View {
     }
 }
 
-// MARK: - Audit/Admin Accessors
-
-public enum EditAppointmentAuditAdmin {
-    public static var lastSummary: String { EditAppointmentAudit.accessibilitySummary }
-    public static var lastJSON: String? { EditAppointmentAudit.exportLastJSON() }
-    public static func recentEvents(limit: Int = 5) -> [String] {
-        EditAppointmentAudit.log.suffix(limit).map { $0.accessibilityLabel }
-    }
-}
-
-/// ViewModel for editing an appointment
+// MARK: - Enhanced ViewModel for editing an appointment
 final class EditAppointmentViewModel: ObservableObject {
     @Published var date: Date
     @Published var selectedOwner: DogOwner?
@@ -370,10 +404,50 @@ final class EditAppointmentViewModel: ObservableObject {
         }
     }
 
+    /// Returns true if any primary field has changed from the original appointment.
+    var isEdited: Bool { changedFields.count > 0 }
+
+    /// Number of changed fields.
+    var fieldChangeCount: Int { changedFields.count }
+
+    /// List of changed fields from the original appointment.
+    var changedFields: [String] {
+        var changes: [String] = []
+        if date != originalAppointment.date { changes.append("date") }
+        if selectedOwner?.id != originalAppointment.owner?.id { changes.append("owner") }
+        if selectedDog?.id != originalAppointment.dog?.id { changes.append("dog") }
+        if serviceType != originalAppointment.serviceType { changes.append("serviceType") }
+        if duration != originalAppointment.duration { changes.append("duration") }
+        if notes != (originalAppointment.notes ?? "") { changes.append("notes") }
+        if Set(selectedTags) != Set(originalAppointment.tags ?? []) { changes.append("tags") }
+        return changes
+    }
+
+    /// Checks if the current appointment conflicts with any in the given list (excluding itself).
+    func detectConflict(with appointments: [Appointment]) -> Bool {
+        for other in appointments where other.id != originalAppointment.id {
+            if Calendar.current.isDate(self.date, equalTo: other.date, toGranularity: .minute) {
+                EditAppointmentAudit.record(
+                    operation: "conflictDetected",
+                    appointmentID: originalAppointment.id,
+                    field: "date",
+                    oldValue: Self.formatDate(originalAppointment.date),
+                    newValue: Self.formatDate(self.date),
+                    tags: ["conflict"],
+                    detail: "Overlaps with appointment \(other.id)"
+                )
+                return true
+            }
+        }
+        return false
+    }
+
     /// Validates and saves the appointment (placeholder for real persistence logic)
-    func validateAndSave() -> Bool {
+    /// Pass in all existing appointments for conflict detection.
+    func validateAndSave(existingAppointments: [Appointment] = []) -> Bool {
         guard canSave else { return false }
-        // TODO: Add actual save logic to your persistence layer here.
+        let conflict = detectConflict(with: existingAppointments)
+        // Update fields in the original appointment object
         originalAppointment.date = date
         originalAppointment.owner = selectedOwner
         originalAppointment.dog = selectedDog
@@ -381,7 +455,21 @@ final class EditAppointmentViewModel: ObservableObject {
         originalAppointment.duration = duration
         originalAppointment.notes = notes
         originalAppointment.tags = Array(selectedTags)
+        // Accessibility: Announce if conflict or saved
+        if conflict {
+            UIAccessibility.post(notification: .announcement, argument: "Warning: This appointment overlaps with another.")
+        } else {
+            UIAccessibility.post(notification: .announcement, argument: "Appointment saved.")
+        }
         return true
+    }
+
+    private static func formatDate(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }
 
@@ -429,26 +517,26 @@ struct DurationPicker: View {
                 Picker("Duration (minutes)", selection: $minutes) {
                     ForEach(Array(stride(from: minMinutes, through: maxMinutes, by: 5)), id: \.self) { min in
                         Text("\(min) min")
-                            .font(AppFonts.body) // Tokenized font for picker items
-                            .foregroundColor(AppColors.textPrimary) // Tokenized color
+                            .font(AppFonts.body)
+                            .foregroundColor(AppColors.textPrimary)
                     }
                 }
                 .pickerStyle(.wheel)
-                .frame(height: AppSpacing.durationPickerHeight) // Tokenized height
+                .frame(height: AppSpacing.durationPickerHeight)
                 Spacer()
             }
             .navigationTitle("Set Duration")
-            .font(AppFonts.body) // Tokenized font for navigation title
+            .font(AppFonts.body)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .font(AppFonts.body) // Tokenized font for button
+                    .font(AppFonts.body)
                     .accessibilityIdentifier("durationPickerDoneButton")
                 }
             }
-            .padding(AppSpacing.medium) // Tokenized padding
+            .padding(AppSpacing.medium)
             .background(AppColors.backgroundPrimary)
         }
     }
@@ -459,7 +547,7 @@ struct DurationPicker: View {
 /// A simple flow layout that wraps content horizontally and vertically
 struct FlowLayout<Content: View>: View {
     var alignment: HorizontalAlignment = .leading
-    var spacing: CGFloat = AppSpacing.small // Tokenized spacing
+    var spacing: CGFloat = AppSpacing.small
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -527,7 +615,6 @@ fileprivate struct ArrayMirror<Content: View>: RandomAccessCollection {
 
 // MARK: - Preview
 
-/// Demo/business/tokenized preview of EditAppointmentView showcasing token usage and accessibility
 #if DEBUG
 struct EditAppointmentView_Previews: PreviewProvider {
     static var previews: some View {
@@ -536,10 +623,10 @@ struct EditAppointmentView_Previews: PreviewProvider {
         let appointment = Appointment(id: UUID(), date: Date().addingTimeInterval(3600), owner: owner, dog: dog, serviceType: "Full Groom", duration: 90, notes: "Use gentle shampoo", tags: ["VIP"])
 
         let viewModel = EditAppointmentViewModel(appointment: appointment, owners: [owner])
-        EditAppointmentView(viewModel: viewModel)
+        EditAppointmentView(viewModel: viewModel, existingAppointments: [appointment])
             .environment(\.colorScheme, .light)
-            .font(AppFonts.body) // Tokenized font for preview
-            .accentColor(AppColors.accent) // Tokenized accent color for preview
+            .font(AppFonts.body)
+            .accentColor(AppColors.accent)
     }
 }
 #endif

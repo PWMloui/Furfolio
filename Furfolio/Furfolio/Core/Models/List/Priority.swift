@@ -6,8 +6,21 @@
 //
 import Foundation
 import SwiftUI
+import SwiftData
 
-// MARK: - Priority (Advanced Tokenized, Auditable, Business-Intelligent Priority Model)
+/**
+ Priority
+ --------
+ A tokenized, auditable model representing task/appointment priority levels in Furfolio.
+
+ - **Architecture**: Enum-based tokens conforming to Codable, Identifiable, and CaseIterable for easy use in SwiftUI and networking.
+ - **Concurrency & Audit**: Provides async audit logging hooks via `PriorityAuditManager` actor.
+ - **Analytics Ready**: Exposes `auditToken` and `criticalityScore` for dashboards and event reporting.
+ - **Localization**: All user-facing labels and descriptions use `NSLocalizedString`.
+ - **Accessibility**: Badges include accessibility labels and traits for VoiceOver.
+ - **Diagnostics**: Async methods to fetch and export recent audit entries.
+ - **Preview/Testability**: Includes SwiftUI previews demonstrating badge UI.
+ */
 
 /// Represents a modular, auditable, tokenized priority entity for tasks, reminders, or appointments within the business management context.
 /// This enum supports analytics, dashboards, badge/UI integration, localization, audit/event reporting, business logic for all tasks and appointments, and future extensibility.
@@ -127,6 +140,7 @@ enum Priority: String, Codable, CaseIterable, Identifiable {
     }
 
     /// Accessibility description for VoiceOver and analytics.
+    @Attribute(.transient)
     var accessibilityDescription: String {
         switch self {
         case .high: return NSLocalizedString("Critical priority. Requires immediate attention.", comment: "")
@@ -138,6 +152,77 @@ enum Priority: String, Codable, CaseIterable, Identifiable {
 
     /// Default priority value used throughout the app.
     static let `default`: Priority = .none
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a Priority audit event.
+@Model public struct PriorityAuditEntry: Identifiable {
+    @Attribute(.unique) public var id: UUID
+    public var timestamp: Date
+    public var priority: Priority
+    public var event: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), priority: Priority, event: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.priority = priority
+        self.event = event
+    }
+}
+
+/// Manages concurrency-safe audit logging of Priority events.
+public actor PriorityAuditManager {
+    private var buffer: [PriorityAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = PriorityAuditManager()
+
+    /// Add a new audit entry, keeping only the most recent `maxEntries`.
+    public func add(_ entry: PriorityAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [PriorityAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8)
+        else { return "[]" }
+        return json
+    }
+}
+
+// MARK: - Priority Audit & Logging
+
+extension Priority {
+    /// Asynchronously log a priority-related event to the audit manager.
+    /// - Parameter event: Description of the audit event.
+    public func logAudit(event: String) async {
+        let localizedEvent = NSLocalizedString(event, comment: "Priority audit event")
+        let entry = PriorityAuditEntry(priority: self, event: localizedEvent)
+        await PriorityAuditManager.shared.add(entry)
+    }
+
+    /// Fetch recent audit entries for this priority.
+    /// - Parameter limit: Maximum number of entries to retrieve.
+    public static func recentAuditEntries(limit: Int = 20) async -> [PriorityAuditEntry] {
+        await PriorityAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export the audit log for all priorities as JSON.
+    public static func exportAuditLogJSON() async -> String {
+        await PriorityAuditManager.shared.exportJSON()
+    }
 }
 
 // MARK: - BI/Analytics Helpers

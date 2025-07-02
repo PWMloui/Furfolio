@@ -1,9 +1,22 @@
+
 //
 //  NotificationSettingsView.swift
 //  Furfolio
 //
 //  Enhanced: tokenized, auditable, diagnostics-ready, modular, and preview/test-injectable.
 //
+/**
+ NotificationSettingsView
+ ------------------------
+ A SwiftUI view and ViewModel for managing notification preferences in Furfolio.
+
+ - **Architecture**: MVVM with `NotificationSettingsViewModel` as an ObservableObject injected into the view.
+ - **Concurrency & Audit**: Uses async/await audit logging via `NotificationSettingsAuditManager` actor.
+ - **Diagnostics**: Exposes `diagnosticsSummary` for quick insight into enabled settings.
+ - **Localization**: All user-facing strings wrapped in `NSLocalizedString` for i18n.
+ - **Accessibility**: Accessibility labels, hints, and large-text previews provided.
+ - **Preview/Testability**: ViewModel injects a `NotificationAuditLogger` allowing for mock injection in previews/tests.
+ */
 
 import SwiftUI
 import UserNotifications
@@ -11,11 +24,12 @@ import UserNotifications
 // MARK: - Audit Logger Protocol
 
 public protocol NotificationAuditLogger {
-    func log(event: NotificationAuditEvent)
+    /// Log a notification-setting change asynchronously.
+    func log(event: NotificationAuditEvent) async
 }
 public struct NullNotificationAuditLogger: NotificationAuditLogger {
     public init() {}
-    public func log(event: NotificationAuditEvent) {}
+    public func log(event: NotificationAuditEvent) async {}
 }
 public struct NotificationAuditEvent {
     public let key: String
@@ -27,6 +41,51 @@ public struct NotificationAuditEvent {
         self.newValue = newValue
         self.timestamp = .init()
         self.userID = userID
+    }
+}
+
+/// A record of a notification setting change.
+public struct NotificationSettingsAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let key: String
+    public let newValue: Bool
+    public let userID: String?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), key: String, newValue: Bool, userID: String?) {
+        self.id = id; self.timestamp = timestamp; self.key = key; self.newValue = newValue; self.userID = userID
+    }
+}
+
+/// Manages concurrency-safe audit logging of notification setting changes.
+public actor NotificationSettingsAuditManager {
+    private var buffer: [NotificationSettingsAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = NotificationSettingsAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: NotificationSettingsAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [NotificationSettingsAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as JSON.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
     }
 }
 
@@ -103,7 +162,27 @@ class NotificationSettingsViewModel: ObservableObject {
 
     // MARK: - Audit Logging
     func logNotificationSettingChange(_ key: String, _ newValue: Bool) {
-        auditLogger.log(event: NotificationAuditEvent(key: key, newValue: newValue, userID: userID))
+        let event = NotificationAuditEvent(key: NSLocalizedString(key, comment: "Setting key"), newValue: newValue, userID: userID)
+        Task {
+            await auditLogger.log(event: event)
+            await NotificationSettingsAuditManager.shared.add(
+                NotificationSettingsAuditEntry(
+                    key: key,
+                    newValue: newValue,
+                    userID: userID
+                )
+            )
+        }
+    }
+
+    /// Fetch recent audit entries for diagnostics or admin review.
+    public func recentAuditEntries(limit: Int = 20) async -> [NotificationSettingsAuditEntry] {
+        await NotificationSettingsAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export audit log as JSON for diagnostics.
+    public func exportAuditLogJSON() async -> String {
+        await NotificationSettingsAuditManager.shared.exportJSON()
     }
 }
 

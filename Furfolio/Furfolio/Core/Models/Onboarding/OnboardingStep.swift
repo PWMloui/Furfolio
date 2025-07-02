@@ -5,11 +5,22 @@
 //  Created by mac on 6/26/25.
 //
 
+/**
+ OnboardingStep
+ --------------
+ Defines each step in the Furfolio onboarding flow with associated metadata, localization, and audit hooks.
+
+ - **Architecture**: Tokenized enum conforming to `Identifiable`, `CaseIterable`, `Hashable`, `Codable`, and usable in SwiftUI lists and navigation.
+ - **Localization**: All titles, descriptions, and routeKeys are localized via `LocalizedStringKey`.
+ - **Audit/Analytics Ready**: Provides async audit logging hooks via `OnboardingStepAuditManager`.
+ - **Diagnostics**: Audit entries can be fetched or exported for diagnostic review.
+ - **Preview/Testability**: Includes methods to log and retrieve audit entries for testing.
+ */
+
 import Foundation
 import SwiftUI
 
-/// Defines each step in the onboarding flow with associated metadata
-enum OnboardingStep: Int, CaseIterable, Identifiable, Hashable {
+public enum OnboardingStep: Int, CaseIterable, Identifiable, Hashable, Codable {
     case welcome
     case dataImport
     case tutorial
@@ -65,5 +76,82 @@ enum OnboardingStep: Int, CaseIterable, Identifiable, Hashable {
         case .permissions: return "onboarding.permissions"
         case .completion: return "onboarding.completion"
         }
+    }
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of an onboarding step audit event.
+public struct OnboardingStepAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let step: OnboardingStep
+    public let action: String
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        step: OnboardingStep,
+        action: String
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.step = step
+        self.action = action
+    }
+}
+
+/// Manages concurrency-safe audit logging for onboarding steps.
+public actor OnboardingStepAuditManager {
+    private var buffer: [OnboardingStepAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = OnboardingStepAuditManager()
+
+    /// Add a new audit entry, retaining only the most recent `maxEntries`.
+    public func add(_ entry: OnboardingStepAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [OnboardingStepAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
+
+// MARK: - Async Audit Methods
+
+public extension OnboardingStep {
+    /// Log an audit event for this onboarding step asynchronously.
+    /// - Parameter action: A description of the user’s interaction with the step.
+    func logAudit(action: String) async {
+        let localizedAction = NSLocalizedString(action, comment: "OnboardingStep audit action")
+        let entry = OnboardingStepAuditEntry(step: self, action: localizedAction)
+        await OnboardingStepAuditManager.shared.add(entry)
+    }
+
+    /// Fetch recent audit entries for onboarding steps.
+    /// - Parameter limit: Maximum number of entries to retrieve.
+    static func recentAuditEntries(limit: Int = 20) async -> [OnboardingStepAuditEntry] {
+        await OnboardingStepAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export the onboarding step audit log as JSON asynchronously.
+    static func exportAuditLogJSON() async -> String {
+        await OnboardingStepAuditManager.shared.exportJSON()
     }
 }

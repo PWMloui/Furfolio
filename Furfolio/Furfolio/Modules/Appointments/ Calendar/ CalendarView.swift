@@ -72,8 +72,20 @@ struct CalendarView: View {
     @State private var selectedDate: Date? = nil
     @State private var showAuditSheet = false
 
+    // Enhancement: List of month start dates for mini month navigation bar
+    private var monthsInYear: [Date] {
+        let calendar = Calendar.current
+        let now = Date()
+        let comps = calendar.dateComponents([.year], from: now)
+        guard let yearStart = calendar.date(from: comps) else { return [] }
+        return (0..<12).compactMap { monthOffset in
+            calendar.date(byAdding: .month, value: monthOffset, to: yearStart)
+        }
+    }
+
     var body: some View {
         VStack(spacing: AppSpacing.small) {
+            // Existing header with Prev/Next and month display
             CalendarHeaderView(
                 currentMonth: viewModel.currentMonth,
                 onPrev: {
@@ -95,6 +107,52 @@ struct CalendarView: View {
                 showWeek: $viewModel.showingWeek
             )
             .padding(.horizontal, AppSpacing.medium)
+
+            // Enhancement: "Today" button near the month display for quick jump
+            HStack {
+                Spacer()
+                Button("Today") {
+                    let today = Date()
+                    viewModel.currentMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: today)) ?? today
+                    selectedDate = today
+                    CalendarAudit.record(
+                        operation: "navigateToday",
+                        date: today,
+                        tags: ["navigate", "today"],
+                        detail: "Jumped to today"
+                    )
+                }
+                .font(.subheadline)
+                .padding(.trailing, AppSpacing.medium)
+            }
+
+            // Enhancement: Mini month navigation bar for quick switching months
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppSpacing.medium) {
+                    ForEach(monthsInYear, id: \.self) { monthDate in
+                        let isCurrent = Calendar.current.isDate(monthDate, equalTo: viewModel.currentMonth, toGranularity: .month)
+                        Text(DateUtils.monthShortString(monthDate))
+                            .font(.subheadline)
+                            .fontWeight(isCurrent ? .bold : .regular)
+                            .foregroundColor(isCurrent ? AppColors.accent : AppColors.secondary)
+                            .padding(6)
+                            .background(isCurrent ? AppColors.accent.opacity(0.2) : Color.clear)
+                            .cornerRadius(6)
+                            .onTapGesture {
+                                viewModel.currentMonth = monthDate
+                                CalendarAudit.record(
+                                    operation: "navigateMonthMiniBar",
+                                    date: monthDate,
+                                    tags: ["navigate", "miniBar"],
+                                    detail: "Selected month via mini month bar"
+                                )
+                            }
+                            .accessibilityLabel("\(DateUtils.monthYearString(monthDate))")
+                            .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal, AppSpacing.medium)
+            }
 
             Divider()
 
@@ -125,6 +183,59 @@ struct CalendarView: View {
             )
             .animation(.easeInOut(duration: 0.24), value: viewModel.currentMonth)
             .padding(.vertical, AppSpacing.small)
+
+            // Enhancement: Summary card below grid showing appointments and birthdays for selected date
+            if let selectedDate = selectedDate {
+                VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
+                    let dayAppointments = viewModel.appointmentsByDay[selectedDate] ?? []
+                    let dayBirthdays = viewModel.birthdaysByDay[selectedDate] ?? []
+
+                    if dayAppointments.isEmpty && dayBirthdays.isEmpty {
+                        Text("No events")
+                            .foregroundColor(AppColors.secondary)
+                            .italic()
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .background(AppColors.background.opacity(0.1))
+                            .cornerRadius(8)
+                    } else {
+                        VStack(alignment: .leading, spacing: AppSpacing.small) {
+                            if !dayAppointments.isEmpty {
+                                Text("Appointments")
+                                    .font(.headline)
+                                    .foregroundColor(AppColors.primary)
+                                ForEach(dayAppointments) { appointment in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "calendar.badge.clock")
+                                            .foregroundColor(AppColors.accent)
+                                        Text(appointment.serviceType)
+                                            .font(.subheadline)
+                                    }
+                                }
+                            }
+                            if !dayBirthdays.isEmpty {
+                                Text("Birthdays")
+                                    .font(.headline)
+                                    .foregroundColor(AppColors.primary)
+                                    .padding(.top, dayAppointments.isEmpty ? 0 : AppSpacing.small)
+                                ForEach(dayBirthdays) { dog in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "gift")
+                                            .foregroundColor(AppColors.accent)
+                                        Text(dog.name)
+                                            .font(.subheadline)
+                                    }
+                                }
+                            }
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppColors.background.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                }
+                .padding(.horizontal, AppSpacing.medium)
+            }
 
             if let selectedDate = selectedDate {
                 AddAppointmentSheet(
@@ -216,15 +327,27 @@ struct CalendarGridView: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: AppSpacing.xSmall) {
             ForEach(days, id: \.self) { day in
-                CalendarDayCell(
-                    date: day,
-                    appointments: appointments[day] ?? [],
-                    birthdays: birthdays[day] ?? [],
-                    tasks: tasks[day] ?? [],
-                    isSelected: Calendar.current.isDate(day, inSameDayAs: selectedDate ?? Date()),
-                    onTap: { onTapDay(day) }
-                    // (Enhance: Add drag/drop hooks for traceability.)
-                )
+                // Enhancement: Show subtle badge if >2 appointments or has birthday
+                ZStack(alignment: .topTrailing) {
+                    CalendarDayCell(
+                        date: day,
+                        appointments: appointments[day] ?? [],
+                        birthdays: birthdays[day] ?? [],
+                        tasks: tasks[day] ?? [],
+                        isSelected: Calendar.current.isDate(day, inSameDayAs: selectedDate ?? Date()),
+                        onTap: { onTapDay(day) }
+                        // (Enhance: Add drag/drop hooks for traceability.)
+                    )
+                    let dayAppointments = appointments[day] ?? []
+                    let dayBirthdays = birthdays[day] ?? []
+                    if dayAppointments.count > 2 || !dayBirthdays.isEmpty {
+                        Circle()
+                            .fill(AppColors.accent)
+                            .frame(width: 10, height: 10)
+                            .offset(x: -4, y: 4)
+                            .accessibilityLabel("Has multiple events")
+                    }
+                }
             }
         }
         .padding(.horizontal, AppSpacing.xSmall)
@@ -250,6 +373,12 @@ enum DateUtils {
     static func monthYearString(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "LLLL yyyy"
+        return formatter.string(from: date)
+    }
+    // Enhancement: Short month string for mini month bar
+    static func monthShortString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "LLL"
         return formatter.string(from: date)
     }
 }

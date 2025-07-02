@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -46,6 +47,36 @@ fileprivate final class PeakHoursHeatmapAudit {
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Export all audit events as CSV string with columns:
+    /// timestamp,maxCount,minCount,mostPopular,tags
+    static func exportCSV() -> String {
+        let header = "timestamp,maxCount,minCount,mostPopular,tags"
+        let rows = log.map { event in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: "|").replacingOccurrences(of: "\"", with: "\"\"")
+            let mostPopularEscaped = event.mostPopular.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(timestampStr)\",\(event.maxCount),\(event.minCount),\"\(mostPopularEscaped)\",\"\(tagsStr)\""
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+    
+    /// Average maxCount value across all logged events. Returns 0 if no events.
+    static var averageMaxCount: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0) { $0 + $1.maxCount }
+        return Double(total) / Double(log.count)
+    }
+    
+    /// The most frequent mostPopular string value across all logged events.
+    /// Returns nil if no events.
+    static var mostFrequentPeakHour: String? {
+        guard !log.isEmpty else { return nil }
+        let freq = Dictionary(grouping: log, by: { $0.mostPopular })
+            .mapValues { $0.count }
+        return freq.max(by: { $0.value < $1.value })?.key
+    }
+    
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No heatmap events recorded."
     }
@@ -83,6 +114,9 @@ struct PeakHoursHeatmapView: View {
         }
         return nil
     }
+    
+    // State to control voice over announcement on first appear if minCount == 0
+    @State private var didAnnounceZeroAppointments = false
 
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
@@ -133,7 +167,23 @@ struct PeakHoursHeatmapView: View {
                 minCount: minCount,
                 mostPopular: mostPopular != nil ? "\(mostPopular!.day) at \(mostPopular!.hour):00 (\(mostPopular!.count) appts)" : "none"
             )
+            // Accessibility enhancement: announce if any hour has zero appointments
+            if minCount == 0 && !didAnnounceZeroAppointments {
+                #if canImport(UIKit)
+                UIAccessibility.post(notification: .announcement, argument: "At least one hour has zero appointments.")
+                #endif
+                didAnnounceZeroAppointments = true
+            }
         }
+        // DEV overlay showing audit info in DEBUG builds
+        .overlay(
+            #if DEBUG
+            AuditInfoOverlay()
+            #else
+            EmptyView()
+            #endif
+            , alignment: .bottom
+        )
     }
 
     private var heatmapSummary: String {
@@ -201,12 +251,64 @@ private extension Color {
 public enum PeakHoursHeatmapAuditAdmin {
     public static var lastSummary: String { PeakHoursHeatmapAudit.accessibilitySummary }
     public static var lastJSON: String? { PeakHoursHeatmapAudit.exportLastJSON() }
+    
+    /// Expose CSV export of all audit logs
+    public static func exportCSV() -> String {
+        PeakHoursHeatmapAudit.exportCSV()
+    }
+    
+    /// Expose average maxCount of audit logs
+    public static var averageMaxCount: Double {
+        PeakHoursHeatmapAudit.averageMaxCount
+    }
+    
+    /// Expose most frequent peak hour string from audit logs
+    public static var mostFrequentPeakHour: String? {
+        PeakHoursHeatmapAudit.mostFrequentPeakHour
+    }
+    
     public static func recentEvents(limit: Int = 5) -> [String] {
         PeakHoursHeatmapAudit.recentEvents(limit: limit)
     }
 }
 
 #if DEBUG
+/// A SwiftUI overlay view showing recent audit events and analytics for development/debugging purposes.
+private struct AuditInfoOverlay: View {
+    @State private var timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    @State private var recentEvents: [String] = []
+    @State private var averageMaxCount: Double = 0
+    @State private var mostFrequentPeakHour: String = "N/A"
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Audit Info (last 3 events):")
+                .font(.caption)
+                .bold()
+            ForEach(recentEvents, id: \.self) { event in
+                Text(event)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Text(String(format: "Average Max Count: %.2f", averageMaxCount))
+                .font(.caption2)
+            Text("Most Frequent Peak Hour: \(mostFrequentPeakHour)")
+                .font(.caption2)
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.7))
+        .foregroundColor(.white)
+        .cornerRadius(8)
+        .padding()
+        .onReceive(timer) { _ in
+            recentEvents = PeakHoursHeatmapAudit.recentEvents(limit: 3)
+            averageMaxCount = PeakHoursHeatmapAudit.averageMaxCount
+            mostFrequentPeakHour = PeakHoursHeatmapAudit.mostFrequentPeakHour ?? "N/A"
+        }
+    }
+}
+
 struct PeakHoursHeatmapView_Previews: PreviewProvider {
     static var previews: some View {
         var sampleData: [Int: [Int: Int]] = [:]

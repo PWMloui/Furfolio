@@ -1,3 +1,14 @@
+/**
+ AnalyticsService
+ ----------------
+ Centralized analytics engine for Furfolio, providing non-blocking event and screen-view logging with built-in audit capabilities.
+
+ - **Architecture**: Singleton conforming to `AnalyticsServiceProtocol` for dependency injection.
+ - **Concurrency & Async Logging**: Protocol methods are `async` and internal logging is offloaded to avoid UI blocking.
+ - **Audit Ready**: Integrates with `AnalyticsAuditManager` actor to record every analytic event.
+ - **Localization & Accessibility**: Event names and parameters can be localized at the call site.
+ - **Diagnostics & Preview/Testability**: Exposes async methods to fetch and export recent audit entries.
+ */
 //
 //  AnalyticsService.swift
 //  Furfolio
@@ -9,11 +20,60 @@ import Foundation
 import SwiftUI
 import OSLog
 
+/// A record of an analytics event for audit purposes.
+public struct AnalyticsAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let parameters: [String: Any]?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, parameters: [String: Any]?) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.parameters = parameters
+    }
+}
+
+/// Concurrency-safe actor for recording analytics audit entries.
+public actor AnalyticsAuditManager {
+    private var buffer: [AnalyticsAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = AnalyticsAuditManager()
+
+    /// Add a new audit entry, retaining only the most recent `maxEntries`.
+    public func add(_ entry: AnalyticsAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [AnalyticsAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit log as a pretty-printed JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
+
 // MARK: - Analytics Protocol
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 // MARK: - AnalyticsService (Modular, Tokenized, Auditable Business Analytics Engine)
@@ -36,13 +96,16 @@ final class AnalyticsService: AnalyticsServiceProtocol {
 
     // MARK: - Protocol Conformance
 
-    public func log(event: String, parameters: [String: Any]? = nil) {
+    public func log(event: String, parameters: [String: Any]? = nil) async {
         logger.log("Event: \(event), Parameters: \(String(describing: parameters))")
+        await AnalyticsAuditManager.shared.add(
+            AnalyticsAuditEntry(event: event, parameters: parameters)
+        )
         // TODO: Integrate with Firebase, Mixpanel, etc.
     }
 
-    public func screenView(_ name: String) {
-        log(event: "screen_view", parameters: ["screen_name": name])
+    public func screenView(_ name: String) async {
+        await log(event: "screen_view", parameters: ["screen_name": name])
     }
 
     // MARK: - Public Business Methods
@@ -200,4 +263,18 @@ final class FeatureFlagManager {
 
 enum AnalyticsError: Error {
     case invalidType
+}
+
+// MARK: - Diagnostics
+
+public extension AnalyticsService {
+    /// Fetch recent analytics audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [AnalyticsAuditEntry] {
+        await AnalyticsAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export the analytics audit log as JSON.
+    static func exportAuditLogJSON() async -> String {
+        await AnalyticsAuditManager.shared.exportJSON()
+    }
 }

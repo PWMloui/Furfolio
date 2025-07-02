@@ -95,6 +95,9 @@ struct AddAppointmentView: View {
     @State private var showDurationPicker = false
     @State private var showAlert = false
     @State private var alertMessage = ""
+    // For Quick Fill feature
+    @State private var quickFillToggle: Bool = false // toggles between normal and randomized fill
+    @State private var showQuickFillToast: Bool = false // to show the "Form filled!" toast
 
     var body: some View {
         NavigationStack {
@@ -267,6 +270,7 @@ struct AddAppointmentView: View {
             .navigationTitle("New Appointment")
             .font(AppFonts.title)
             .toolbar {
+                // Save button
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         AppointmentAudit.record(
@@ -297,6 +301,7 @@ struct AddAppointmentView: View {
                     .accessibilityIdentifier("saveButton")
                     .font(AppFonts.body)
                 }
+                // Cancel button
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         AppointmentAudit.record(
@@ -314,6 +319,17 @@ struct AddAppointmentView: View {
                     .accessibilityIdentifier("cancelButton")
                     .font(AppFonts.body)
                 }
+                // Quick Fill button for smart demo/test autofill
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        handleQuickFill()
+                    } label: {
+                        Label("Quick Fill", systemImage: "wand.and.stars")
+                    }
+                    .accessibilityIdentifier("quickFillButton")
+                    .font(AppFonts.body)
+                    .help("Quickly fill form with smart defaults or randomized demo data")
+                }
             }
             .alert(alertMessage, isPresented: $showAlert) {
                 Button("OK", role: .cancel) { }
@@ -330,6 +346,31 @@ struct AddAppointmentView: View {
                     detail: "AddAppointmentView appeared"
                 )
             }
+            // Toast overlay for Quick Fill
+            .overlay(
+                Group {
+                    if showQuickFillToast {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                // Toast view
+                                Text("Form filled!")
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 10)
+                                    .background(AppColors.accent.opacity(0.9))
+                                    .foregroundColor(AppColors.textOnAccent)
+                                    .cornerRadius(16)
+                                    .font(AppFonts.body)
+                                Spacer()
+                            }
+                            .padding(.bottom, 30)
+                        }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .animation(.easeInOut(duration: 0.2), value: showQuickFillToast)
+                    }
+                }
+            )
         }
     }
 
@@ -498,3 +539,132 @@ struct AddAppointmentView_Previews: PreviewProvider {
     }
 }
 #endif
+
+    // MARK: - Quick Fill Logic
+
+    /// Handles the Quick Fill and Quick Fill Randomized actions.
+    private func handleQuickFill() {
+        // If toggled, randomize; else, fill with smart defaults.
+        if quickFillToggle {
+            quickFillRandomized()
+        } else {
+            quickFillSmartDefaults()
+        }
+        // Toggle for next tap
+        quickFillToggle.toggle()
+        // Show toast for 1.5 seconds
+        showQuickFillToast = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            showQuickFillToast = false
+        }
+    }
+
+    /// Fills the form with smart defaults (first available, typical values).
+    private func quickFillSmartDefaults() {
+        // Set date/time to next available 30-min slot (rounded up to next half hour)
+        selectedDate = Self.nextHalfHour(from: Date())
+
+        // Select first available owner and their first dog
+        if let firstOwner = viewModel.owners.first {
+            selectedOwner = firstOwner
+            if let firstDog = firstOwner.dogs?.first {
+                selectedDog = firstDog
+            } else {
+                selectedDog = nil
+            }
+        } else {
+            selectedOwner = nil
+            selectedDog = nil
+        }
+
+        // Select most common service type (first in list)
+        if let svc = viewModel.serviceTypes.first {
+            selectedServiceType = svc
+            estimatedDuration = Self.typicalDuration(for: svc)
+        } else {
+            selectedServiceType = ""
+            estimatedDuration = 60
+        }
+
+        // Clear notes and tags
+        notes = ""
+        viewModel.selectedTags.removeAll()
+
+        // Audit this quick fill action
+        AppointmentAudit.record(
+            operation: "quickFill",
+            date: selectedDate,
+            owner: selectedOwner?.ownerName,
+            dog: selectedDog?.name,
+            service: selectedServiceType,
+            duration: estimatedDuration,
+            tags: [],
+            detail: "Quick Fill smart defaults"
+        )
+    }
+
+    /// Fills the form with randomized valid selections for demo/testing.
+    private func quickFillRandomized() {
+        // Set date/time to next available 30-min slot (rounded up to next half hour)
+        selectedDate = Self.nextHalfHour(from: Date())
+
+        // Random owner and dog
+        if !viewModel.owners.isEmpty {
+            let owner = viewModel.owners.randomElement()!
+            selectedOwner = owner
+            if let dogs = owner.dogs, !dogs.isEmpty {
+                selectedDog = dogs.randomElement()
+            } else {
+                selectedDog = nil
+            }
+        } else {
+            selectedOwner = nil
+            selectedDog = nil
+        }
+
+        // Random service type
+        if !viewModel.serviceTypes.isEmpty {
+            let svc = viewModel.serviceTypes.randomElement()!
+            selectedServiceType = svc
+            estimatedDuration = Self.typicalDuration(for: svc)
+        } else {
+            selectedServiceType = ""
+            estimatedDuration = 60
+        }
+
+        // Clear notes and tags
+        notes = ""
+        viewModel.selectedTags.removeAll()
+
+        // Audit this quick fill randomized action
+        AppointmentAudit.record(
+            operation: "quickFillRandomized",
+            date: selectedDate,
+            owner: selectedOwner?.ownerName,
+            dog: selectedDog?.name,
+            service: selectedServiceType,
+            duration: estimatedDuration,
+            tags: [],
+            detail: "Quick Fill randomized demo"
+        )
+    }
+
+    /// Returns the next half-hour slot after a given date (rounded up).
+    private static func nextHalfHour(from date: Date) -> Date {
+        let calendar = Calendar.current
+        let minute = calendar.component(.minute, from: date)
+        let addMinutes = (minute < 30) ? (30 - minute) : (60 - minute)
+        let rounded = calendar.date(byAdding: .minute, value: addMinutes, to: date)!
+        let comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: rounded)
+        return calendar.date(from: comps)!
+    }
+
+    /// Returns the typical duration (in minutes) for a given service type.
+    private static func typicalDuration(for service: String) -> Int {
+        switch service {
+        case "Full Groom": return 60
+        case "Bath Only": return 30
+        case "Nail Trim": return 15
+        default: return 30
+        }
+    }

@@ -7,86 +7,116 @@
 
 import Foundation
 
+/**
+ OnboardingStepDescriptor
+ -------------------------
+ Describes metadata and configuration for each onboarding step in Furfolio.
+
+ - **Architecture**: Value-type descriptor conforming to Identifiable, Hashable, and Codable for SwiftUI and networking.
+ - **Localization**: All display strings are localized via NSLocalizedString for internationalization.
+ - **Accessibility**: Provides accessibility hints for VoiceOver.
+ - **Preview/Testability**: Includes a SwiftUI PreviewProvider rendering default descriptors.
+ */
+
 /// Describes metadata and configuration for an onboarding step
-struct OnboardingStepDescriptor: Identifiable, Hashable {
-    /// Unique step ID
-    let id: OnboardingStep
+public struct OnboardingStepDescriptor: Identifiable, Hashable, Codable {
+    /// Unique step ID token.
+    public let id: OnboardingStep
 
-    /// Display title of the step
-    let title: String
+    /// Localized display title of the step.
+    public let title: String
 
-    /// Indicates if this step can be skipped
-    let isSkippable: Bool
+    /// Indicates whether this step can be skipped.
+    public let isSkippable: Bool
 
-    /// Roles for which this step should be shown
-    let rolesApplicable: [OnboardingRole]
+    /// User roles for which this step should be shown.
+    public let rolesApplicable: [OnboardingRole]
 
-    /// Optional note or instruction about the step
-    let notes: String?
+    /// Optional localized note or instruction about the step.
+    public let notes: String?
 
-    /// Optional accessibility label or hint for screen readers
-    let accessibilityHint: String?
+    /// Optional localized accessibility hint for screen readers.
+    public let accessibilityHint: String?
 
-    /// Unique identifier required by Identifiable
-    var identityKey: String {
+    /// Synthesized unique identity string for Identifiable.
+    public var identity: String {
         "\(id.rawValue)_\(rolesApplicable.map(\.rawValue).joined(separator: \",\"))"
     }
 
-    var id: String {
-        identityKey
-    }
-
     /// Default step metadata used throughout the app
-    static func defaultDescriptors() -> [OnboardingStepDescriptor] {
+    public static func defaultDescriptors() -> [OnboardingStepDescriptor] {
         return [
             OnboardingStepDescriptor(
                 id: .welcome,
-                title: "Welcome",
+                title: NSLocalizedString("Welcome", comment: "Onboarding step title - Welcome"),
                 isSkippable: false,
                 rolesApplicable: OnboardingRole.allCases,
-                notes: "Initial intro screen",
-                accessibilityHint: "Start onboarding and learn about Furfolio"
+                notes: NSLocalizedString("Initial intro screen", comment: "Onboarding step notes - Welcome"),
+                accessibilityHint: NSLocalizedString("Start onboarding and learn about Furfolio", comment: "Accessibility hint - Welcome step")
             ),
             OnboardingStepDescriptor(
                 id: .dataImport,
-                title: "Import Data",
+                title: NSLocalizedString("Import Data", comment: "Onboarding step title - Import Data"),
                 isSkippable: true,
                 rolesApplicable: [.manager],
-                notes: "Managers can preload sample business data",
-                accessibilityHint: "Import demo or existing data"
+                notes: NSLocalizedString("Managers can preload sample business data", comment: "Onboarding step notes - Import Data"),
+                accessibilityHint: NSLocalizedString("Import demo or existing data", comment: "Accessibility hint - Import Data step")
             ),
             OnboardingStepDescriptor(
                 id: .tutorial,
-                title: "Tutorial",
+                title: NSLocalizedString("Tutorial", comment: "Onboarding step title - Tutorial"),
                 isSkippable: false,
                 rolesApplicable: [.manager, .staff, .receptionist],
-                notes: "Visual swipe-through of app features",
-                accessibilityHint: "Swipe to explore core features"
+                notes: NSLocalizedString("Visual swipe-through of app features", comment: "Onboarding step notes - Tutorial"),
+                accessibilityHint: NSLocalizedString("Swipe to explore core features", comment: "Accessibility hint - Tutorial step")
             ),
             OnboardingStepDescriptor(
                 id: .faq,
-                title: "FAQ",
+                title: NSLocalizedString("FAQ", comment: "Onboarding step title - FAQ"),
                 isSkippable: true,
                 rolesApplicable: [.staff],
-                notes: "Answers common onboarding questions",
-                accessibilityHint: "Frequently asked questions about using the app"
+                notes: NSLocalizedString("Answers common onboarding questions", comment: "Onboarding step notes - FAQ"),
+                accessibilityHint: NSLocalizedString("Frequently asked questions about using the app", comment: "Accessibility hint - FAQ step")
             ),
             OnboardingStepDescriptor(
                 id: .permissions,
-                title: "Permissions",
+                title: NSLocalizedString("Permissions", comment: "Onboarding step title - Permissions"),
                 isSkippable: true,
                 rolesApplicable: [.manager, .receptionist],
-                notes: "Prompt for notifications, access, etc.",
-                accessibilityHint: "Enable permissions like notifications"
+                notes: NSLocalizedString("Prompt for notifications, access, etc.", comment: "Onboarding step notes - Permissions"),
+                accessibilityHint: NSLocalizedString("Enable permissions like notifications", comment: "Accessibility hint - Permissions step")
             ),
             OnboardingStepDescriptor(
                 id: .completion,
-                title: "All Set",
+                title: NSLocalizedString("All Set", comment: "Onboarding step title - Completion"),
                 isSkippable: false,
                 rolesApplicable: OnboardingRole.allCases,
-                notes: "Final screen before entering app",
-                accessibilityHint: "Finish onboarding and begin using the app"
+                notes: NSLocalizedString("Final screen before entering app", comment: "Onboarding step notes - Completion"),
+                accessibilityHint: NSLocalizedString("Finish onboarding and begin using the app", comment: "Accessibility hint - Completion step")
             )
         ]
     }
 }
+
+#if DEBUG
+import SwiftUI
+
+struct OnboardingStepDescriptor_Previews: PreviewProvider {
+    static var previews: some View {
+        List(OnboardingStepDescriptor.defaultDescriptors()) { descriptor in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(descriptor.title)
+                    .font(.headline)
+                if let notes = descriptor.notes {
+                    Text(notes)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+            .accessibilityHint(descriptor.accessibilityHint ?? "")
+        }
+        .navigationTitle(Text(NSLocalizedString("Onboarding Steps", comment: "Preview title")))
+    }
+}
+#endif

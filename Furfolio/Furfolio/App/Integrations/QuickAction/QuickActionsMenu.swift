@@ -2,7 +2,7 @@
 //  QuickActionsMenu.swift
 //  Furfolio
 //
-//  Enhanced: analytics/audit–ready, Trust Center–capable, preview/test–injectable, robust accessibility.
+//  Enhanced 2025: analytics/audit–ready, Trust Center–capable, preview/test–injectable, robust accessibility, denial feedback, badge support, staff-role aware.
 //
 
 import SwiftUI
@@ -21,10 +21,17 @@ public struct NullQuickActionsMenuAnalyticsLogger: QuickActionsMenuAnalyticsLogg
 
 public protocol QuickActionsMenuTrustCenterDelegate {
     func permission(for action: String, context: [String: Any]?) -> Bool
+    func denialMessage(for action: String, context: [String: Any]?) -> String?
+    func currentUserRole() -> String
+}
+public extension QuickActionsMenuTrustCenterDelegate {
+    func denialMessage(for action: String, context: [String: Any]?) -> String? { nil }
+    func currentUserRole() -> String { "Unknown" }
 }
 public struct NullQuickActionsMenuTrustCenterDelegate: QuickActionsMenuTrustCenterDelegate {
     public init() {}
     public func permission(for action: String, context: [String: Any]?) -> Bool { true }
+    public func currentUserRole() -> String { "Unknown" }
 }
 
 // MARK: - QuickActionsMenu (Enterprise Enhanced)
@@ -37,13 +44,15 @@ public struct QuickActionsMenu: View {
     public let onAddNote: (() -> Void)?
     public let onEdit: (() -> Void)?
     public let onDelete: (() -> Void)?
-    /// Custom actions must provide a label, system image, **tokenized color** (AppColors.*), and action closure.
-    public var customActions: [(label: String, systemImage: String, color: Color, action: () -> Void)] = []
+    
+    /// Custom actions may provide an optional badge and minimumRole/isEnabled for permission.
+    public var customActions: [(label: String, systemImage: String, color: Color, badge: String?, minRole: String?, isEnabled: Bool, action: () -> Void)] = []
     public var asMenu: Bool = false
     public var helperText: String?
     public var showDivider: Bool = false
 
-    // Audit/analytics logger & trust center (injectable for QA, Trust Center, preview)
+    @State private var deniedMessage: String?
+
     public static var analyticsLogger: QuickActionsMenuAnalyticsLogger = NullQuickActionsMenuAnalyticsLogger()
     public static var trustCenterDelegate: QuickActionsMenuTrustCenterDelegate = NullQuickActionsMenuTrustCenterDelegate()
 
@@ -55,7 +64,7 @@ public struct QuickActionsMenu: View {
         onAddNote: (() -> Void)? = nil,
         onEdit: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
-        customActions: [(label: String, systemImage: String, color: Color, action: () -> Void)] = [],
+        customActions: [(label: String, systemImage: String, color: Color, badge: String?, minRole: String?, isEnabled: Bool, action: () -> Void)] = [],
         asMenu: Bool = false,
         helperText: String? = nil,
         showDivider: Bool = false
@@ -77,72 +86,24 @@ public struct QuickActionsMenu: View {
         VStack(spacing: AppSpacing.xxSmall) {
             if asMenu {
                 Menu {
-                    if let onCall = onCall, let phone = phone {
-                        Button {
-                            actionHandler("call", ["phone": phone], onCall)
-                        } label: {
-                            Label("Call \(phone)", systemImage: "phone.fill")
-                        }
-                        .accessibilityLabel("Call \(phone)")
-                        .accessibilityHint("Initiates a phone call to \(phone)")
-                    }
-                    if let onMessage = onMessage {
-                        Button {
-                            actionHandler("message", nil, onMessage)
-                        } label: {
-                            Label("Message", systemImage: "message.fill")
-                        }
-                        .accessibilityLabel("Message")
-                        .accessibilityHint("Sends a message")
-                    }
-                    if let onAddAppointment = onAddAppointment {
-                        Button {
-                            actionHandler("addAppointment", nil, onAddAppointment)
-                        } label: {
-                            Label("Add Appointment", systemImage: "calendar.badge.plus")
-                        }
-                        .accessibilityLabel("Add Appointment")
-                        .accessibilityHint("Adds a new appointment")
-                    }
-                    if let onAddNote = onAddNote {
-                        Button {
-                            actionHandler("addNote", nil, onAddNote)
-                        } label: {
-                            Label("Add Note", systemImage: "note.text.badge.plus")
-                        }
-                        .accessibilityLabel("Add Note")
-                        .accessibilityHint("Adds a new note")
-                    }
-                    if let onEdit = onEdit {
-                        Button {
-                            actionHandler("edit", nil, onEdit)
-                        } label: {
-                            Label("Edit", systemImage: "pencil")
-                        }
-                        .accessibilityLabel("Edit")
-                        .accessibilityHint("Edits the item")
-                    }
-                    if let onDelete = onDelete {
-                        Button(role: .destructive) {
-                            actionHandler("delete", nil, onDelete)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        .accessibilityLabel("Delete")
-                        .accessibilityHint("Deletes the item")
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityAddTraits(.isDestructive)
-                    }
+                    standardMenuActions()
                     ForEach(Array(customActions.enumerated()), id: \.offset) { _, action in
+                        let enabled = isCustomActionAllowed(action)
                         Button {
-                            actionHandler("custom", ["label": action.label], action.action)
+                            actionHandler("custom", ["label": action.label], action.action, isEnabled: enabled)
                         } label: {
-                            Label(action.label, systemImage: action.systemImage)
-                                .font(AppFonts.body)
-                                .foregroundColor(action.color)
+                            HStack {
+                                Label(action.label, systemImage: action.systemImage)
+                                    .font(AppFonts.body)
+                                    .foregroundColor(enabled ? action.color : AppColors.disabled)
+                                if let badge = action.badge {
+                                    BadgeView(text: badge)
+                                }
+                            }
                         }
+                        .disabled(!enabled)
                         .accessibilityLabel(action.label)
-                        .accessibilityHint("Performs the \(action.label) action")
+                        .accessibilityHint(enabled ? "Performs the \(action.label) action" : "Not permitted for your role")
                     }
                 } label: {
                     Label("Quick Actions", systemImage: "ellipsis.circle")
@@ -162,91 +123,23 @@ public struct QuickActionsMenu: View {
                 }
             } else {
                 HStack(spacing: AppSpacing.large) {
-                    if let onCall = onCall, let phone = phone {
-                        ActionButton(
-                            label: "Call",
-                            systemImage: "phone.fill",
-                            color: AppColors.green,
-                            action: {
-                                actionHandler("call", ["phone": phone], onCall)
-                            }
-                        )
-                        .accessibilityLabel("Call \(phone)")
-                        .accessibilityHint("Initiates a phone call to \(phone)")
-                    }
-                    if let onMessage = onMessage {
-                        ActionButton(
-                            label: "Message",
-                            systemImage: "message.fill",
-                            color: AppColors.blue,
-                            action: {
-                                actionHandler("message", nil, onMessage)
-                            }
-                        )
-                        .accessibilityLabel("Message")
-                        .accessibilityHint("Sends a message")
-                    }
-                    if let onAddAppointment = onAddAppointment {
-                        ActionButton(
-                            label: "Add",
-                            systemImage: "calendar.badge.plus",
-                            color: AppColors.accent,
-                            action: {
-                                actionHandler("addAppointment", nil, onAddAppointment)
-                            }
-                        )
-                        .accessibilityLabel("Add Appointment")
-                        .accessibilityHint("Adds a new appointment")
-                    }
-                    if let onAddNote = onAddNote {
-                        ActionButton(
-                            label: "Note",
-                            systemImage: "note.text.badge.plus",
-                            color: AppColors.orange,
-                            action: {
-                                actionHandler("addNote", nil, onAddNote)
-                            }
-                        )
-                        .accessibilityLabel("Add Note")
-                        .accessibilityHint("Adds a new note")
-                    }
-                    if let onEdit = onEdit {
-                        ActionButton(
-                            label: "Edit",
-                            systemImage: "pencil",
-                            color: AppColors.gray,
-                            action: {
-                                actionHandler("edit", nil, onEdit)
-                            }
-                        )
-                        .accessibilityLabel("Edit")
-                        .accessibilityHint("Edits the item")
-                    }
-                    if let onDelete = onDelete {
-                        ActionButton(
-                            label: "Delete",
-                            systemImage: "trash",
-                            color: AppColors.red,
-                            action: {
-                                actionHandler("delete", nil, onDelete)
-                            },
-                            isDestructive: true
-                        )
-                        .accessibilityLabel("Delete")
-                        .accessibilityHint("Deletes the item")
-                        .accessibilityAddTraits(.isDestructive)
-                    }
+                    standardActionButtons()
                     ForEach(Array(customActions.enumerated()), id: \.offset) { _, action in
+                        let enabled = isCustomActionAllowed(action)
                         ActionButton(
                             label: action.label,
                             systemImage: action.systemImage,
-                            color: action.color,
+                            color: enabled ? action.color : AppColors.disabled,
+                            badge: action.badge,
                             action: {
-                                actionHandler("custom", ["label": action.label], action.action)
-                            }
+                                actionHandler("custom", ["label": action.label], action.action, isEnabled: enabled)
+                            },
+                            isDestructive: false,
+                            isEnabled: enabled
                         )
                         .accessibilityLabel(action.label)
-                        .accessibilityHint("Performs the \(action.label) action")
+                        .accessibilityHint(enabled ? "Performs the \(action.label) action" : "Not permitted for your role")
+                        .disabled(!enabled)
                     }
                 }
                 .padding(.vertical, AppSpacing.medium)
@@ -265,18 +158,209 @@ public struct QuickActionsMenu: View {
             }
         }
         .keyboardShortcut(.defaultAction)
+        .alert(isPresented: .constant(deniedMessage != nil), content: {
+            Alert(title: Text("Action Not Allowed"), message: Text(deniedMessage ?? "You do not have permission for this action."), dismissButton: .default(Text("OK")) {
+                deniedMessage = nil
+            })
+        })
     }
 
-    private func performHaptic() {
+    // MARK: - Standard Actions as Menu
+    @ViewBuilder
+    private func standardMenuActions() -> some View {
+        if let onCall = onCall, let phone = phone {
+            let allowed = Self.trustCenterDelegate.permission(for: "call", context: ["phone": phone, "role": Self.trustCenterDelegate.currentUserRole()])
+            Button {
+                actionHandler("call", ["phone": phone], onCall, isEnabled: allowed)
+            } label: {
+                Label("Call \(phone)", systemImage: "phone.fill")
+            }
+            .disabled(!allowed)
+            .accessibilityLabel("Call \(phone)")
+            .accessibilityHint(allowed ? "Initiates a phone call to \(phone)" : "Not permitted")
+        }
+        // ...repeat for other actions below, same as above, with role/context...
+        if let onMessage = onMessage {
+            let allowed = Self.trustCenterDelegate.permission(for: "message", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            Button {
+                actionHandler("message", nil, onMessage, isEnabled: allowed)
+            } label: {
+                Label("Message", systemImage: "message.fill")
+            }
+            .disabled(!allowed)
+            .accessibilityLabel("Message")
+            .accessibilityHint(allowed ? "Sends a message" : "Not permitted")
+        }
+        if let onAddAppointment = onAddAppointment {
+            let allowed = Self.trustCenterDelegate.permission(for: "addAppointment", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            Button {
+                actionHandler("addAppointment", nil, onAddAppointment, isEnabled: allowed)
+            } label: {
+                Label("Add Appointment", systemImage: "calendar.badge.plus")
+            }
+            .disabled(!allowed)
+            .accessibilityLabel("Add Appointment")
+            .accessibilityHint(allowed ? "Adds a new appointment" : "Not permitted")
+        }
+        if let onAddNote = onAddNote {
+            let allowed = Self.trustCenterDelegate.permission(for: "addNote", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            Button {
+                actionHandler("addNote", nil, onAddNote, isEnabled: allowed)
+            } label: {
+                Label("Add Note", systemImage: "note.text.badge.plus")
+            }
+            .disabled(!allowed)
+            .accessibilityLabel("Add Note")
+            .accessibilityHint(allowed ? "Adds a new note" : "Not permitted")
+        }
+        if let onEdit = onEdit {
+            let allowed = Self.trustCenterDelegate.permission(for: "edit", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            Button {
+                actionHandler("edit", nil, onEdit, isEnabled: allowed)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .disabled(!allowed)
+            .accessibilityLabel("Edit")
+            .accessibilityHint(allowed ? "Edits the item" : "Not permitted")
+        }
+        if let onDelete = onDelete {
+            let allowed = Self.trustCenterDelegate.permission(for: "delete", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            Button(role: .destructive) {
+                actionHandler("delete", nil, onDelete, isEnabled: allowed)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .disabled(!allowed)
+            .accessibilityLabel("Delete")
+            .accessibilityHint(allowed ? "Deletes the item" : "Not permitted")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(.isDestructive)
+        }
+    }
+
+    // MARK: - Standard Actions as Buttons
+    @ViewBuilder
+    private func standardActionButtons() -> some View {
+        // Similar to above: check permission for each, then show or gray out
+        if let onCall = onCall, let phone = phone {
+            let allowed = Self.trustCenterDelegate.permission(for: "call", context: ["phone": phone, "role": Self.trustCenterDelegate.currentUserRole()])
+            ActionButton(
+                label: "Call",
+                systemImage: "phone.fill",
+                color: allowed ? AppColors.green : AppColors.disabled,
+                action: { actionHandler("call", ["phone": phone], onCall, isEnabled: allowed) },
+                isDestructive: false,
+                isEnabled: allowed
+            )
+            .accessibilityLabel("Call \(phone)")
+            .accessibilityHint(allowed ? "Initiates a phone call to \(phone)" : "Not permitted")
+            .disabled(!allowed)
+        }
+        if let onMessage = onMessage {
+            let allowed = Self.trustCenterDelegate.permission(for: "message", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            ActionButton(
+                label: "Message",
+                systemImage: "message.fill",
+                color: allowed ? AppColors.blue : AppColors.disabled,
+                action: { actionHandler("message", nil, onMessage, isEnabled: allowed) },
+                isDestructive: false,
+                isEnabled: allowed
+            )
+            .accessibilityLabel("Message")
+            .accessibilityHint(allowed ? "Sends a message" : "Not permitted")
+            .disabled(!allowed)
+        }
+        if let onAddAppointment = onAddAppointment {
+            let allowed = Self.trustCenterDelegate.permission(for: "addAppointment", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            ActionButton(
+                label: "Add",
+                systemImage: "calendar.badge.plus",
+                color: allowed ? AppColors.accent : AppColors.disabled,
+                action: { actionHandler("addAppointment", nil, onAddAppointment, isEnabled: allowed) },
+                isDestructive: false,
+                isEnabled: allowed
+            )
+            .accessibilityLabel("Add Appointment")
+            .accessibilityHint(allowed ? "Adds a new appointment" : "Not permitted")
+            .disabled(!allowed)
+        }
+        if let onAddNote = onAddNote {
+            let allowed = Self.trustCenterDelegate.permission(for: "addNote", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            ActionButton(
+                label: "Note",
+                systemImage: "note.text.badge.plus",
+                color: allowed ? AppColors.orange : AppColors.disabled,
+                action: { actionHandler("addNote", nil, onAddNote, isEnabled: allowed) },
+                isDestructive: false,
+                isEnabled: allowed
+            )
+            .accessibilityLabel("Add Note")
+            .accessibilityHint(allowed ? "Adds a new note" : "Not permitted")
+            .disabled(!allowed)
+        }
+        if let onEdit = onEdit {
+            let allowed = Self.trustCenterDelegate.permission(for: "edit", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            ActionButton(
+                label: "Edit",
+                systemImage: "pencil",
+                color: allowed ? AppColors.gray : AppColors.disabled,
+                action: { actionHandler("edit", nil, onEdit, isEnabled: allowed) },
+                isDestructive: false,
+                isEnabled: allowed
+            )
+            .accessibilityLabel("Edit")
+            .accessibilityHint(allowed ? "Edits the item" : "Not permitted")
+            .disabled(!allowed)
+        }
+        if let onDelete = onDelete {
+            let allowed = Self.trustCenterDelegate.permission(for: "delete", context: ["role": Self.trustCenterDelegate.currentUserRole()])
+            ActionButton(
+                label: "Delete",
+                systemImage: "trash",
+                color: allowed ? AppColors.red : AppColors.disabled,
+                action: { actionHandler("delete", nil, onDelete, isEnabled: allowed) },
+                isDestructive: true,
+                isEnabled: allowed
+            )
+            .accessibilityLabel("Delete")
+            .accessibilityHint(allowed ? "Deletes the item" : "Not permitted")
+            .disabled(!allowed)
+        }
+    }
+
+    /// Helper to check custom action is enabled for current user role
+    private func isCustomActionAllowed(_ action: (label: String, systemImage: String, color: Color, badge: String?, minRole: String?, isEnabled: Bool, action: () -> Void)) -> Bool {
+        guard let minRole = action.minRole else { return action.isEnabled }
+        let currentRole = Self.trustCenterDelegate.currentUserRole()
+        // You could define your own role hierarchy/logic here (e.g. ["Owner", "Manager", "Receptionist", ...])
+        // For now, just check for equality (expand for your actual hierarchy)
+        return action.isEnabled && currentRole == minRole
+    }
+
+    private func performHaptic(allowed: Bool = true) {
         #if os(iOS)
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        if allowed {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
+        }
         #endif
     }
 
-    private func actionHandler(_ action: String, _ context: [String: Any]? = nil, _ closure: () -> Void) {
-        guard Self.trustCenterDelegate.permission(for: action, context: context) else {
+    /// Handles action trigger, audit, trust center, haptics, and denial feedback.
+    private func actionHandler(_ action: String, _ context: [String: Any]? = nil, _ closure: () -> Void, isEnabled: Bool = true) {
+        if !isEnabled {
+            deniedMessage = "You do not have permission for this action."
             Self.analyticsLogger.log(event: "\(action)_denied", info: context)
+            performHaptic(allowed: false)
+            return
+        }
+        let allowed = Self.trustCenterDelegate.permission(for: action, context: context)
+        if !allowed {
+            let denial = Self.trustCenterDelegate.denialMessage(for: action, context: context)
+            deniedMessage = denial ?? "You do not have permission for this action."
+            Self.analyticsLogger.log(event: "\(action)_denied", info: context)
+            performHaptic(allowed: false)
             return
         }
         performHaptic()
@@ -285,21 +369,31 @@ public struct QuickActionsMenu: View {
     }
 }
 
+// MARK: - ActionButton/BadgeView updated for enabled/disabled state
+
 private extension QuickActionsMenu {
     struct ActionButton: View {
         let label: String
         let systemImage: String
         let color: Color
+        var badge: String? = nil
         let action: () -> Void
         var isDestructive: Bool = false
+        var isEnabled: Bool = true
 
         var body: some View {
-            Button(action: action) {
+            Button(action: isEnabled ? action : {}, label: {
                 VStack(spacing: AppSpacing.xSmall) {
-                    Image(systemName: systemImage)
-                        .font(AppFonts.title)
-                        .foregroundColor(color)
-                        .frame(minWidth: 44, minHeight: 44)
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: systemImage)
+                            .font(AppFonts.title)
+                            .foregroundColor(color)
+                            .frame(minWidth: 44, minHeight: 44)
+                        if let badge = badge {
+                            BadgeView(text: badge)
+                                .offset(x: 12, y: -10)
+                        }
+                    }
                     Text(label)
                         .font(AppFonts.caption2)
                         .foregroundColor(AppColors.textPrimary)
@@ -311,10 +405,25 @@ private extension QuickActionsMenu {
                         .fill(AppColors.card)
                         .appShadow(AppShadows.card)
                 )
-            }
+                .opacity(isEnabled ? 1 : 0.5)
+            })
             .buttonStyle(.plain)
             .contentShape(Rectangle())
             .accessibilityAddTraits(isDestructive ? .isDestructive : [])
+            .disabled(!isEnabled)
+        }
+    }
+
+    struct BadgeView: View {
+        let text: String
+        var body: some View {
+            Text(text)
+                .font(.caption2.weight(.bold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.red))
+                .accessibilityLabel("Badge: \(text)")
         }
     }
 }
@@ -329,9 +438,12 @@ private extension QuickActionsMenu {
     }
     struct SpyTrustCenter: QuickActionsMenuTrustCenterDelegate {
         func permission(for action: String, context: [String : Any]?) -> Bool {
-            // Example: Deny delete for demo
             if action == "delete" { return false }
             return true
+        }
+        func denialMessage(for action: String, context: [String: Any]?) -> String? {
+            if action == "delete" { return "Demo: Deletion is not permitted in preview." }
+            return nil
         }
     }
 
@@ -381,10 +493,10 @@ private extension QuickActionsMenu {
                 .foregroundColor(AppColors.textPrimary)
             QuickActionsMenu(
                 customActions: [
-                    (label: "Custom 1", systemImage: "star.fill", color: AppColors.yellow, action: { print("Custom 1") }),
-                    (label: "Custom 2", systemImage: "bolt.fill", color: AppColors.purple, action: { print("Custom 2") })
+                    (label: "VIP", systemImage: "star.fill", color: AppColors.yellow, badge: "VIP", action: { print("VIP") }),
+                    (label: "Urgent", systemImage: "bolt.fill", color: AppColors.purple, badge: "!", action: { print("Urgent") })
                 ],
-                helperText: "Includes custom actions"
+                helperText: "Includes custom actions with badges"
             )
 
             Divider()

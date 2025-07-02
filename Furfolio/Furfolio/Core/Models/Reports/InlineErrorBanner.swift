@@ -5,16 +5,78 @@
 //  Enhanced: Analytics/audit-ready, token-compliant, modular, accessible, preview/testable, enterprise-ready.
 //
 
+/**
+ InlineErrorBanner
+ -----------------
+ A SwiftUI view presenting an inline, dismissible error banner with integrated async analytics and audit logging.
+
+ - **Purpose**: Display list- or page-level errors prominently, with user dismissal.
+ - **Architecture**: SwiftUI `View` with configurable analytics logger, MVVM-compatible.
+ - **Concurrency & Async Logging**: All analytics and audit calls are wrapped in non-blocking `Task` blocks.
+ - **Audit & Analytics Ready**: Defines async analytics protocol and concurrency-safe audit manager.
+ - **Localization**: All user-facing labels use `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: Combines children, marked as header and live region for VoiceOver.
+ - **Diagnostics & Preview/Testability**: Exposes async methods to fetch and export audit entries.
+ */
+
 import SwiftUI
+
+/// A record of an error banner audit event.
+public struct ErrorBannerAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let message: String?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, message: String?) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.message = message
+    }
+}
+
+/// Manages concurrency-safe audit logging for error banner events.
+public actor ErrorBannerAuditManager {
+    private var buffer: [ErrorBannerAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = ErrorBannerAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: ErrorBannerAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [ErrorBannerAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - Analytics/Audit Logger Protocol
 
 public protocol ErrorBannerAnalyticsLogger {
-    func log(event: String, message: String?)
+    /// Log an error banner event asynchronously.
+    func log(event: String, message: String?) async
 }
 public struct NullErrorBannerAnalyticsLogger: ErrorBannerAnalyticsLogger {
     public init() {}
-    public func log(event: String, message: String?) {}
+    public func log(event: String, message: String?) async {}
 }
 
 /// A dismissible inline error banner suitable for list or page-level errors.
@@ -82,7 +144,12 @@ struct InlineErrorBanner: View {
             .accessibilityLiveRegion(.polite)
             .accessibilityAddTraits(.isHeader)
             .onAppear {
-                analyticsLogger.log(event: "banner_shown", message: error)
+                Task {
+                    await analyticsLogger.log(event: "banner_shown", message: error)
+                    await ErrorBannerAuditManager.shared.add(
+                        ErrorBannerAuditEntry(event: "banner_shown", message: error)
+                    )
+                }
             }
         }
     }
@@ -91,7 +158,12 @@ struct InlineErrorBanner: View {
         withAnimation {
             let oldMessage = errorMessage
             errorMessage = nil
-            analyticsLogger.log(event: "banner_dismissed", message: oldMessage)
+            Task {
+                await analyticsLogger.log(event: "banner_dismissed", message: oldMessage)
+                await ErrorBannerAuditManager.shared.add(
+                    ErrorBannerAuditEntry(event: "banner_dismissed", message: oldMessage)
+                )
+            }
         }
         onDismiss?()
     }
@@ -99,7 +171,7 @@ struct InlineErrorBanner: View {
 
 #Preview {
     struct SpyLogger: ErrorBannerAnalyticsLogger {
-        func log(event: String, message: String?) {
+        func log(event: String, message: String?) async {
             print("ErrorBannerAnalytics: \(event), Message: \(message ?? "-")")
         }
     }
@@ -135,5 +207,19 @@ struct InlineErrorBanner: View {
         .padding(.top)
         .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         .previewDisplayName("Large Accessibility Text")
+    }
+}
+
+// MARK: - Diagnostics
+
+public extension InlineErrorBanner {
+    /// Fetch recent audit entries for error banners.
+    static func recentAuditEntries(limit: Int = 20) async -> [ErrorBannerAuditEntry] {
+        await ErrorBannerAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export the error banner audit log as JSON asynchronously.
+    static func exportAuditLogJSON() async -> String {
+        await ErrorBannerAuditManager.shared.exportJSON()
     }
 }

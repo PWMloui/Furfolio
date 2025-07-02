@@ -7,6 +7,8 @@
 
 import Foundation
 import Combine
+import SwiftUI
+import AVFoundation
 
 // MARK: - Audit/Event Logging
 
@@ -36,6 +38,7 @@ fileprivate struct DashboardAuditEvent: Codable {
 fileprivate final class DashboardAudit {
     static private(set) var log: [DashboardAuditEvent] = []
 
+    /// Records a new audit event and posts a VoiceOver announcement for accessibility.
     static func record(
         operation: String,
         appointments: Int,
@@ -63,16 +66,69 @@ fileprivate final class DashboardAudit {
         if log.count > 100 { log.removeFirst() }
         // Optional: Broadcast to external analytics (BI, logging service, etc)
         externalAuditHandler?(event)
+        
+        // Accessibility: Post VoiceOver announcement for dashboard event
+        let announcement = "Dashboard event: \(operation), Revenue: $\(String(format: "%.2f", revenue)), Appointments: \(appointments), Inactive: \(inactive), Loyalty: \(Int(loyalty * 100)) percent."
+        DispatchQueue.main.async {
+            UIAccessibility.post(notification: .announcement, argument: announcement)
+        }
     }
 
     // Analytics & BI integration hook (optional, settable from outside)
     static var externalAuditHandler: ((DashboardAuditEvent) -> Void)? = nil
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Exports all audit events as a CSV string with headers:
+    /// timestamp,operation,upcomingAppointmentsCount,totalRevenue,inactiveCustomersCount,loyaltyProgress,isLoading,errorMessage,tags,detail
+    static func exportCSV() -> String {
+        let headers = ["timestamp","operation","upcomingAppointmentsCount","totalRevenue","inactiveCustomersCount","loyaltyProgress","isLoading","errorMessage","tags","detail"]
+        var csvRows = [headers.joined(separator: ",")]
+        let formatter = ISO8601DateFormatter()
+        for event in log {
+            let timestamp = formatter.string(from: event.timestamp)
+            let operation = event.operation
+            let appointments = String(event.upcomingAppointmentsCount)
+            let revenue = String(format: "%.2f", event.totalRevenue)
+            let inactive = String(event.inactiveCustomersCount)
+            let loyalty = String(format: "%.4f", event.loyaltyProgress)
+            let loading = event.isLoading ? "true" : "false"
+            let errorMsg = event.errorMessage?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let errorQuoted = errorMsg.isEmpty ? "" : "\"\(errorMsg)\""
+            let tags = event.tags.joined(separator: ";").replacingOccurrences(of: "\"", with: "\"\"")
+            let tagsQuoted = tags.isEmpty ? "" : "\"\(tags)\""
+            let detail = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let detailQuoted = detail.isEmpty ? "" : "\"\(detail)\""
+            let row = [timestamp, operation, appointments, revenue, inactive, loyalty, loading, errorQuoted, tagsQuoted, detailQuoted].joined(separator: ",")
+            csvRows.append(row)
+        }
+        return csvRows.joined(separator: "\n")
+    }
+    
+    /// Returns the operation string with the highest frequency in audit logs.
+    static var mostFrequentOperation: String? {
+        guard !log.isEmpty else { return nil }
+        let freq = Dictionary(grouping: log, by: { $0.operation }).mapValues { $0.count }
+        return freq.max(by: { $0.value < $1.value })?.key
+    }
+    
+    /// Returns the average totalRevenue across all audit events.
+    static var averageRevenue: Double {
+        guard !log.isEmpty else { return 0.0 }
+        let total = log.reduce(0.0) { $0 + $1.totalRevenue }
+        return total / Double(log.count)
+    }
+    
+    /// Returns the total number of audit events recorded.
+    static var totalAuditEvents: Int {
+        log.count
+    }
+    
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No dashboard events recorded."
     }
@@ -202,6 +258,26 @@ class DashboardViewModel: ObservableObject {
     func recentAuditEvents(limit: Int = 5) -> [String] {
         DashboardAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
+    
+    /// Exposes the CSV export of all audit events.
+    static var exportCSV: String {
+        DashboardAudit.exportCSV()
+    }
+    
+    /// Exposes the most frequent operation in audit logs.
+    static var mostFrequentOperation: String? {
+        DashboardAudit.mostFrequentOperation
+    }
+    
+    /// Exposes the average revenue across audit logs.
+    static var averageRevenue: Double {
+        DashboardAudit.averageRevenue
+    }
+    
+    /// Exposes the total number of audit events recorded.
+    static var totalAuditEvents: Int {
+        DashboardAudit.totalAuditEvents
+    }
 
     // MARK: - Diagnostics
 
@@ -227,10 +303,60 @@ class DashboardViewModel: ObservableObject {
     }
 }
 
-// MARK: - SwiftUI Preview
+// MARK: - SwiftUI Preview and Debug Overlay
 
 #if DEBUG
 import SwiftUI
+
+/// A SwiftUI overlay view for developers that shows recent audit events and analytics info.
+struct DashboardAuditOverlay: View {
+    @ObservedObject private var viewModel = DashboardViewModel()
+    
+    private var recentEvents: [String] {
+        DashboardAudit.log.suffix(3).map { $0.accessibilityLabel }.reversed()
+    }
+    
+    private var mostFrequentOp: String {
+        DashboardAudit.mostFrequentOperation ?? "N/A"
+    }
+    
+    private var avgRevenue: String {
+        String(format: "%.2f", DashboardAudit.averageRevenue)
+    }
+    
+    private var totalEvents: Int {
+        DashboardAudit.totalAuditEvents
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Dashboard Audit Overlay")
+                .font(.headline)
+            Divider()
+            Text("Recent Events:")
+                .font(.subheadline).bold()
+            ForEach(recentEvents, id: \.self) { event in
+                Text(event)
+                    .font(.caption2)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.5)
+            }
+            Divider()
+            Text("Most Frequent Operation: \(mostFrequentOp)")
+                .font(.caption)
+            Text("Average Revenue: $\(avgRevenue)")
+                .font(.caption)
+            Text("Total Audit Events: \(totalEvents)")
+                .font(.caption)
+        }
+        .padding(12)
+        .background(Color(.systemBackground).opacity(0.9))
+        .cornerRadius(8)
+        .shadow(radius: 4)
+        .frame(maxWidth: 350)
+        .padding()
+    }
+}
 
 struct DashboardViewModel_Previews: PreviewProvider {
     @StateObject static var viewModel = DashboardViewModel()
@@ -256,6 +382,9 @@ struct DashboardViewModel_Previews: PreviewProvider {
                 Text("Last Audit:").font(.caption.bold())
                 ScrollView { Text(lastJSON).font(.caption2).lineLimit(10) }
             }
+            
+            // Show the audit overlay in debug
+            DashboardAuditOverlay()
         }
         .padding()
         .task {

@@ -4,9 +4,58 @@
 //
 //  Enhanced: Audit, BI, tokenization, accessibility, analytics, export, escalation, and compliance.
 //
+
 import Foundation
 import SwiftData
 import SwiftUI
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a Task audit event.
+@Model public struct TaskAuditEntry: Identifiable {
+    @Attribute(.unique) public var id: UUID
+    public var timestamp: Date
+    public var entry: String
+    public var user: String?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), entry: String, user: String? = nil) {
+        self.id = id
+        self.timestamp = timestamp
+        self.entry = entry
+        self.user = user
+    }
+}
+
+/// Manages concurrency-safe audit logging for Task events.
+public actor TaskAuditManager {
+    private var buffer: [TaskAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = TaskAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: TaskAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [TaskAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8)
+        else { return "[]" }
+        return json
+    }
+}
 
 @available(iOS 18.0, *)
 @Model
@@ -31,16 +80,24 @@ final class Task: Identifiable, ObservableObject {
     // MARK: - Audit
     var createdBy: String?
     var lastModifiedBy: String?
-    var auditLog: [String] = []
 
     // MARK: - Tokenized Badges (Business Segmentation/Analytics)
     enum TaskBadge: String, CaseIterable, Codable {
         case urgent, overdue, recurring, compliance, automation, client, escalation
     }
     var badgeTokens: [String] = []
+    @Attribute(.transient)
     var badges: [TaskBadge] { badgeTokens.compactMap { TaskBadge(rawValue: $0) } }
-    func addBadge(_ badge: TaskBadge) { if !badgeTokens.contains(badge.rawValue) { badgeTokens.append(badge.rawValue) } }
-    func removeBadge(_ badge: TaskBadge) { badgeTokens.removeAll { $0 == badge.rawValue } }
+    public func addBadge(_ badge: TaskBadge, by user: String? = nil) async {
+        if !badgeTokens.contains(badge.rawValue) {
+            badgeTokens.append(badge.rawValue)
+            await addAudit("Badge \(badge.rawValue) added", by: user)
+        }
+    }
+    public func removeBadge(_ badge: TaskBadge, by user: String? = nil) async {
+        badgeTokens.removeAll { $0 == badge.rawValue }
+        await addAudit("Badge \(badge.rawValue) removed", by: user)
+    }
     func hasBadge(_ badge: TaskBadge) -> Bool { badgeTokens.contains(badge.rawValue) }
 
     // MARK: - Relationships
@@ -103,33 +160,49 @@ final class Task: Identifiable, ObservableObject {
         self.assignedTo = assignedTo
     }
 
-    // MARK: - Audit Helpers
+    // MARK: - Audit Methods
 
-    func addAudit(_ entry: String, by user: String? = nil) {
-        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
-        auditLog.append("[\(stamp)] \(entry)\(user != nil ? " (\(user!))" : "")")
+    /// Asynchronously logs an audit entry for Task.
+    public func addAudit(_ entry: String, by user: String? = nil) async {
+        let localized = NSLocalizedString(entry, comment: "Task audit log entry")
+        let auditEntry = TaskAuditEntry(entry: localized, user: user)
+        await TaskAuditManager.shared.add(auditEntry)
         lastModified = Date()
         if let user { lastModifiedBy = user }
     }
-    func recentAudit(_ count: Int = 3) -> [String] { Array(auditLog.suffix(count)) }
+
+    /// Fetches recent audit entries asynchronously.
+    public func recentAuditEntries(limit: Int = 3) async -> [TaskAuditEntry] {
+        await TaskAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Exports the audit log as JSON asynchronously.
+    public func exportAuditLogJSON() async -> String {
+        await TaskAuditManager.shared.exportJSON()
+    }
 
     // MARK: - Business Intelligence / Analytics
 
+    @Attribute(.transient)
     var isOverdue: Bool {
         guard let dueDate else { return false }
         return !completed && dueDate < Date()
     }
+    @Attribute(.transient)
     var daysOpen: Int? {
         Calendar.current.dateComponents([.day], from: createdAt, to: completedAt ?? Date()).day
     }
+    @Attribute(.transient)
     var daysUntilDue: Int? {
         guard let dueDate else { return nil }
         return Calendar.current.dateComponents([.day], from: Date(), to: dueDate).day
     }
+    @Attribute(.transient)
     var isDueSoon: Bool {
         guard let days = daysUntilDue else { return false }
         return !completed && days >= 0 && days <= 2
     }
+    @Attribute(.transient)
     var escalationScore: Int {
         var score = priority.criticalityScore
         if isOverdue { score += 2 }
@@ -138,6 +211,7 @@ final class Task: Identifiable, ObservableObject {
         return score
     }
     /// Returns the next recurrence date for recurring tasks.
+    @Attribute(.transient)
     var nextRecurrence: Date? {
         guard isRecurring, let rule = recurrenceRule, let last = completedAt ?? createdAt else { return nil }
         switch rule {
@@ -182,6 +256,7 @@ final class Task: Identifiable, ObservableObject {
 
     // MARK: - Accessibility
 
+    @Attribute(.transient)
     var accessibilityLabel: String {
         "\(title). \(priority.displayName) priority. \(completed ? "Completed." : (isOverdue ? "Overdue." : ""))"
     }

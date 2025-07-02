@@ -1,13 +1,128 @@
 import SwiftUI
 
+// MARK: - Audit Context (set at login/session)
+public struct ListLoadingAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "ListLoadingPlaceholder"
+}
+
+/**
+ `ListLoadingPlaceholder` is a highly extensible and robust SwiftUI view designed to serve as a shimmering skeleton placeholder in lists while data is loading.  
+ 
+ ### Architecture
+ - Modular design with clear separation of concerns.
+ - Uses design tokens with fallback for consistent styling.
+ - Incorporates a custom shimmer animation via a view modifier.
+ 
+ ### Extensibility
+ - Configurable number of rows, avatar display, and line counts.
+ - Analytics logging is injectable via a protocol, supporting custom implementations.
+ - Designed for easy preview and testing with injectable analytics loggers.
+ 
+ ### Analytics / Audit / Trust Center Hooks
+ - Async/await-ready analytics logger protocol for concurrency and future-proofing.
+ - Built-in `testMode` flag for console-only logging during QA, tests, and previews.
+ - Public API to fetch the last 20 logged audit events for diagnostics or admin UI.
+ 
+ ### Diagnostics
+ - Logs key lifecycle events asynchronously with audit context.
+ - Stores recent audit events in-memory for inspection.
+ 
+ ### Localization & Compliance
+ - All user-facing strings and log event identifiers are localized via `NSLocalizedString` with explicit keys and comments.
+ - Accessibility labels and traits fully localized and compliant.
+ 
+ ### Accessibility
+ - Accessibility elements are clearly labeled and hidden where appropriate.
+ - Uses `.accessibilityElement(children: .ignore)` with descriptive labels for screen readers.
+ 
+ ### Preview / Testability
+ - Provides a `NullListLoadingAnalyticsLogger` for silent logging.
+ - Includes a preview logger that prints to console in test mode.
+ - Supports easy injection of analytics loggers for testing or preview purposes.
+ */
+ 
 // MARK: - Analytics/Audit Logger Protocol
 
+/// Protocol defining an async analytics logger for the `ListLoadingPlaceholder` with audit context.
 public protocol ListLoadingAnalyticsLogger {
-    func log(event: String, rows: Int, avatar: Bool, lineCount: Int)
+    /// Indicates whether the logger is in test mode, where logging is console-only.
+    var testMode: Bool { get }
+
+    /**
+     Logs an analytics event asynchronously with details about the loading placeholder state and audit context.
+     
+     - Parameters:
+       - event: The event identifier string.
+       - rows: Number of placeholder rows displayed.
+       - avatar: Whether avatar placeholders are shown.
+       - lineCount: Number of text lines per row.
+       - role: Optional user role from audit context.
+       - staffID: Optional staff identifier from audit context.
+       - context: Optional context string from audit context.
+       - escalate: Flag indicating if event should be escalated for audit purposes.
+     */
+    func log(event: String, rows: Int, avatar: Bool, lineCount: Int, role: String?, staffID: String?, context: String?, escalate: Bool) async
+
+    /// Public API to fetch the last 20 audit events for diagnostics or admin UI.
+    func fetchRecentEvents() -> [ListLoadingAuditEvent]
 }
+
+/// Represents a logged audit event with full context for diagnostics and compliance.
+public struct ListLoadingAuditEvent: Identifiable {
+    public let id = UUID()
+    public let event: String
+    public let rows: Int
+    public let avatar: Bool
+    public let lineCount: Int
+    public let role: String?
+    public let staffID: String?
+    public let context: String?
+    public let escalate: Bool
+    public let timestamp: Date
+}
+
+/// A no-op analytics logger that performs no logging.
 public struct NullListLoadingAnalyticsLogger: ListLoadingAnalyticsLogger {
+    public let testMode: Bool = false
     public init() {}
-    public func log(event: String, rows: Int, avatar: Bool, lineCount: Int) {}
+    public func log(event: String, rows: Int, avatar: Bool, lineCount: Int, role: String?, staffID: String?, context: String?, escalate: Bool) async {}
+    public func fetchRecentEvents() -> [ListLoadingAuditEvent] { [] }
+}
+
+/// A simple analytics logger for QA/tests/previews that logs to console when in test mode, with audit context.
+public class ConsoleListLoadingAnalyticsLogger: ListLoadingAnalyticsLogger {
+    public let testMode: Bool
+    private(set) var recentEvents: [ListLoadingAuditEvent] = []
+    private let maxStoredEvents = 20
+    
+    public init(testMode: Bool = true) {
+        self.testMode = testMode
+    }
+    
+    /**
+     Logs an analytics event asynchronously with audit context.
+     Stores the event internally and optionally prints to console if in test mode.
+     */
+    public func log(event: String, rows: Int, avatar: Bool, lineCount: Int, role: String?, staffID: String?, context: String?, escalate: Bool) async {
+        let newEvent = ListLoadingAuditEvent(event: event, rows: rows, avatar: avatar, lineCount: lineCount, role: role, staffID: staffID, context: context, escalate: escalate, timestamp: Date())
+        DispatchQueue.main.async {
+            self.recentEvents.append(newEvent)
+            if self.recentEvents.count > self.maxStoredEvents {
+                self.recentEvents.removeFirst(self.recentEvents.count - self.maxStoredEvents)
+            }
+            if self.testMode {
+                let localizedEvent = NSLocalizedString(event, comment: "Analytics event identifier")
+                print("ListLoadingAnalytics: \(localizedEvent) rows:\(rows) avatar:\(avatar) lines:\(lineCount) role:\(role ?? "nil") staffID:\(staffID ?? "nil") context:\(context ?? "nil") escalate:\(escalate)")
+            }
+        }
+    }
+    
+    /// Public API to fetch the last 20 audit events for diagnostics or admin UI.
+    public func fetchRecentEvents() -> [ListLoadingAuditEvent] {
+        return recentEvents
+    }
 }
 
 /// A shimmering skeleton placeholder used in lists while data is loading.
@@ -47,8 +162,10 @@ struct ListLoadingPlaceholder: View {
         static let avatarBg: Color = AppColors.skeletonAvatarBg ?? .gray.opacity(0.18)
         static let bg: Color = AppColors.skeletonBackground ?? Color(.systemGroupedBackground)
         static let accessibilityLoading: String = NSLocalizedString("Loading...", comment: "Accessibility label for list loading placeholder")
+        static let eventAppear: String = NSLocalizedString("loading_placeholder_appear", comment: "Analytics event for list loading placeholder appearance")
     }
 
+    /// The body view displaying the loading placeholder rows.
     var body: some View {
         VStack(spacing: Tokens.spacingRow) {
             ForEach(0..<rows, id: \.self) { _ in
@@ -87,14 +204,16 @@ struct ListLoadingPlaceholder: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(Tokens.accessibilityLoading))
         .accessibilityAddTraits(.isStaticText)
-        .onAppear {
-            analyticsLogger.log(event: "loading_placeholder_appear", rows: rows, avatar: avatar, lineCount: lineCount)
+        .task {
+            let escalateFlag = rows > 10 || (!avatar && lineCount > 2)
+            await analyticsLogger.log(event: Tokens.eventAppear, rows: rows, avatar: avatar, lineCount: lineCount, role: ListLoadingAuditContext.role, staffID: ListLoadingAuditContext.staffID, context: ListLoadingAuditContext.context, escalate: escalateFlag)
         }
     }
 }
 
 // MARK: - Shimmer Modifier
 
+/// A view modifier that applies a shimmering animation to indicate loading state.
 private struct Shimmer: ViewModifier {
     @State private var phase: CGFloat = 0
 
@@ -133,10 +252,14 @@ extension View {
 
 #if DEBUG
 struct ListLoadingPlaceholder_Previews: PreviewProvider {
+    /// A spy logger that prints audit events to console for previews with full audit context.
     struct SpyLogger: ListLoadingAnalyticsLogger {
-        func log(event: String, rows: Int, avatar: Bool, lineCount: Int) {
-            print("ListLoadingAnalytics: \(event) rows:\(rows) avatar:\(avatar) lines:\(lineCount)")
+        let testMode: Bool = true
+        func log(event: String, rows: Int, avatar: Bool, lineCount: Int, role: String?, staffID: String?, context: String?, escalate: Bool) async {
+            let localizedEvent = NSLocalizedString(event, comment: "Analytics event identifier")
+            print("ListLoadingAnalytics: \(localizedEvent) rows:\(rows) avatar:\(avatar) lines:\(lineCount) role:\(role ?? "nil") staffID:\(staffID ?? "nil") context:\(context ?? "nil") escalate:\(escalate)")
         }
+        func fetchRecentEvents() -> [ListLoadingAuditEvent] { [] }
     }
     static var previews: some View {
         ScrollView {

@@ -2,39 +2,71 @@
 //  AppState.swift
 //  Furfolio
 //
-//  Enhanced: analytics/audit-ready, token-compliant, brand/white-label, extensible, preview/testable, accessible.
+//  Updated: 2025-06-30 – Enterprise role/staff/context audit, escalation, trust center/BI ready, fully modular.
 //
 
 import Foundation
 import SwiftUI
 import Combine
 
-// MARK: - Analytics/Audit Protocol
+// MARK: - Analytics/Audit Protocol (Role/Staff/Context/Audit-Escalation)
 
 public protocol AppStateAnalyticsLogger {
-    func log(event: String, info: String?, state: AppState)
+    var testMode: Bool { get set }
+    func log(event: String, info: String?, role: String?, staffID: String?, context: String?, state: AppState) async
+    func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?, state: AppState) async
 }
+
+/// A no-op analytics logger for default/testing.
 public struct NullAppStateAnalyticsLogger: AppStateAnalyticsLogger {
+    public var testMode: Bool = false
     public init() {}
-    public func log(event: String, info: String?, state: AppState) {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?, state: AppState) async {}
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?, state: AppState) async {}
+}
+
+/// A simple console logger for QA/testing.
+public class ConsoleAppStateAnalyticsLogger: AppStateAnalyticsLogger {
+    public var testMode: Bool = true
+    public init() {}
+    public func log(event: String, info: String?, role: String?, staffID: String?, context: String?, state: AppState) async {
+        print("[AppState][LOG] \(event) | Info: \(info ?? "nil") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]")
+    }
+    public func escalate(event: String, info: String?, role: String?, staffID: String?, context: String?, state: AppState) async {
+        print("[AppState][ESCALATE] \(event) | Info: \(info ?? "nil") [role:\(role ?? "-")] [staff:\(staffID ?? "-")] [ctx:\(context ?? "-")]")
+    }
 }
 
 // MARK: - AppState (Global App State, Roles, Trust Center, Navigation, Feature Flags)
 
 @MainActor
 final class AppState: ObservableObject {
-    // Inject analytics logger (can be swapped for QA, Trust Center, admin, or BI dashboard)
+    // MARK: - Audit Context
+
+    /// Shared analytics logger instance. Can be swapped for admin/QA/BI/trust center.
     static var analyticsLogger: AppStateAnalyticsLogger = NullAppStateAnalyticsLogger()
+    /// Flag to suppress real analytics logging and only log to console (QA/testing/previews).
+    @Published var testMode: Bool = false
+    /// Current business/user/staff context for audit/event logs (set after login or by session).
+    @Published var currentRole: UserRole = .owner
+    @Published var currentStaffID: String? = nil
+    @Published var businessContext: String? = "AppState"
+    /// Last 20 analytics events for admin/diagnostics.
+    public private(set) var recentAnalyticsEvents: [(event: String, info: String?, role: String?, staffID: String?, context: String?)] = []
 
     // MARK: - Multi-User & Roles
 
     enum UserRole: String, CaseIterable, CustomStringConvertible {
-        case owner, assistant
-        var description: String { rawValue.capitalized }
+        case owner, assistant, admin, groomer, staff, guest
+        public var description: String { rawValue.capitalized }
     }
-    @Published var currentUserRole: UserRole = .owner {
+
+    // (Published) user role is now here, for role-aware logs.
+    @Published var userRole: UserRole = .owner {
         didSet {
-            Self.analyticsLogger.log(event: "role_switched", info: currentUserRole.description, state: self)
+            Task {
+                await logEvent("role_switched", info: userRole.description)
+            }
         }
     }
 
@@ -42,7 +74,9 @@ final class AppState: ObservableObject {
 
     @Published var isOnboardingComplete: Bool = false {
         didSet {
-            Self.analyticsLogger.log(event: "onboarding_complete", info: isOnboardingComplete ? "complete" : "not complete", state: self)
+            Task {
+                await logEvent("onboarding_complete", info: isOnboardingComplete ? "complete" : "not complete")
+            }
         }
     }
     @Published var showOnboarding: Bool = false
@@ -52,7 +86,9 @@ final class AppState: ObservableObject {
 
     @Published var isAuthenticated: Bool = true {
         didSet {
-            Self.analyticsLogger.log(event: "auth_state_changed", info: isAuthenticated ? "authenticated" : "unauthenticated", state: self)
+            Task {
+                await logEvent("auth_state_changed", info: isAuthenticated ? "authenticated" : "unauthenticated")
+            }
         }
     }
 
@@ -63,7 +99,9 @@ final class AppState: ObservableObject {
     @Published var lastError: AppError? = nil {
         didSet {
             if let err = lastError {
-                Self.analyticsLogger.log(event: "error_occurred", info: err.localizedDescription, state: self)
+                Task {
+                    await logEvent("error_occurred", info: err.localizedDescription, escalate: err.shouldEscalate)
+                }
             }
         }
     }
@@ -72,12 +110,16 @@ final class AppState: ObservableObject {
 
     @Published var ownerName: String = "" {
         didSet {
-            Self.analyticsLogger.log(event: "owner_name_changed", info: ownerName, state: self)
+            Task {
+                await logEvent("owner_name_changed", info: ownerName)
+            }
         }
     }
-    @Published var businessName: String = "Furfolio Grooming" {
+    @Published var businessName: String = NSLocalizedString("Furfolio Grooming", comment: "Default business name") {
         didSet {
-            Self.analyticsLogger.log(event: "business_name_changed", info: businessName, state: self)
+            Task {
+                await logEvent("business_name_changed", info: businessName)
+            }
         }
     }
     @Published var businessSettings: [String: Any] = [:]
@@ -87,7 +129,9 @@ final class AppState: ObservableObject {
     @Published var deepLink: URL? = nil {
         didSet {
             if let url = deepLink {
-                Self.analyticsLogger.log(event: "deep_link_navigated", info: url.absoluteString, state: self)
+                Task {
+                    await logEvent("deep_link_navigated", info: url.absoluteString)
+                }
             }
         }
     }
@@ -100,12 +144,16 @@ final class AppState: ObservableObject {
 
     @Published var isDataEncrypted: Bool = false {
         didSet {
-            Self.analyticsLogger.log(event: "encryption_toggle", info: isDataEncrypted ? "enabled" : "disabled", state: self)
+            Task {
+                await logEvent("encryption_toggle", info: isDataEncrypted ? "enabled" : "disabled")
+            }
         }
     }
     @Published var auditLogEnabled: Bool = true {
         didSet {
-            Self.analyticsLogger.log(event: "audit_log_toggle", info: auditLogEnabled ? "enabled" : "disabled", state: self)
+            Task {
+                await logEvent("audit_log_toggle", info: auditLogEnabled ? "enabled" : "disabled")
+            }
         }
     }
 
@@ -113,38 +161,41 @@ final class AppState: ObservableObject {
 
     @Published var calendarAccessGranted: Bool = false {
         didSet {
-            Self.analyticsLogger.log(event: "calendar_access_changed", info: calendarAccessGranted ? "granted" : "denied", state: self)
+            Task {
+                await logEvent("calendar_access_changed", info: calendarAccessGranted ? "granted" : "denied")
+            }
         }
     }
 
     // MARK: - App Recovery/Export
 
     @Published var isPerformingBackup: Bool = false
-
     func triggerBackup() {
         isPerformingBackup = true
-        Self.analyticsLogger.log(event: "backup_triggered", info: nil, state: self)
-        // TODO: Call AppRecoveryManager.backup() and handle completion/errors.
-        // On complete:
-        // isPerformingBackup = false
+        Task {
+            await logEvent("backup_triggered", info: nil)
+        }
+        // TODO: Integrate AppRecoveryManager for actual backup.
     }
-
     func triggerRestore() {
-        Self.analyticsLogger.log(event: "restore_triggered", info: nil, state: self)
-        // TODO: Call AppRecoveryManager.restore() and handle completion/errors.
+        Task {
+            await logEvent("restore_triggered", info: nil)
+        }
+        // TODO: Integrate AppRecoveryManager for actual restore.
     }
 
     // MARK: - App Versioning & Feature Flags
 
     @Published var appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-
     @Published var featureFlags: [String: Bool] = [
         "enableTSP": false,
         "enableCrashReporting": false,
         "showExperimentalUI": false
     ] {
         didSet {
-            Self.analyticsLogger.log(event: "feature_flags_changed", info: featureFlags.description, state: self)
+            Task {
+                await logEvent("feature_flags_changed", info: featureFlags.description)
+            }
         }
     }
 
@@ -152,7 +203,9 @@ final class AppState: ObservableObject {
 
     @Published var debugMode: Bool = false {
         didSet {
-            Self.analyticsLogger.log(event: "debug_mode_toggle", info: debugMode ? "enabled" : "disabled", state: self)
+            Task {
+                await logEvent("debug_mode_toggle", info: debugMode ? "enabled" : "disabled")
+            }
         }
     }
 
@@ -161,7 +214,9 @@ final class AppState: ObservableObject {
     init() {
         loadPersistentState()
         loadFeatureFlags()
-        Self.analyticsLogger.log(event: "app_state_initialized", info: nil, state: self)
+        Task {
+            await logEvent("app_state_initialized", info: nil)
+        }
     }
 
     // MARK: - Persistence (Onboarding, Settings)
@@ -170,50 +225,81 @@ final class AppState: ObservableObject {
         isOnboardingComplete = true
         showOnboarding = false
         UserDefaults.standard.set(true, forKey: "isOnboardingComplete")
-        Self.analyticsLogger.log(event: "onboarding_completed", info: nil, state: self)
+        Task {
+            await logEvent("onboarding_completed", info: nil)
+        }
     }
-
     func loadPersistentState() {
         isOnboardingComplete = UserDefaults.standard.bool(forKey: "isOnboardingComplete")
         showOnboarding = !isOnboardingComplete
-        Self.analyticsLogger.log(event: "persistent_state_loaded", info: nil, state: self)
+        Task {
+            await logEvent("persistent_state_loaded", info: nil)
+        }
     }
 
     // MARK: - Feature Flags
 
     func loadFeatureFlags() {
-        // TODO: Load feature flags from remote config or local settings.
-        Self.analyticsLogger.log(event: "feature_flags_loaded", info: nil, state: self)
+        // TODO: Load from remote config or local settings.
+        Task {
+            await logEvent("feature_flags_loaded", info: nil)
+        }
     }
 
-    // MARK: - Alert Helper
+    // MARK: - Alert Helpers
 
     func presentError(_ error: AppError) {
         lastError = error
         alertMessage = error.errorDescription
         showAlert = true
-        Self.analyticsLogger.log(event: "error_presented", info: error.localizedDescription, state: self)
+        Task {
+            await logEvent("error_presented", info: error.localizedDescription, escalate: error.shouldEscalate)
+        }
     }
-
     func presentAlert(_ message: String) {
         alertMessage = message
         showAlert = true
-        Self.analyticsLogger.log(event: "alert_presented", info: message, state: self)
+        Task {
+            await logEvent("alert_presented", info: message)
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    /// Logs an analytics event asynchronously, with audit context and escalation if needed.
+    private func logEvent(_ event: String, info: String?, escalate: Bool = false) async {
+        let roleString = self.userRole.rawValue
+        let staffID = self.currentStaffID
+        let ctx = self.businessContext
+        // Update recent events (with context)
+        DispatchQueue.main.async {
+            self.recentAnalyticsEvents.append((event: event, info: info, role: roleString, staffID: staffID, context: ctx))
+            if self.recentAnalyticsEvents.count > 20 {
+                self.recentAnalyticsEvents.removeFirst()
+            }
+        }
+        // Test/console-only mode
+        if testMode || Self.analyticsLogger.testMode {
+            print("[AppState][Event]: \(event) | Info: \(info ?? "No additional info") [role:\(roleString)] [staff:\(staffID ?? "-")] [ctx:\(ctx ?? "-")]")
+        } else if escalate {
+            await Self.analyticsLogger.escalate(event: event, info: info, role: roleString, staffID: staffID, context: ctx, state: self)
+        } else {
+            await Self.analyticsLogger.log(event: event, info: info, role: roleString, staffID: staffID, context: ctx, state: self)
+        }
     }
 }
 
 // MARK: - Preview Helper
 
 extension AppState {
-    /// Provides a preview instance of AppState for SwiftUI previews, UI prototyping, and testing.
-    /// This enables developers to see the app UI in various states without running the full app.
     static var preview: AppState {
         let state = AppState()
+        state.testMode = true
         state.isOnboardingComplete = false
         state.showOnboarding = true
         state.ownerName = "Taylor"
         state.businessName = "Preview Grooming"
-        state.currentUserRole = .assistant
+        state.userRole = .assistant
         state.isDataEncrypted = true
         state.auditLogEnabled = true
         state.featureFlags = [

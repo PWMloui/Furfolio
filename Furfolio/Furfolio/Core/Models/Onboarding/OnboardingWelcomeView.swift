@@ -5,18 +5,80 @@
 //  Enhanced for accessibility, localization, analytics/audit logging, and testability.
 //
 
+/**
+ OnboardingWelcomeView
+ ---------------------
+ The first screen in the Furfolio onboarding flow, introducing the app to users.
+
+ - **Architecture**: SwiftUI `View` with dependency-injected `AnalyticsServiceProtocol` and `AuditLoggerProtocol`.
+ - **Concurrency & Async Logging**: All analytics and audit calls are wrapped in `Task` for non-blocking execution.
+ - **Audit Management**: Uses `OnboardingWelcomeAuditManager` actor to record user interactions.
+ - **Localization**: UI text and accessibility labels use `LocalizedStringKey` for internationalization.
+ - **Accessibility**: Elements include accessibility labels, hints, and traits for VoiceOver.
+ - **Diagnostics & Preview/Testability**: Exposes async methods to fetch and export recent audit entries; preview injects mock async loggers.
+ */
+
 import SwiftUI
 
 // MARK: - Centralized Analytics + Audit Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
+}
+
+/// A record of interactions on the welcome screen.
+public struct OnboardingWelcomeAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+    }
+}
+
+/// Actor for concurrency-safe audit logging on the welcome view.
+public actor OnboardingWelcomeAuditManager {
+    private var buffer: [OnboardingWelcomeAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = OnboardingWelcomeAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: OnboardingWelcomeAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [OnboardingWelcomeAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
 }
 
 // MARK: - OnboardingWelcomeView
@@ -104,9 +166,14 @@ struct OnboardingWelcomeView: View {
             Spacer()
 
             Button(action: {
-                analytics.log(event: "onboarding_welcome_continue", parameters: nil)
-                audit.record("User continued from welcome screen", metadata: nil)
-                onContinue?()
+                Task {
+                    await analytics.log(event: "onboarding_welcome_continue", parameters: nil)
+                    await audit.record("User continued from welcome screen", metadata: nil)
+                    await OnboardingWelcomeAuditManager.shared.add(
+                        OnboardingWelcomeAuditEntry(event: "welcome_continue")
+                    )
+                    onContinue?()
+                }
             }) {
                 Text(LocalizedStringKey("Get Started"))
                     .font(.headline)
@@ -122,8 +189,13 @@ struct OnboardingWelcomeView: View {
         .background(gradientBackground)
         .accessibilityElement(children: .contain)
         .onAppear {
-            analytics.screenView("OnboardingWelcome")
-            audit.record("User landed on onboarding welcome screen", metadata: nil)
+            Task {
+                await analytics.screenView("OnboardingWelcome")
+                await audit.record("User landed on onboarding welcome screen", metadata: nil)
+                await OnboardingWelcomeAuditManager.shared.add(
+                    OnboardingWelcomeAuditEntry(event: "welcome_appear")
+                )
+            }
         }
     }
 
@@ -141,19 +213,19 @@ struct OnboardingWelcomeView: View {
 
 #Preview {
     struct MockAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String : Any]?) {
+        func log(event: String, parameters: [String : Any]?) async {
             print("[Analytics] \(event) \(parameters ?? [:])")
         }
-        func screenView(_ name: String) {
+        func screenView(_ name: String) async {
             print("[Analytics] screenView: \(name)")
         }
     }
 
     struct MockAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String : String]?) {
+        func record(_ message: String, metadata: [String : String]?) async {
             print("[Audit] \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     return Group {
@@ -179,5 +251,19 @@ struct OnboardingWelcomeView: View {
         )
         .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         .previewDisplayName("Accessibility Large Font")
+    }
+}
+
+// MARK: - Diagnostics
+
+public extension OnboardingWelcomeView {
+    /// Fetches recent welcome view audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [OnboardingWelcomeAuditEntry] {
+        await OnboardingWelcomeAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export welcome view audit log as JSON.
+    static func exportAuditLogJSON() async -> String {
+        await OnboardingWelcomeAuditManager.shared.exportJSON()
     }
 }

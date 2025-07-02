@@ -5,8 +5,94 @@
 //  Merged 2025: Unified, Auditable, Tokenized Login UI with Biometric Support
 //
 
+
 import SwiftUI
 import LocalAuthentication
+
+// MARK: - Analytics & Audit Protocols
+
+public protocol LoginAnalyticsLogger {
+    /// Log a login event asynchronously.
+    func log(event: String, email: String?, role: String?, rememberMe: Bool?, tags: [String]) async
+}
+
+public protocol LoginAuditLogger {
+    /// Record a login audit entry asynchronously.
+    func record(event: String, email: String?, role: String?, rememberMe: Bool?, tags: [String], detail: String?) async
+}
+
+public struct NullLoginAnalyticsLogger: LoginAnalyticsLogger {
+    public init() {}
+    public func log(event: String, email: String?, role: String?, rememberMe: Bool?, tags: [String]) async {}
+}
+
+public struct NullLoginAuditLogger: LoginAuditLogger {
+    public init() {}
+    public func record(event: String, email: String?, role: String?, rememberMe: Bool?, tags: [String], detail: String?) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a login flow audit event.
+public struct LoginAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let email: String?
+    public let role: String?
+    public let rememberMe: Bool?
+    public let tags: [String]
+    public let detail: String?
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        event: String,
+        email: String? = nil,
+        role: String? = nil,
+        rememberMe: Bool? = nil,
+        tags: [String] = [],
+        detail: String? = nil
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.email = email
+        self.role = role
+        self.rememberMe = rememberMe
+        self.tags = tags
+        self.detail = detail
+    }
+}
+
+/// Concurrency-safe actor for logging login events.
+public actor LoginAuditManager {
+    private var buffer: [LoginAuditEntry] = []
+    private let maxEntries = 1000
+    public static let shared = LoginAuditManager()
+
+    public func add(_ entry: LoginAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    public func recent(limit: Int = 20) -> [LoginAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - Roles
 
@@ -22,40 +108,6 @@ class LoginViewModel: ObservableObject {
     // Future implementation: bind to auth service
 }
 
-// MARK: - Audit Event
-
-fileprivate struct LoginAuditEvent: Codable {
-    let timestamp: Date
-    let operation: String
-    let email: String?
-    let role: String?
-    let rememberMe: Bool?
-    let tags: [String]
-    let actor: String?
-    let context: String?
-    let detail: String?
-
-    var accessibilityLabel: String {
-        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
-        let roleStr = role ?? ""
-        let remember = rememberMe == nil ? "" : (rememberMe! ? "Remembered" : "Not remembered")
-        return "[\(operation.capitalized)] \(email ?? "") \(roleStr) \(remember) at \(dateStr)"
-    }
-}
-
-fileprivate final class LoginAudit {
-    static private(set) var log: [LoginAuditEvent] = []
-
-    static func record(operation: String, email: String? = nil, role: String? = nil, rememberMe: Bool? = nil, tags: [String] = [], actor: String? = "user", context: String? = nil, detail: String? = nil) {
-        let event = LoginAuditEvent(timestamp: Date(), operation: operation, email: email, role: role, rememberMe: rememberMe, tags: tags, actor: actor, context: context, detail: detail)
-        log.append(event)
-        if log.count > 1000 { log.removeFirst() }
-    }
-
-    static var lastSummary: String {
-        log.last?.accessibilityLabel ?? "No login events recorded."
-    }
-}
 
 // MARK: - Login View
 
@@ -72,6 +124,20 @@ struct LoginView: View {
     enum Field { case email, password }
     @StateObject var viewModel = LoginViewModel()
     var onLoginSuccess: (() -> Void)?
+
+    // Analytics & Audit
+    let analytics: LoginAnalyticsLogger
+    let audit: LoginAuditLogger
+
+    public init(
+        analytics: LoginAnalyticsLogger = NullLoginAnalyticsLogger(),
+        audit: LoginAuditLogger = NullLoginAuditLogger(),
+        onLoginSuccess: (() -> Void)? = nil
+    ) {
+        self.analytics = analytics
+        self.audit = audit
+        self.onLoginSuccess = onLoginSuccess
+    }
 
     var body: some View {
         NavigationView {
@@ -122,12 +188,24 @@ struct LoginView: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: selectedRole) {
-                        LoginAudit.record(operation: "roleChange", email: email, role: $0.rawValue, rememberMe: rememberMe, tags: ["role"], context: "LoginView")
+                        Task {
+                            await analytics.log(event: "roleChange", email: email, role: $0.rawValue, rememberMe: rememberMe, tags: ["role"])
+                            await audit.record(event: "roleChange", email: email, role: $0.rawValue, rememberMe: rememberMe, tags: ["role"], detail: nil)
+                            await LoginAuditManager.shared.add(
+                                LoginAuditEntry(event: "roleChange", email: email, role: $0.rawValue, rememberMe: rememberMe, tags: ["role"])
+                            )
+                        }
                     }
 
                     Toggle("Remember Me", isOn: $rememberMe)
                         .onChange(of: rememberMe) {
-                            LoginAudit.record(operation: "rememberToggle", email: email, role: selectedRole.rawValue, rememberMe: $0, tags: ["rememberMe"], context: "LoginView")
+                            Task {
+                                await analytics.log(event: "rememberToggle", email: email, role: selectedRole.rawValue, rememberMe: $0, tags: ["rememberMe"])
+                                await audit.record(event: "rememberToggle", email: email, role: selectedRole.rawValue, rememberMe: $0, tags: ["rememberMe"], detail: nil)
+                                await LoginAuditManager.shared.add(
+                                    LoginAuditEntry(event: "rememberToggle", email: email, role: selectedRole.rawValue, rememberMe: $0, tags: ["rememberMe"])
+                                )
+                            }
                         }
 
                     if biometricEnabled {
@@ -157,7 +235,13 @@ struct LoginView: View {
                 .disabled(isLoggingIn || !isValid)
 
                 Button("Forgot Password?") {
-                    LoginAudit.record(operation: "forgotPassword", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["forgot"], context: "LoginView")
+                    Task {
+                        await analytics.log(event: "forgotPassword", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["forgot"])
+                        await audit.record(event: "forgotPassword", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["forgot"], detail: nil)
+                        await LoginAuditManager.shared.add(
+                            LoginAuditEntry(event: "forgotPassword", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["forgot"])
+                        )
+                    }
                 }
                 .font(AppFonts.footnote)
 
@@ -165,11 +249,23 @@ struct LoginView: View {
 
                 HStack {
                     Button("App Info") {
-                        LoginAudit.record(operation: "openAppInfo", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["info"], context: "LoginView")
+                        Task {
+                            await analytics.log(event: "openAppInfo", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["info"])
+                            await audit.record(event: "openAppInfo", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["info"], detail: nil)
+                            await LoginAuditManager.shared.add(
+                                LoginAuditEntry(event: "openAppInfo", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["info"])
+                            )
+                        }
                     }
                     Spacer()
                     Button("Privacy") {
-                        LoginAudit.record(operation: "openPrivacy", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["privacy"], context: "LoginView")
+                        Task {
+                            await analytics.log(event: "openPrivacy", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["privacy"])
+                            await audit.record(event: "openPrivacy", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["privacy"], detail: nil)
+                            await LoginAuditManager.shared.add(
+                                LoginAuditEntry(event: "openPrivacy", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["privacy"])
+                            )
+                        }
                     }
                 }
                 .font(AppFonts.footnote)
@@ -192,21 +288,45 @@ struct LoginView: View {
         loginError = nil
         guard isValid else {
             loginError = "Enter a valid email and password."
-            LoginAudit.record(operation: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["failure", "invalid"], context: "LoginView", detail: loginError)
+            Task {
+                await analytics.log(event: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["failure", "invalid"])
+                await audit.record(event: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["failure", "invalid"], detail: loginError)
+                await LoginAuditManager.shared.add(
+                    LoginAuditEntry(event: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["failure", "invalid"], detail: loginError)
+                )
+            }
             return
         }
 
         isLoggingIn = true
-        LoginAudit.record(operation: "loginAttempt", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["login"], context: "LoginView")
+        Task {
+            await analytics.log(event: "loginAttempt", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["login"])
+            await audit.record(event: "loginAttempt", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["login"], detail: nil)
+            await LoginAuditManager.shared.add(
+                LoginAuditEntry(event: "loginAttempt", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["login"])
+            )
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             isLoggingIn = false
             if email.lowercased() == "owner@furfolio.com" && password == "demo" {
-                LoginAudit.record(operation: "loginSuccess", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["success"], context: "LoginView")
+                Task {
+                    await analytics.log(event: "loginSuccess", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["success"])
+                    await audit.record(event: "loginSuccess", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["success"], detail: nil)
+                    await LoginAuditManager.shared.add(
+                        LoginAuditEntry(event: "loginSuccess", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["success"])
+                    )
+                }
                 onLoginSuccess?()
             } else {
                 loginError = "Incorrect email or password."
-                LoginAudit.record(operation: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["authFailed"], context: "LoginView", detail: loginError)
+                Task {
+                    await analytics.log(event: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["authFailed"])
+                    await audit.record(event: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["authFailed"], detail: loginError)
+                    await LoginAuditManager.shared.add(
+                        LoginAuditEntry(event: "loginFailure", email: email, role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["authFailed"], detail: loginError)
+                    )
+                }
             }
         }
     }
@@ -224,11 +344,23 @@ struct LoginView: View {
         context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Login with Face ID") { success, error in
             DispatchQueue.main.async {
                 if success {
-                    LoginAudit.record(operation: "loginSuccess", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "success"], context: "LoginView")
+                    Task {
+                        await analytics.log(event: "loginSuccess", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "success"])
+                        await audit.record(event: "loginSuccess", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "success"], detail: nil)
+                        await LoginAuditManager.shared.add(
+                            LoginAuditEntry(event: "loginSuccess", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "success"])
+                        )
+                    }
                     onLoginSuccess?()
                 } else {
                     loginError = "Biometric login failed."
-                    LoginAudit.record(operation: "loginFailure", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "failure"], context: "LoginView", detail: loginError)
+                    Task {
+                        await analytics.log(event: "loginFailure", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "failure"])
+                        await audit.record(event: "loginFailure", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "failure"], detail: loginError)
+                        await LoginAuditManager.shared.add(
+                            LoginAuditEntry(event: "loginFailure", email: "(biometric)", role: selectedRole.rawValue, rememberMe: rememberMe, tags: ["biometric", "failure"], detail: loginError)
+                        )
+                    }
                 }
             }
         }

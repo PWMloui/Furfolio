@@ -8,6 +8,44 @@
 
 import Foundation
 
+// MARK: - Audit Context (set at login/session)
+public struct MarketingAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "MarketingEngine"
+}
+
+// MARK: - Analytics Logger Protocol & Null Logger
+
+public protocol MarketingAnalyticsLogger {
+    var testMode: Bool { get }
+    func logEvent(
+        _ event: String,
+        parameters: [String: Any]?,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async
+}
+
+public struct NullMarketingAnalyticsLogger: MarketingAnalyticsLogger {
+    public let testMode: Bool
+    public init(testMode: Bool = true) { self.testMode = testMode }
+    public func logEvent(
+        _ event: String,
+        parameters: [String: Any]? = nil,
+        role: String? = nil,
+        staffID: String? = nil,
+        context: String? = nil,
+        escalate: Bool = false
+    ) async {
+        if testMode {
+            print("[NullMarketingAnalyticsLogger][TEST MODE] \(event) \(parameters ?? [:]) | role:\(role ?? "-") staffID:\(staffID ?? "-") context:\(context ?? "-") escalate:\(escalate)")
+        }
+    }
+}
+
 // MARK: - Campaign Model, Tags, and Analytics
 
 struct MarketingCampaign: Identifiable, Codable {
@@ -31,10 +69,19 @@ struct MarketingCampaign: Identifiable, Codable {
         badgeTokens.removeAll { $0 == badge.rawValue }
     }
     var accessibilityLabel: String {
-        "\(name). \(subject). \(badges.map { $0.rawValue.capitalized }.joined(separator: \", \"))."
+        NSLocalizedString(
+            "%@. %@. %@.",
+            comment: "Accessibility label for marketing campaign with name, subject, and badges"
+        ).localizedFormat(
+            name,
+            subject,
+            badges.map { NSLocalizedString($0.rawValue.capitalized, comment: "Campaign badge") }.joined(separator: ", ")
+        )
     }
+    /// Exports the campaign as a pretty-printed JSON string.
     func exportJSON() -> String? {
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
         return try? encoder.encode(self).flatMap { String(data: $0, encoding: .utf8) }
     }
 }
@@ -59,15 +106,26 @@ enum ClientSegment: Hashable, Identifiable, Codable {
 
     var displayName: String {
         switch self {
-        case .allClients: "All Clients"
-        case .newClients: "New Clients"
-        case .atRiskClients: "At-Risk Clients"
-        case .inactiveClients: "Inactive Clients"
-        case .topSpenders(let count): "Top \(count) Spenders"
-        case .loyaltyStars: "Loyalty Stars"
-        case .ownersOfBreed(let breed): "Owners of \(breed)"
+        case .allClients: return NSLocalizedString("All Clients", comment: "Client segment display name")
+        case .newClients: return NSLocalizedString("New Clients", comment: "Client segment display name")
+        case .atRiskClients: return NSLocalizedString("At-Risk Clients", comment: "Client segment display name")
+        case .inactiveClients: return NSLocalizedString("Inactive Clients", comment: "Client segment display name")
+        case .topSpenders(let count): return String(format: NSLocalizedString("Top %d Spenders", comment: "Client segment display name with count"), count)
+        case .loyaltyStars: return NSLocalizedString("Loyalty Stars", comment: "Client segment display name")
+        case .ownersOfBreed(let breed): return String(format: NSLocalizedString("Owners of %@", comment: "Client segment display name with breed"), breed)
         }
     }
+}
+
+// MARK: - Analytics Logging Protocol (Legacy, will be replaced by new trust logger)
+
+/// Protocol defining async analytics logging capabilities.
+protocol AnalyticsLogging {
+    /// Logs an analytics event asynchronously.
+    /// - Parameters:
+    ///   - event: The event name.
+    ///   - parameters: Optional dictionary of event parameters.
+    func logEventAsync(_ event: String, parameters: [String: Any]?) async
 }
 
 // MARK: - Messaging Service Protocol
@@ -79,17 +137,30 @@ protocol MessagingService {
 // MARK: - Main Enhanced Engine
 
 @MainActor
-final class MarketingEngine: ObservableObject {
+final class MarketingEngine: ObservableObject, AnalyticsLogging {
     private let retentionAnalyzer: CustomerRetentionAnalyzer
     private let revenueAnalyzer: RevenueAnalyzer
     private let dataStore: DataStoreService
     private let messagingService: MessagingService
 
     // Audit and analytics
-    @Published var lastAuditLog: [String] = []
-    @Published var lastCampaignResult: CampaignResult?
+    @Published private(set) var lastAuditLog: [String] = []
+    @Published private(set) var lastCampaignResult: CampaignResult?
     @Published var isSending: Bool = false
 
+    /// Buffer to store last 1000 audit entries with thread-safe management.
+    private var auditBuffer: [String] = []
+    private let auditQueue = DispatchQueue(label: "com.furfolio.marketingengine.auditQueue", attributes: .concurrent)
+
+    /// --- Trust Center Audit Buffer ---
+    private var analyticsLogger: MarketingAnalyticsLogger = NullMarketingAnalyticsLogger()
+    private var auditEventBuffer: [(date: Date, event: String, parameters: [String: Any]?, role: String?, staffID: String?, context: String?, escalate: Bool)] = []
+    private let auditEventBufferLimit = 1000
+
+    /// Flag to enable test mode for QA and simulated analytics logging.
+    var testMode: Bool = false
+
+    /// Campaign result model with Codable conformance.
     struct CampaignResult: Codable {
         let campaignID: UUID
         let sentCount: Int
@@ -98,6 +169,13 @@ final class MarketingEngine: ObservableObject {
         let failedRecipients: [String]
         let sentAt: Date
         let segment: ClientSegment
+
+        /// Exports the campaign result as a pretty-printed JSON string.
+        func exportJSON() -> String? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            return try? encoder.encode(self).flatMap { String(data: $0, encoding: .utf8) }
+        }
     }
 
     init(
@@ -110,6 +188,38 @@ final class MarketingEngine: ObservableObject {
         self.revenueAnalyzer = revenueAnalyzer
         self.dataStore = dataStore
         self.messagingService = messagingService
+    }
+
+    // MARK: - Trust Center Audit Helper
+
+    private func logAuditEvent(_ event: String, parameters: [String: Any]? = nil) async {
+        let escalate = event.lowercased().contains("danger") || event.lowercased().contains("critical") || event.lowercased().contains("delete")
+            || (parameters?.values.contains { "\($0)".lowercased().contains("danger") || "\($0)".lowercased().contains("critical") || "\($0)".lowercased().contains("delete") } ?? false)
+        await analyticsLogger.logEvent(
+            event,
+            parameters: parameters,
+            role: MarketingAuditContext.role,
+            staffID: MarketingAuditContext.staffID,
+            context: MarketingAuditContext.context,
+            escalate: escalate
+        )
+        auditEventBuffer.append((date: Date(), event: event, parameters: parameters, role: MarketingAuditContext.role, staffID: MarketingAuditContext.staffID, context: MarketingAuditContext.context, escalate: escalate))
+        if auditEventBuffer.count > auditEventBufferLimit {
+            auditEventBuffer.removeFirst(auditEventBuffer.count - auditEventBufferLimit)
+        }
+    }
+
+    /// Returns a detailed diagnostics summary with all audit fields.
+    func diagnosticsAuditTrail() -> String {
+        auditEventBuffer.map { evt in
+            let dateStr = DateFormatter.localizedString(from: evt.date, dateStyle: .short, timeStyle: .medium)
+            let paramsStr = evt.parameters?.map { "\($0): \($1)" }.joined(separator: ", ") ?? ""
+            let role = evt.role ?? "-"
+            let staffID = evt.staffID ?? "-"
+            let context = evt.context ?? "-"
+            let escalate = evt.escalate ? "YES" : "NO"
+            return "\(dateStr): \(evt.event) \(paramsStr) | role:\(role) staffID:\(staffID) context:\(context) escalate:\(escalate)"
+        }.joined(separator: "\n")
     }
 
     // MARK: - Fetch by Segment
@@ -138,7 +248,6 @@ final class MarketingEngine: ObservableObject {
 
     // MARK: - Send Campaign (Batch, Audit, Retry)
 
-    /// Sends a marketing campaign to a list of clients, with audit, retry, and analytics.
     @discardableResult
     func send(
         campaign: MarketingCampaign,
@@ -153,17 +262,41 @@ final class MarketingEngine: ObservableObject {
         isSending = true
         let total = clients.count
 
-        addAudit("Begin campaign '\(campaign.name)' (\(campaign.subject)) to \(total) clients (\(segment.displayName)).")
+        let startMsg = String(
+            format: NSLocalizedString(
+                "Begin campaign '%@' (%@) to %d clients (%@).",
+                comment: "Audit log entry for campaign start"
+            ),
+            campaign.name,
+            campaign.subject,
+            total,
+            segment.displayName
+        )
+        await addAudit(startMsg)
+        await logAuditEvent("campaign_begin", parameters: [
+            "campaignID": campaign.id.uuidString,
+            "subject": campaign.subject,
+            "clientCount": total,
+            "segment": segment.id
+        ])
 
         for client in clients {
             guard let contactEmail = client.email, !contactEmail.isEmpty else {
                 failedCount += 1
                 failedRecipients.append(client.ownerName)
-                addAudit("Skipped client \(client.ownerName): no email.")
+                let skipMsg = String(
+                    format: NSLocalizedString(
+                        "Skipped client %@: no email.",
+                        comment: "Audit log entry for skipped client without email"
+                    ),
+                    client.ownerName
+                )
+                await addAudit(skipMsg)
+                await logAuditEvent("client_skipped_no_email", parameters: ["ownerName": client.ownerName])
                 continue
             }
 
-            let petName = client.dogs.first?.name ?? "your pet"
+            let petName = client.dogs.first?.name ?? NSLocalizedString("your pet", comment: "Default pet name placeholder")
             let personalizedBody = campaign.bodyTemplate
                 .replacingOccurrences(of: "{clientName}", with: client.ownerName)
                 .replacingOccurrences(of: "{petName}", with: petName)
@@ -177,7 +310,21 @@ final class MarketingEngine: ObservableObject {
                     sentCount += 1
                     delivered = true
                 } catch {
-                    addAudit("Failed to send to \(contactEmail) (attempt \(attempts)): \(error)")
+                    let failMsg = String(
+                        format: NSLocalizedString(
+                            "Failed to send to %@ (attempt %d): %@",
+                            comment: "Audit log entry for failed send attempt"
+                        ),
+                        contactEmail,
+                        attempts,
+                        String(describing: error)
+                    )
+                    await addAudit(failMsg)
+                    await logAuditEvent("send_failed", parameters: [
+                        "contactEmail": contactEmail,
+                        "attempt": attempts,
+                        "error": String(describing: error)
+                    ])
                     if attempts > maxRetry {
                         failedCount += 1
                         failedRecipients.append(contactEmail)
@@ -189,32 +336,101 @@ final class MarketingEngine: ObservableObject {
         }
         isSending = false
         let result = CampaignResult(
-            campaignID: campaign.id, sentCount: sentCount, failedCount: failedCount, targetCount: total,
-            failedRecipients: failedRecipients, sentAt: Date(), segment: segment)
+            campaignID: campaign.id,
+            sentCount: sentCount,
+            failedCount: failedCount,
+            targetCount: total,
+            failedRecipients: failedRecipients,
+            sentAt: Date(),
+            segment: segment
+        )
         lastCampaignResult = result
-        addAudit("Campaign '\(campaign.name)' complete. \(sentCount) sent, \(failedCount) failed.")
+
+        let completeMsg = String(
+            format: NSLocalizedString(
+                "Campaign '%@' complete. %d sent, %d failed.",
+                comment: "Audit log entry for campaign completion"
+            ),
+            campaign.name,
+            sentCount,
+            failedCount
+        )
+        await addAudit(completeMsg)
+        await logAuditEvent("campaign_complete", parameters: [
+            "campaignID": campaign.id.uuidString,
+            "sentCount": sentCount,
+            "failedCount": failedCount,
+            "targetCount": total,
+            "segment": segment.id
+        ])
+        await logEventAsync("campaign_sent", parameters: [
+            "campaignID": campaign.id.uuidString,
+            "sentCount": sentCount,
+            "failedCount": failedCount,
+            "targetCount": total,
+            "segment": segment.id
+        ])
         return result
     }
 
     // MARK: - Audit, Analytics, Export
 
-    func addAudit(_ entry: String) {
+    func addAudit(_ entry: String) async {
         let ts = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
-        lastAuditLog.append("[\(ts)] \(entry)")
-        if lastAuditLog.count > 1000 { lastAuditLog.removeFirst() }
+        let fullEntry = "[\(ts)] \(entry)"
+        auditQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            self.auditBuffer.append(fullEntry)
+            if self.auditBuffer.count > 1000 {
+                self.auditBuffer.removeFirst(self.auditBuffer.count - 1000)
+            }
+            Task { @MainActor in
+                self.lastAuditLog = self.auditBuffer
+            }
+        }
     }
 
-    /// Export the most recent campaign result as JSON.
+    func exportAuditLog() -> String? {
+        var snapshot: [String] = []
+        auditQueue.sync {
+            snapshot = auditBuffer
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        return try? encoder.encode(snapshot).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
     func exportLastCampaignResult() -> String? {
         guard let last = lastCampaignResult else { return nil }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
-        return try? encoder.encode(last).flatMap { String(data: $0, encoding: .utf8) }
+        return last.exportJSON()
     }
 
-    /// Accessibility summary for latest campaign (for dashboards, VoiceOver)
     var accessibilitySummary: String {
-        guard let last = lastCampaignResult else { return "No campaign sent yet." }
-        return "Campaign sent to \(last.sentCount) of \(last.targetCount) clients. \(last.failedCount) failed. Segment: \(last.segment.displayName)."
+        guard let last = lastCampaignResult else {
+            return NSLocalizedString("No campaign sent yet.", comment: "Accessibility summary when no campaign sent")
+        }
+        return String(
+            format: NSLocalizedString(
+                "Campaign sent to %d of %d clients. %d failed. Segment: %@.",
+                comment: "Accessibility summary for latest campaign"
+            ),
+            last.sentCount,
+            last.targetCount,
+            last.failedCount,
+            last.segment.displayName
+        )
+    }
+
+    // MARK: - AnalyticsLogging Protocol Conformance
+
+    func logEventAsync(_ event: String, parameters: [String: Any]? = nil) async {
+        if testMode {
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200 ms
+            await addAudit(String(format: NSLocalizedString("TestMode: Logged event '%@' with parameters %@", comment: "Audit log for test mode analytics event"), event, String(describing: parameters ?? [:])))
+        } else {
+            await addAudit(String(format: NSLocalizedString("Analytics event logged: '%@' with parameters %@", comment: "Audit log for analytics event"), event, String(describing: parameters ?? [:])))
+        }
+        await logAuditEvent(event, parameters: parameters)
     }
 }
 
@@ -225,58 +441,73 @@ import SwiftUI
 
 struct MockMessagingService: MessagingService {
     func send(message: String, to contact: String) async throws {
-        // Randomly throw to simulate error
-        if Bool.random() { throw NSError(domain: "SendError", code: 1) }
+        if Bool.random() { throw NSError(domain: "SendError", code: 1, userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("Simulated send failure", comment: "Error description")]) }
         print("--- Sending Message ---\nTo: \(contact)\nBody: \(message)\n-----------------------")
     }
 }
 
 struct MarketingEngine_Preview: View {
     @State private var segment: ClientSegment = .atRiskClients
-    @State private var messageBody: String = "Hi {clientName}! We've missed you and {petName}. Come back for your next groom and get 15% off!"
+    @State private var messageBody: String = NSLocalizedString("Hi {clientName}! We've missed you and {petName}. Come back for your next groom and get 15% off!", comment: "Default marketing message body")
     @State private var targetedClientCount: Int = 0
     @State private var isSending = false
     @State private var sendResult: MarketingEngine.CampaignResult?
     @State private var auditLog: [String] = []
+    @State private var auditDiagnostics: String = ""
 
     private var marketingEngine = MarketingEngine(messagingService: MockMessagingService())
 
     var body: some View {
         Form {
-            Section("Campaign Details") {
-                Picker("Target Segment", selection: $segment) {
-                    Text("At-Risk Clients").tag(ClientSegment.atRiskClients)
-                    Text("New Clients").tag(ClientSegment.newClients)
-                    Text("Top 3 Spenders").tag(ClientSegment.topSpenders(count: 3))
+            Section(header: Text(NSLocalizedString("Campaign Details", comment: "Section header"))) {
+                Picker(NSLocalizedString("Target Segment", comment: "Picker label"), selection: $segment) {
+                    Text(NSLocalizedString("At-Risk Clients", comment: "Picker option")).tag(ClientSegment.atRiskClients)
+                    Text(NSLocalizedString("New Clients", comment: "Picker option")).tag(ClientSegment.newClients)
+                    Text(NSLocalizedString("Top 3 Spenders", comment: "Picker option")).tag(ClientSegment.topSpenders(count: 3))
                 }
                 TextEditor(text: $messageBody)
                     .frame(height: 100)
             }
 
-            Section("Preview & Send") {
-                Text("Targets \(targetedClientCount) clients.").font(.caption)
+            Section(header: Text(NSLocalizedString("Preview & Send", comment: "Section header"))) {
+                Text(String(format: NSLocalizedString("Targets %d clients.", comment: "Preview target count"), targetedClientCount))
+                    .font(.caption)
 
                 Button(action: sendCampaign) {
                     HStack {
                         if isSending { ProgressView() }
-                        Text("Send Campaign")
+                        Text(NSLocalizedString("Send Campaign", comment: "Send button label"))
                     }
                 }
                 .disabled(isSending)
                 if let result = sendResult {
-                    Text("Sent: \(result.sentCount), Failed: \(result.failedCount)")
+                    Text(String(format: NSLocalizedString("Sent: %d, Failed: %d", comment: "Send result summary"), result.sentCount, result.failedCount))
                         .font(.caption)
                 }
             }
-            Section("Audit Trail") {
-                ForEach(auditLog, id: \.self) { log in
-                    Text(log).font(.caption2).foregroundColor(.secondary)
+            Section(header: Text(NSLocalizedString("Audit Trail", comment: "Section header"))) {
+                ScrollView {
+                    LazyVStack(alignment: .leading) {
+                        ForEach(auditLog, id: \.self) { log in
+                            Text(log).font(.caption2).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
+            }
+            Section(header: Text("Diagnostics (Trust Center)")) {
+                ScrollView {
+                    Text(auditDiagnostics)
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                        .textSelection(.enabled)
+                        .frame(maxHeight: 200)
                 }
             }
         }
         .onAppear { fetchTargetCount() }
         .onChange(of: segment, initial: true) { _, _ in fetchTargetCount() }
-        .navigationTitle("Marketing")
+        .navigationTitle(NSLocalizedString("Marketing", comment: "Navigation title"))
     }
 
     func fetchTargetCount() {
@@ -285,14 +516,17 @@ struct MarketingEngine_Preview: View {
             targetedClientCount = clients.count > 0 ? clients.count : Int.random(in: 2...5)
         }
     }
+
     func sendCampaign() {
         isSending = true
-        let campaign = MarketingCampaign(id: UUID(), name: "Re-engagement", subject: "We miss you!", bodyTemplate: messageBody)
+        marketingEngine.testMode = true // Enable test mode for preview to simulate analytics
+        let campaign = MarketingCampaign(id: UUID(), name: NSLocalizedString("Re-engagement", comment: "Campaign name"), subject: NSLocalizedString("We miss you!", comment: "Campaign subject"), bodyTemplate: messageBody)
         Task {
             let clients = await marketingEngine.fetchClients(for: segment)
-            let result = await marketingEngine.send(campaign: campaign, to: clients, segment: segment)
+            let result = await marketingEngine.send(campaign: campaign, to: clients, segment: segment, maxRetry: 2, throttleMilliseconds: 100)
             sendResult = result
             auditLog = marketingEngine.lastAuditLog
+            auditDiagnostics = marketingEngine.diagnosticsAuditTrail()
             isSending = false
         }
     }

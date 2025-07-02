@@ -6,8 +6,25 @@
 //  Enhanced, tokenized, accessible, and architecturally robust.
 //
 
+/**
+ FeedbackView
+ -------------
+ An accessible, modular, and audit/analytics-ready SwiftUI view for collecting user feedback in Furfolio.
+
+ - **Architecture**: Uses MVVM (FeedbackViewModel). Designed for preview/test dependency injection and future modularity.
+ - **Async/Concurrency**: View is UI-bound, but can be easily extended to use async analytics/event logging or audit hooks for accessibility/usage analytics.
+ - **Audit/Analytics Readiness**: All user actions (submit, attach, help) are UI-hooked and can be connected to async audit loggers or analytics.
+ - **Diagnostics**: Feedback submission (including offline queuing) and error state handling ready for diagnostics.
+ - **Localization**: All UI strings are localized via `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: All interactive elements have accessibility labels and hints, dynamic type, VoiceOver grouping, and extra-large font previews.
+ - **Preview/Testability**: Includes multi-scenario SwiftUI previews with dependency injection.
+
+ Extend or connect this view to Furfolio’s analytics/audit system by adding async/await logging in submit/attach/help/queue actions.
+ */
+
 import SwiftUI
 import UniformTypeIdentifiers
+import SwiftData
 
 struct FeedbackView: View {
     // Dependency injection for preview/testability
@@ -21,6 +38,8 @@ struct FeedbackView: View {
 
     // For offline support simulation (replace with actual reachability logic)
     @State private var isOffline: Bool = false
+
+    @Environment(\.modelContext) private var modelContext
 
     // Dependency injection init
     init(viewModel: @autoclosure @escaping () -> FeedbackViewModel = FeedbackViewModel()) {
@@ -217,7 +236,20 @@ struct FeedbackView: View {
             if isOffline {
                 viewModel.queueOfflineFeedback()
             } else {
-                viewModel.submitFeedback()
+                Task {
+                    await FurfolioAnalyticsLogger.shared.logEvent("feedback_submitted", parameters: [
+                        "category": viewModel.category.displayName,
+                        "message_length": viewModel.message.count,
+                        "contact_provided": !viewModel.contact.isEmpty
+                    ])
+                    let submission = FeedbackSubmission(
+                        message: viewModel.message,
+                        category: viewModel.category,
+                        attachment: viewModel.attachments.first
+                    )
+                    modelContext.insert(submission)
+                    viewModel.submitFeedback()
+                }
             }
         }) {
             Group {
@@ -240,6 +272,7 @@ struct FeedbackView: View {
         .animation(.easeInOut(duration: 0.15), value: viewModel.isSubmitting)
         .accessibilityLabel(LocalizedStringKey("Submit feedback button"))
         .accessibilityHint(LocalizedStringKey("Tap to submit your feedback"))
+        .accessibilityIdentifier("FeedbackView_SubmitButton")
     }
 
     private var offlineNoticeSection: some View {
@@ -342,3 +375,15 @@ struct FeedbackView_Previews: PreviewProvider {
     }
 }
 #endif
+
+# MARK: - Analytics Logger Stub
+
+/// Actor for centralized async analytics/audit logging.
+actor FurfolioAnalyticsLogger {
+    static let shared = FurfolioAnalyticsLogger()
+    /// Log an analytics event asynchronously.
+    func logEvent(_ name: String, parameters: [String: Any]) async {
+        // TODO: Integrate with Furfolio’s analytics/audit stack
+        print("[Analytics] \(name): \(parameters)")
+    }
+}

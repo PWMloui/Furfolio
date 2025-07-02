@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -46,6 +47,44 @@ fileprivate final class CelebrationAudit {
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No celebration events recorded."
     }
+    
+    // MARK: - New Analytics Computed Properties
+    
+    /// Returns the celebration message that appears most often in the log.
+    static var mostFrequentMessage: String? {
+        guard !log.isEmpty else { return nil }
+        let frequency = Dictionary(grouping: log, by: { $0.message }).mapValues { $0.count }
+        return frequency.max(by: { $0.value < $1.value })?.key
+    }
+    
+    /// Returns the average particle count of all logged celebration events.
+    static var averageParticleCount: Double {
+        guard !log.isEmpty else { return 0 }
+        let totalParticles = log.reduce(0) { $0 + $1.particleCount }
+        return Double(totalParticles) / Double(log.count)
+    }
+    
+    /// Returns the total number of celebration events recorded.
+    static var totalCelebrations: Int {
+        log.count
+    }
+    
+    // MARK: - CSV Export
+    
+    /// Exports the entire celebration log as a CSV string.
+    /// CSV columns: timestamp,message,particleCount,tags
+    static func exportCSV() -> String {
+        let header = "timestamp,message,particleCount,tags"
+        let formatter = ISO8601DateFormatter()
+        let rows = log.map { event -> String in
+            let timestampStr = formatter.string(from: event.timestamp)
+            let escapedMessage = event.message.replacingOccurrences(of: "\"", with: "\"\"")
+            let tagsJoined = event.tags.joined(separator: ";")
+            // CSV escaping for message (in quotes) to handle commas/newlines
+            return "\"\(timestampStr)\",\"\(escapedMessage)\",\(event.particleCount),\"\(tagsJoined)\""
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
 }
 
 // MARK: - DashboardCelebrationView
@@ -55,6 +94,9 @@ struct DashboardCelebrationView: View {
 
     @State private var confettiParticles: [ConfettiParticle] = []
     @State private var animateConfetti = false
+    
+    // For accessibility announcements
+    @Environment(\.accessibilityEnabled) private var accessibilityEnabled
 
     private let particleCount = 100
     private let message = "🎉 Congratulations! 🎉 You've reached an important milestone!"
@@ -103,6 +145,18 @@ struct DashboardCelebrationView: View {
 
             ConfettiView(particles: confettiParticles, animate: $animateConfetti)
                 .allowsHitTesting(false)
+            
+            #if DEBUG
+            // DEV Overlay showing audit info and stats at bottom
+            VStack {
+                Spacer()
+                DebugAuditOverlay()
+                    .padding()
+                    .background(Color.black.opacity(0.7))
+                    .cornerRadius(12)
+                    .padding()
+            }
+            #endif
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Celebration overlay with congratulatory message")
@@ -115,6 +169,10 @@ struct DashboardCelebrationView: View {
                 message: message,
                 particleCount: particleCount
             )
+            // Accessibility: Post VoiceOver announcement when celebration appears
+            if accessibilityEnabled {
+                UIAccessibility.post(notification: .announcement, argument: "Congratulations! You've reached an important milestone.")
+            }
         }
     }
 
@@ -187,7 +245,68 @@ public enum CelebrationAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         CelebrationAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
+    
+    // Expose new analytics properties
+    
+    /// The most frequent celebration message recorded.
+    public static var mostFrequentMessage: String? {
+        CelebrationAudit.mostFrequentMessage
+    }
+    
+    /// The average particle count of all celebrations.
+    public static var averageParticleCount: Double {
+        CelebrationAudit.averageParticleCount
+    }
+    
+    /// The total number of celebration events recorded.
+    public static var totalCelebrations: Int {
+        CelebrationAudit.totalCelebrations
+    }
+    
+    /// Export the entire celebration audit log as CSV string.
+    public static func exportCSV() -> String {
+        CelebrationAudit.exportCSV()
+    }
 }
+
+#if DEBUG
+// MARK: - Debug Audit Overlay View
+/// A debug overlay showing recent audit events and analytics statistics.
+/// Displayed in DEBUG builds at the bottom of the celebration view.
+private struct DebugAuditOverlay: View {
+    private let maxEventsToShow = 3
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Audit Events (last \(maxEventsToShow)):")
+                .font(.headline)
+                .foregroundColor(.white)
+            ForEach(CelebrationAudit.log.suffix(maxEventsToShow).reversed(), id: \.timestamp) { event in
+                Text(event.accessibilityLabel)
+                    .font(.caption2.monospaced())
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Divider().background(Color.white.opacity(0.5))
+            Text("Analytics:")
+                .font(.headline)
+                .foregroundColor(.white)
+            Text("Most Frequent Message: \(CelebrationAudit.mostFrequentMessage ?? "N/A")")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.8))
+                .lineLimit(1)
+            Text(String(format: "Average Particle Count: %.2f", CelebrationAudit.averageParticleCount))
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.8))
+            Text("Total Celebrations: \(CelebrationAudit.totalCelebrations)")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.8))
+        }
+        .padding(8)
+    }
+}
+#endif
 
 // MARK: - Preview
 

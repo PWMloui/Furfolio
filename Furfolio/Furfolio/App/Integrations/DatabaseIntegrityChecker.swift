@@ -2,38 +2,80 @@
 //  DatabaseIntegrityChecker.swift
 //  Furfolio
 //
-//  Created by mac on 6/19/25.
-//  Enhanced, auditable, diagnostics/analytics-ready, and future-proof.
+//  Enhanced: role-aware, trust center/audit/analytics compliant, business-rule modular
 //
 
 import Foundation
 import SwiftData
 import OSLog
 
-/// Centralized class for performing comprehensive database integrity checks.
-/// All checks are auditable, extensible, and support business diagnostics and Trust Center compliance.
+// MARK: - Logger Protocols
+
+public protocol IntegrityAuditLogger {
+    func log(issue: IntegrityIssue, source: String, role: FurfolioRole?)
+}
+public protocol IntegrityAnalyticsLogger {
+    func track(issue: IntegrityIssue, extra: [String: Any]?)
+}
+
+// MARK: - Central Database Integrity Checker
+
 final class DatabaseIntegrityChecker {
     static let shared = DatabaseIntegrityChecker()
+
+    // MARK: - Dependencies (inject for modularity/testing/business roles)
     private let logger = Logger(subsystem: "com.furfolio.db.integrity", category: "integrity")
+    private let auditLogger: IntegrityAuditLogger?
+    private let analyticsLogger: IntegrityAnalyticsLogger?
+    private let accessControl: AccessControl?
+    private let trustCenter: TrustCenterPermissionManager?
+    private let testMode: Bool
+    private let customChecks: [(
+        owners: [DogOwner], dogs: [Dog], appointments: [Appointment], charges: [Charge],
+        staff: [StaffMember], users: [User], tasks: [Task], vaccinationRecords: [VaccinationRecord], context: IntegrityCheckContext
+    ) async -> [IntegrityIssue]]
 
-    // Dependency injection for audit/analytics engines.
-    private let auditLogger: ((IntegrityIssue) -> Void)?
-    private let analyticsLogger: ((IntegrityIssue) -> Void)?
+    // MARK: - Initialization
 
-    /// For production, audit/analytics hooks can be provided here.
-    init(auditLogger: ((IntegrityIssue) -> Void)? = nil,
-         analyticsLogger: ((IntegrityIssue) -> Void)? = nil) {
+    init(
+        auditLogger: IntegrityAuditLogger? = nil,
+        analyticsLogger: IntegrityAnalyticsLogger? = nil,
+        accessControl: AccessControl? = nil,
+        trustCenter: TrustCenterPermissionManager? = nil,
+        testMode: Bool = false,
+        customChecks: [(
+            owners: [DogOwner], dogs: [Dog], appointments: [Appointment], charges: [Charge],
+            staff: [StaffMember], users: [User], tasks: [Task], vaccinationRecords: [VaccinationRecord], context: IntegrityCheckContext
+        ) async -> [IntegrityIssue]] = []
+    ) {
         self.auditLogger = auditLogger
         self.analyticsLogger = analyticsLogger
+        self.accessControl = accessControl
+        self.trustCenter = trustCenter
+        self.testMode = testMode
+        self.customChecks = customChecks
     }
 
-    /// Default singleton for app-wide usage.
+    /// Default singleton for app-wide usage (no external logging by default)
     private init() {
         self.auditLogger = nil
         self.analyticsLogger = nil
+        self.accessControl = nil
+        self.trustCenter = nil
+        self.testMode = false
+        self.customChecks = []
     }
 
-    /// Runs all integrity checks and returns found issues. All issues are logged/audited.
+    // MARK: - Context (for role-aware, staff-aware checks)
+    struct IntegrityCheckContext {
+        var currentUser: User?
+        var currentRole: FurfolioRole?
+        var isAdmin: Bool { currentRole == .admin || currentRole == .owner }
+        // Add trustCenter flags, featureFlags, etc as needed
+    }
+
+    // MARK: - Main Integrity Check API
+
     func runAllChecks(
         owners: [DogOwner],
         dogs: [Dog],
@@ -42,38 +84,68 @@ final class DatabaseIntegrityChecker {
         staff: [StaffMember],
         users: [User],
         tasks: [Task],
-        vaccinationRecords: [VaccinationRecord]
-    ) -> [IntegrityIssue] {
+        vaccinationRecords: [VaccinationRecord],
+        context: IntegrityCheckContext = .init()
+    ) async -> [IntegrityIssue] {
         var issues: [IntegrityIssue] = []
         issues += checkForOrphanedDogs(dogs, owners)
         issues += checkForOrphanedAppointments(appointments)
         issues += checkForOrphanedCharges(charges)
-        issues += checkForDuplicateIDs(
-            owners, dogs, appointments, charges, staff, users, tasks, vaccinationRecords
-        )
+        issues += checkForDuplicateIDs(owners, dogs, appointments, charges, staff, users, tasks, vaccinationRecords)
         issues += checkForDogsWithoutAppointments(dogs)
         issues += checkForOwnersWithoutDogs(owners)
-        issues += customBusinessRuleChecks(owners: owners, dogs: dogs, appointments: appointments)
-        processAuditLogging(for: issues)
+        issues += customBusinessRuleChecks(owners: owners, dogs: dogs, appointments: appointments, context: context)
+
+        // Run injected custom checks (role-aware/context-aware)
+        for customCheck in customChecks {
+            let customIssues = await customCheck(
+                owners, dogs, appointments, charges, staff, users, tasks, vaccinationRecords, context
+            )
+            issues += customIssues
+        }
+
+        await processAuditLogging(for: issues, context: context)
         return issues
     }
 
-    /// Logs/audits all integrity issues and prints diagnostics.
-    private func processAuditLogging(for issues: [IntegrityIssue]) {
+    // MARK: - Logging & Reporting
+
+    private func processAuditLogging(for issues: [IntegrityIssue], context: IntegrityCheckContext) async {
         if !issues.isEmpty {
             logger.error("Integrity check: \(issues.count) issue(s).")
             for issue in issues {
                 logger.warning("\(issue.type.rawValue): \(issue.message)")
-                auditLogger?(issue)
-                analyticsLogger?(issue)
-                // TODO: Replace with Trust Center/business audit/analytics integration.
+                if !testMode {
+                    auditLogger?.log(issue: issue, source: "DatabaseIntegrityChecker", role: context.currentRole)
+                    analyticsLogger?.track(issue: issue, extra: [
+                        "role": context.currentRole?.rawValue ?? "unknown",
+                        "timestamp": Date().timeIntervalSince1970
+                    ])
+                    // Optionally: escalate certain issue types to Trust Center or AccessControl.
+                    if issue.requiresEscalation, let trustCenter {
+                        trustCenter.escalateIntegrityIssue(issue, role: context.currentRole)
+                    }
+                }
             }
         } else {
             logger.info("Database passed all integrity checks.")
         }
     }
 
-    /// Finds dogs without an associated owner.
+    // MARK: - Filtering/Diagnostics Utilities
+
+    func issues(ofType type: IntegrityIssue.IssueType, from issues: [IntegrityIssue]) -> [IntegrityIssue] {
+        issues.filter { $0.type == type }
+    }
+    func issues(forEntityID entityID: String, from issues: [IntegrityIssue]) -> [IntegrityIssue] {
+        issues.filter { $0.entityID == entityID }
+    }
+    func issues(forRole role: FurfolioRole, from issues: [IntegrityIssue]) -> [IntegrityIssue] {
+        issues.filter { $0.affectedRole == role }
+    }
+
+    // MARK: - Built-in Checks (with business-aware context)
+
     private func checkForOrphanedDogs(_ dogs: [Dog], _ owners: [DogOwner]) -> [IntegrityIssue] {
         dogs.filter { $0.owner == nil }.map {
             IntegrityIssue(
@@ -84,12 +156,11 @@ final class DatabaseIntegrityChecker {
                     $0.name, $0.id.uuidString
                 ),
                 entityID: $0.id.uuidString,
-                entityType: "Dog"
+                entityType: "Dog",
+                affectedRole: .unknown
             )
         }
     }
-
-    /// Finds appointments missing either a dog or an owner.
     private func checkForOrphanedAppointments(_ appointments: [Appointment]) -> [IntegrityIssue] {
         appointments.flatMap { appt in
             var issues: [IntegrityIssue] = []
@@ -101,7 +172,8 @@ final class DatabaseIntegrityChecker {
                         appt.id.uuidString
                     ),
                     entityID: appt.id.uuidString,
-                    entityType: "Appointment"
+                    entityType: "Appointment",
+                    affectedRole: .unknown
                 ))
             }
             if appt.dog == nil {
@@ -112,14 +184,13 @@ final class DatabaseIntegrityChecker {
                         appt.id.uuidString
                     ),
                     entityID: appt.id.uuidString,
-                    entityType: "Appointment"
+                    entityType: "Appointment",
+                    affectedRole: .unknown
                 ))
             }
             return issues
         }
     }
-
-    /// Finds charges missing a dog, owner, or appointment.
     private func checkForOrphanedCharges(_ charges: [Charge]) -> [IntegrityIssue] {
         charges.flatMap { charge in
             var issues: [IntegrityIssue] = []
@@ -131,7 +202,8 @@ final class DatabaseIntegrityChecker {
                         charge.id.uuidString
                     ),
                     entityID: charge.id.uuidString,
-                    entityType: "Charge"
+                    entityType: "Charge",
+                    affectedRole: .unknown
                 ))
             }
             if charge.dog == nil {
@@ -142,7 +214,8 @@ final class DatabaseIntegrityChecker {
                         charge.id.uuidString
                     ),
                     entityID: charge.id.uuidString,
-                    entityType: "Charge"
+                    entityType: "Charge",
+                    affectedRole: .unknown
                 ))
             }
             if charge.appointment == nil {
@@ -153,14 +226,13 @@ final class DatabaseIntegrityChecker {
                         charge.id.uuidString
                     ),
                     entityID: charge.id.uuidString,
-                    entityType: "Charge"
+                    entityType: "Charge",
+                    affectedRole: .unknown
                 ))
             }
             return issues
         }
     }
-
-    /// Detects duplicate UUIDs across all entities (by type).
     private func checkForDuplicateIDs(
         _ owners: [DogOwner],
         _ dogs: [Dog],
@@ -191,12 +263,11 @@ final class DatabaseIntegrityChecker {
                     id.uuidString, types.sorted().joined(separator: ", ")
                 ),
                 entityID: id.uuidString,
-                entityType: "Multiple"
+                entityType: "Multiple",
+                affectedRole: .unknown
             )
         }
     }
-
-    /// Flags any dogs without appointments.
     private func checkForDogsWithoutAppointments(_ dogs: [Dog]) -> [IntegrityIssue] {
         dogs.filter { $0.appointments.isEmpty }.map {
             IntegrityIssue(
@@ -206,12 +277,11 @@ final class DatabaseIntegrityChecker {
                     $0.name, $0.id.uuidString
                 ),
                 entityID: $0.id.uuidString,
-                entityType: "Dog"
+                entityType: "Dog",
+                affectedRole: .unknown
             )
         }
     }
-
-    /// Flags owners without any dogs.
     private func checkForOwnersWithoutDogs(_ owners: [DogOwner]) -> [IntegrityIssue] {
         owners.filter { $0.dogs.isEmpty }.map {
             IntegrityIssue(
@@ -221,44 +291,47 @@ final class DatabaseIntegrityChecker {
                     $0.ownerName, $0.id.uuidString
                 ),
                 entityID: $0.id.uuidString,
-                entityType: "DogOwner"
+                entityType: "DogOwner",
+                affectedRole: .unknown
             )
         }
     }
-
-    /// Place to add custom business rules (e.g., VIPs with missing badges, health alert mismatches, etc).
+    // Extendable: Custom business checks using staff/role/context if needed
     private func customBusinessRuleChecks(
         owners: [DogOwner],
         dogs: [Dog],
-        appointments: [Appointment]
+        appointments: [Appointment],
+        context: IntegrityCheckContext
     ) -> [IntegrityIssue] {
         var issues: [IntegrityIssue] = []
 
-        // Example: Check for owners marked "VIP" with no dogs tagged as "VIP"
-        for owner in owners where owner.tags.contains("VIP") {
-            let hasVipDog = owner.dogs.contains { $0.tags.contains("VIP") }
-            if !hasVipDog {
-                issues.append(
-                    IntegrityIssue(
-                        type: .businessRuleViolation,
-                        message: String(
-                            format: NSLocalizedString("VIP Owner %@ (%@) has no VIP dogs.", comment: "Custom rule: VIP owner no VIP dogs"),
-                            owner.ownerName, owner.id.uuidString
-                        ),
-                        entityID: owner.id.uuidString,
-                        entityType: "DogOwner"
+        // Example: Escalate VIP owners with no VIP dogs only to admins/owner roles
+        if context.isAdmin {
+            for owner in owners where owner.tags.contains("VIP") {
+                let hasVipDog = owner.dogs.contains { $0.tags.contains("VIP") }
+                if !hasVipDog {
+                    issues.append(
+                        IntegrityIssue(
+                            type: .businessRuleViolation,
+                            message: String(
+                                format: NSLocalizedString("VIP Owner %@ (%@) has no VIP dogs.", comment: "Custom rule: VIP owner no VIP dogs"),
+                                owner.ownerName, owner.id.uuidString
+                            ),
+                            entityID: owner.id.uuidString,
+                            entityType: "DogOwner",
+                            affectedRole: context.currentRole ?? .owner
+                        )
                     )
-                )
+                }
             }
         }
-
-        // Extend as needed...
+        // Extend as needed for more staff/role-specific rules...
         return issues
     }
 }
 
-/// Represents a single integrity issue found during database checks.
-/// Type, message, entityID, and entityType allow for auditing, deep linking, and diagnostics.
+// MARK: - Issue Model
+
 struct IntegrityIssue: Identifiable, Hashable {
     enum IssueType: String, CaseIterable, Codable {
         case orphanedDog
@@ -268,7 +341,7 @@ struct IntegrityIssue: Identifiable, Hashable {
         case dogNoAppointments
         case ownerNoDogs
         case businessRuleViolation
-        // Expand as needed.
+        // Extend for: incidentEscalation, healthAlertMismatch, loyaltyInconsistency, staffIncident, etc.
     }
 
     let id = UUID()
@@ -276,4 +349,24 @@ struct IntegrityIssue: Identifiable, Hashable {
     let message: String
     let entityID: String
     let entityType: String
+    /// Which staff role/user this issue should be flagged to (for escalations, incident routing, etc)
+    let affectedRole: FurfolioRole
+
+    /// Use this for certain issues to auto-escalate to Trust Center or audit compliance
+    var requiresEscalation: Bool {
+        switch type {
+            case .duplicateID, .businessRuleViolation: return true
+            default: return false
+        }
+    }
+}
+
+// MARK: - Trust Center (Stub for Compliance/Escalation)
+
+public class TrustCenterPermissionManager {
+    public init() {}
+    public func escalateIntegrityIssue(_ issue: IntegrityIssue, role: FurfolioRole?) {
+        // Route critical compliance issues to trust/audit center or alert admins/owner.
+        // Example: Send to incident report dashboard, compliance log, or business owner notification.
+    }
 }

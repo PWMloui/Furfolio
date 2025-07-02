@@ -8,12 +8,13 @@
 import Foundation
 import SwiftUI
 import Combine
+import UIKit
 
 // MARK: - Audit/Event Logging
 
 fileprivate struct AppointmentVM_AuditEvent: Codable {
     let timestamp: Date
-    let operation: String            // "fetch", "add", "update", "delete", "error"
+    let operation: String            // "fetch", "add", "update", "delete", "error", "conflictDetected"
     let appointmentID: UUID?
     let appointment: Appointment?
     let count: Int?
@@ -68,6 +69,52 @@ fileprivate final class AppointmentVM_Audit {
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// Export audit log as CSV string including all events with detailed fields.
+    /// CSV columns: timestamp,operation,appointmentID,dogName,ownerName,serviceType,notes,hasConflict,count,error,tags,actor,context,detail
+    static func exportCSV() -> String {
+        let header = "timestamp,operation,appointmentID,dogName,ownerName,serviceType,notes,hasConflict,count,error,tags,actor,context,detail"
+        let rows = log.map { event -> String in
+            let timestamp = ISO8601DateFormatter().string(from: event.timestamp)
+            let operation = event.operation
+            let appointmentID = event.appointmentID?.uuidString ?? ""
+            let dogName = event.appointment?.dogName ?? ""
+            let ownerName = event.appointment?.ownerName ?? ""
+            let serviceType = event.appointment?.serviceType ?? ""
+            let notes = event.appointment?.notes?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let hasConflict = event.appointment?.hasConflict.description ?? ""
+            let count = event.count.map(String.init) ?? ""
+            let error = event.error?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let tags = event.tags.joined(separator: ";")
+            let actor = event.actor ?? ""
+            let context = event.context ?? ""
+            let detail = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            // CSV escape fields containing commas or quotes by wrapping in quotes
+            func csvEscape(_ field: String) -> String {
+                if field.contains(",") || field.contains("\"") || field.contains("\n") {
+                    return "\"\(field)\""
+                }
+                return field
+            }
+            return [
+                csvEscape(timestamp),
+                csvEscape(operation),
+                csvEscape(appointmentID),
+                csvEscape(dogName),
+                csvEscape(ownerName),
+                csvEscape(serviceType),
+                csvEscape(notes),
+                csvEscape(hasConflict),
+                csvEscape(count),
+                csvEscape(error),
+                csvEscape(tags),
+                csvEscape(actor),
+                csvEscape(context),
+                csvEscape(detail)
+            ].joined(separator: ",")
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No VM audit events recorded."
     }
@@ -91,6 +138,33 @@ class AppointmentViewModel: ObservableObject {
 
     init() {
         Task { await fetchUpcomingAppointments() }
+    }
+
+    // MARK: - Computed Properties for Analytics
+
+    /// Returns all appointments that have conflicts (hasConflict == true).
+    var conflictingAppointments: [Appointment] {
+        appointments.filter { $0.hasConflict }
+    }
+
+    /// Total number of appointments currently loaded.
+    var totalAppointments: Int {
+        appointments.count
+    }
+
+    /// Number of appointments with conflicts.
+    var conflictCount: Int {
+        conflictingAppointments.count
+    }
+
+    /// Number of upcoming appointments (date in the future or now).
+    var upcomingCount: Int {
+        appointments.filter { $0.date >= Date() }.count
+    }
+
+    /// Number of completed appointments (date in the past).
+    var completedCount: Int {
+        appointments.filter { $0.date < Date() }.count
     }
 
     // MARK: - Public Methods
@@ -123,19 +197,56 @@ class AppointmentViewModel: ObservableObject {
     }
 
     /// Adds a new appointment and sorts the list by date.
+    /// Also detects conflicts with existing appointments and updates hasConflict flags accordingly.
+    /// Posts accessibility announcement and records audit logs including conflict detection and counts.
     func addAppointment(_ appointment: Appointment) {
-        appointments.append(appointment)
+        var newAppointment = appointment
+        // Check for conflicts with existing appointments (same date/time)
+        var conflictDetected = false
+        for index in appointments.indices {
+            if appointments[index].date == newAppointment.date {
+                // Mark both as conflicted
+                if !appointments[index].hasConflict {
+                    appointments[index].hasConflict = true
+                    AppointmentVM_Audit.record(
+                        operation: "conflictDetected",
+                        appointmentID: appointments[index].id,
+                        appointment: appointments[index],
+                        count: appointments.count,
+                        tags: ["conflictDetected"],
+                        detail: "Conflict detected with new appointment"
+                    )
+                }
+                conflictDetected = true
+            }
+        }
+        if conflictDetected {
+            newAppointment.hasConflict = true
+            AppointmentVM_Audit.record(
+                operation: "conflictDetected",
+                appointmentID: newAppointment.id,
+                appointment: newAppointment,
+                count: appointments.count + 1,
+                tags: ["conflictDetected"],
+                detail: "Conflict detected on adding appointment"
+            )
+        }
+        appointments.append(newAppointment)
         appointments.sort { $0.date < $1.date }
+        // Audit with updated counts
         AppointmentVM_Audit.record(
             operation: "add",
-            appointmentID: appointment.id,
-            appointment: appointment,
+            appointmentID: newAppointment.id,
+            appointment: newAppointment,
             count: appointments.count,
             tags: ["add"]
         )
+        // Accessibility announcement on add
+        postAccessibilityAnnouncement(for: newAppointment, action: "Added")
     }
 
     /// Deletes appointment matching the given UUID.
+    /// Posts accessibility announcement and records audit log with updated counts.
     func deleteAppointment(id: UUID) {
         let oldCount = appointments.count
         let removed = appointments.first(where: { $0.id == id })
@@ -148,19 +259,89 @@ class AppointmentViewModel: ObservableObject {
             tags: ["delete"],
             detail: "Removed from \(oldCount) to \(appointments.count)"
         )
+        if let removed = removed {
+            // Accessibility announcement on delete
+            postAccessibilityAnnouncement(for: removed, action: "Deleted")
+        }
     }
 
     /// Updates an existing appointment, replacing the old one by matching ID.
+    /// Detects conflicts with other appointments and updates hasConflict flags accordingly.
+    /// Posts accessibility announcement and records audit logs including conflict detection and counts.
     func updateAppointment(_ updated: Appointment) {
         guard let index = appointments.firstIndex(where: { $0.id == updated.id }) else { return }
-        appointments[index] = updated
+        var updatedAppointment = updated
+        // Reset conflict flag before checking
+        updatedAppointment.hasConflict = false
+        // Check for conflicts with other appointments (same date/time, excluding self)
+        var conflictDetected = false
+        for i in appointments.indices {
+            if i != index && appointments[i].date == updatedAppointment.date {
+                if !appointments[i].hasConflict {
+                    appointments[i].hasConflict = true
+                    AppointmentVM_Audit.record(
+                        operation: "conflictDetected",
+                        appointmentID: appointments[i].id,
+                        appointment: appointments[i],
+                        count: appointments.count,
+                        tags: ["conflictDetected"],
+                        detail: "Conflict detected with updated appointment"
+                    )
+                }
+                conflictDetected = true
+            }
+        }
+        if conflictDetected {
+            updatedAppointment.hasConflict = true
+            AppointmentVM_Audit.record(
+                operation: "conflictDetected",
+                appointmentID: updatedAppointment.id,
+                appointment: updatedAppointment,
+                count: appointments.count,
+                tags: ["conflictDetected"],
+                detail: "Conflict detected on updating appointment"
+            )
+        } else {
+            // If no conflict detected, ensure other appointments that had conflict with this one are re-checked and updated
+            // This is a simple approach: clear conflict flags on all and re-check after update
+            for i in appointments.indices where i != index {
+                appointments[i].hasConflict = false
+            }
+            // Re-check conflicts for all appointments (including updated)
+            for i in appointments.indices {
+                for j in appointments.indices where j != i {
+                    if appointments[i].date == appointments[j].date {
+                        appointments[i].hasConflict = true
+                        appointments[j].hasConflict = true
+                    }
+                }
+            }
+        }
+        appointments[index] = updatedAppointment
         appointments.sort { $0.date < $1.date }
+        // Audit with updated counts
         AppointmentVM_Audit.record(
             operation: "update",
-            appointmentID: updated.id,
-            appointment: updated,
+            appointmentID: updatedAppointment.id,
+            appointment: updatedAppointment,
+            count: appointments.count,
             tags: ["update"]
         )
+        // Accessibility announcement on update
+        postAccessibilityAnnouncement(for: updatedAppointment, action: "Updated")
+    }
+
+    // MARK: - Private Helper for Accessibility
+
+    /// Posts a UIAccessibility announcement summarizing the appointment action.
+    /// Example: "Added appointment for Bella on June 27 at 2 PM"
+    private func postAccessibilityAnnouncement(for appointment: Appointment, action: String) {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        let dateString = dateFormatter.string(from: appointment.date)
+        let announcement = "\(action) appointment for \(appointment.dogName) on \(dateString)"
+        UIAccessibility.post(notification: .announcement, argument: announcement)
     }
 }
 
@@ -209,8 +390,9 @@ let sampleAppointments: [Appointment] = [
 public enum AppointmentVM_AuditAdmin {
     public static var lastSummary: String { AppointmentVM_Audit.accessibilitySummary }
     public static var lastJSON: String? { AppointmentVM_Audit.exportLastJSON() }
-    public static func recentEvents(limit: Int = 5) -> [String] {
-        AppointmentVM_Audit.log.suffix(limit).map { $0.accessibilityLabel }
+    /// Provides CSV export of audit logs including detailed audit data.
+    public static func exportCSV() -> String {
+        AppointmentVM_Audit.exportCSV()
     }
 }
 

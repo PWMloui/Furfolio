@@ -6,6 +6,9 @@
 //
 
 import Foundation
+import SwiftUI
+import Combine
+import AVFoundation
 
 // MARK: - Audit/Event Logging
 
@@ -29,6 +32,7 @@ fileprivate struct ChargeUndoAuditEvent: Codable {
 fileprivate final class ChargeUndoAudit {
     static private(set) var log: [ChargeUndoAuditEvent] = []
 
+    /// Records an audit event with optional change and detail info.
     static func record(
         operation: String,
         change: ChargeChange? = nil,
@@ -49,6 +53,7 @@ fileprivate final class ChargeUndoAudit {
         if log.count > 150 { log.removeFirst() }
     }
 
+    /// Describes a ChargeChange in a human-readable string.
     private static func describe(_ change: ChargeChange) -> String {
         switch change {
         case .add(let c):    return "Add [\(c.type), $\(String(format: "%.2f", c.amount))]"
@@ -58,10 +63,74 @@ fileprivate final class ChargeUndoAudit {
         }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    // MARK: - New Analytics Properties
+
+    /// Total number of undo operations recorded.
+    static var totalUndos: Int {
+        log.filter { $0.operation == "undo" }.count
+    }
+
+    /// Total number of redo operations recorded.
+    static var totalRedos: Int {
+        log.filter { $0.operation == "redo" }.count
+    }
+
+    /// The changeDescription of the most recent audit event, if any.
+    static var mostRecentChangeDescription: String? {
+        log.last?.changeDescription
+    }
+
+    // MARK: - CSV Export Enhancement
+
+    /// Exports all audit events as CSV with headers:
+    /// timestamp,operation,changeDescription,undoDepth,redoDepth,detail
+    static func exportCSV() -> String {
+        let header = "timestamp,operation,changeDescription,undoDepth,redoDepth,detail"
+        let rows = log.map { event in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            // Escape commas and quotes in strings.
+            func escape(_ str: String?) -> String {
+                guard let str = str else { return "" }
+                if str.contains(",") || str.contains("\"") || str.contains("\n") {
+                    let escaped = str.replacingOccurrences(of: "\"", with: "\"\"")
+                    return "\"\(escaped)\""
+                } else {
+                    return str
+                }
+            }
+            let changeDesc = escape(event.changeDescription)
+            let detail = escape(event.detail)
+            return "\(timestampStr),\(event.operation),\(changeDesc),\(event.undoDepth),\(event.redoDepth),\(detail)"
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    // MARK: - Accessibility: VoiceOver Announcements
+
+    /// Posts a VoiceOver announcement with the given message.
+    static func postVoiceOverAnnouncement(_ message: String) {
+        DispatchQueue.main.async {
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
+    }
+
+    /// Convenience to announce undo event.
+    static func announceUndo(changeDescription: String?) {
+        let msg = "Undo: \(changeDescription ?? "No description")"
+        postVoiceOverAnnouncement(msg)
+    }
+
+    /// Convenience to announce redo event.
+    static func announceRedo(changeDescription: String?) {
+        let msg = "Redo: \(changeDescription ?? "No description")"
+        postVoiceOverAnnouncement(msg)
     }
 
     static var accessibilitySummary: String {
@@ -161,6 +230,8 @@ final class ChargeUndoManager {
             redoDepth: redoStack.count,
             detail: "Undo performed"
         )
+        // Accessibility: Announce undo event with change description.
+        ChargeUndoAudit.announceUndo(changeDescription: ChargeUndoAudit.describe(lastChange))
         return inverseChange
     }
 
@@ -183,6 +254,8 @@ final class ChargeUndoManager {
             redoDepth: redoStack.count,
             detail: "Redo performed"
         )
+        // Accessibility: Announce redo event with change description.
+        ChargeUndoAudit.announceRedo(changeDescription: ChargeUndoAudit.describe(lastUndone))
         return lastUndone
     }
 
@@ -232,7 +305,81 @@ struct Charge: Identifiable, Equatable {
 public enum ChargeUndoAuditAdmin {
     public static var lastSummary: String { ChargeUndoAudit.accessibilitySummary }
     public static var lastJSON: String? { ChargeUndoAudit.exportLastJSON() }
+    /// Exposes CSV export of all audit events.
+    public static func exportCSV() -> String {
+        ChargeUndoAudit.exportCSV()
+    }
+    /// Total number of undo operations recorded.
+    public static var totalUndos: Int {
+        ChargeUndoAudit.totalUndos
+    }
+    /// Total number of redo operations recorded.
+    public static var totalRedos: Int {
+        ChargeUndoAudit.totalRedos
+    }
+    /// Most recent change description, if any.
+    public static var mostRecentChangeDescription: String? {
+        ChargeUndoAudit.mostRecentChangeDescription
+    }
     public static func recentEvents(limit: Int = 5) -> [String] {
         ChargeUndoAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
 }
+
+#if DEBUG
+// MARK: - DEV Overlay: SwiftUI View Showing Audit Summary and Stats
+
+/// SwiftUI view displaying a summary of the last 3 audit events,
+/// total undo/redo counts, and most recent change description.
+/// Useful for developers during debugging.
+@available(iOS 13.0, *)
+struct ChargeUndoAuditSummaryView: View {
+    @State private var timer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Charge Undo Audit Summary")
+                .font(.headline)
+                .padding(.bottom, 4)
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(ChargeUndoAudit.log.suffix(3).enumerated()), id: \.offset) { index, event in
+                    Text("\(event.accessibilityLabel)")
+                        .font(.caption)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.5)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text("Total Undos: \(ChargeUndoAudit.totalUndos)")
+                Spacer()
+                Text("Total Redos: \(ChargeUndoAudit.totalRedos)")
+            }
+            .font(.subheadline)
+
+            if let recent = ChargeUndoAudit.mostRecentChangeDescription {
+                Text("Most Recent Change: \(recent)")
+                    .font(.footnote)
+                    .italic()
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.6)
+            } else {
+                Text("Most Recent Change: None")
+                    .font(.footnote)
+                    .italic()
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground).opacity(0.9))
+        .cornerRadius(10)
+        .shadow(radius: 5)
+        .onReceive(timer) { _ in
+            // Refresh view every 2 seconds to update audit log display.
+        }
+        .frame(maxWidth: 350)
+    }
+}
+#endif

@@ -4,19 +4,88 @@
 //
 //  Enhanced: Analytics/audit-ready, token-compliant, modular, extensible, business/enterprise-ready.
 //  All new audit/analytics and diagnostics hooks, tokens, and protocols are drop-in.
+
+/**
+ ErrorHandlingService
+ --------------------
+ Centralized service for handling and presenting errors in Furfolio, with async audit logging and diagnostics.
+
+ - **Purpose**: Processes AppError instances, logs diagnostics, and presents user alerts.
+ - **Architecture**: Singleton @MainActor class with dependency-injected async audit logger.
+ - **Concurrency & Async Logging**: Wraps all audit calls in non-blocking Tasks and uses await.
+ - **Audit/Analytics Ready**: Defines async audit protocol and integrates a dedicated audit manager actor.
+ - **Localization**: Alert titles and messages use LocalizedStringKey and NSLocalizedString.
+ - **Diagnostics & Preview/Testability**: Exposes methods to fetch and export recent audit entries.
+ */
 //
 
 import Foundation
 import SwiftData
 
+/// A record of an error handling audit event.
+public struct ErrorAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let errorType: String
+    public let context: [String: String]?
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        event: String,
+        errorType: String,
+        context: [String: String]?
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.errorType = errorType
+        self.context = context
+    }
+}
+
+/// Concurrency-safe actor for logging error audit entries.
+public actor ErrorAuditManager {
+    private var buffer: [ErrorAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = ErrorAuditManager()
+
+    /// Add a new audit entry, trimming older entries beyond maxEntries.
+    public func add(_ entry: ErrorAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [ErrorAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit entries as pretty-printed JSON.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
+
 // MARK: - Audit/Analytics Protocol
 
 public protocol ErrorAuditLogger {
-    func log(event: String, error: AppError, context: [String: String]?)
+    /// Log an error event asynchronously.
+    func log(event: String, error: AppError, context: [String: String]?) async
 }
 public struct NullErrorAuditLogger: ErrorAuditLogger {
     public init() {}
-    public func log(event: String, error: AppError, context: [String: String]?) {}
+    public func log(event: String, error: AppError, context: [String: String]?) async {}
 }
 
 /// A centralized service for handling, logging, and presenting errors throughout the Furfolio app.
@@ -50,11 +119,21 @@ final class ErrorHandlingService {
         logError(error, context: modelContext)
 
         // --- Step 2: Call audit/analytics for business/Trust Center compliance ---
-        Self.auditLogger.log(
-            event: "error_occurred",
-            error: error,
-            context: mergedAuditContext(error: error, extra: extraContext)
-        )
+        Task {
+            let ctx = mergedAuditContext(error: error, extra: extraContext)
+            await Self.auditLogger.log(
+                event: "error_occurred",
+                error: error,
+                context: ctx
+            )
+            await ErrorAuditManager.shared.add(
+                ErrorAuditEntry(
+                    event: "error_occurred",
+                    errorType: String(describing: error),
+                    context: ctx
+                )
+            )
+        }
 
         // --- Step 3: Determine the appropriate UI action ---
         switch error {
@@ -68,7 +147,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.error ?? .red
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_critical", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_critical", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_critical",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
 
         case .invalidInput(let reason):
             let messageKey = reason ?? NSLocalizedString("Please check the highlighted fields and try again.", comment: "Fallback message for invalid input error")
@@ -80,7 +169,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.warning ?? .yellow
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_invalid_input", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_invalid_input", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_invalid_input",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
 
         case .permissionDenied(let type):
             let formatString = NSLocalizedString("Furfolio does not have permission for %@. Please grant permission in your device's Settings app.", comment: "Message shown when permission is denied, %@ is the feature type")
@@ -98,7 +197,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.warning ?? .yellow
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_permission_denied", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_permission_denied", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_permission_denied",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
 
         case .networkUnavailable:
             let alert = FurfolioAlert(
@@ -109,7 +218,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.info ?? .blue
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_network_unavailable", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_network_unavailable", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_network_unavailable",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
 
         case .tspRouteError(let reason):
             let messageKey = reason ?? NSLocalizedString("Could not generate an optimized route.", comment: "Fallback message for route error")
@@ -121,7 +240,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.error ?? .red
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_route_error", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_route_error", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_route_error",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
 
         case .unauthorizedAccess:
             let alert = FurfolioAlert(
@@ -132,7 +261,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.destructive ?? .red
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_unauthorized_access", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_unauthorized_access", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_unauthorized_access",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
 
         default:
             let alert = FurfolioAlert(
@@ -143,7 +282,17 @@ final class ErrorHandlingService {
                 foregroundColor: AppColors.info ?? .blue
             )
             appState.presentAlert(alert)
-            Self.auditLogger.log(event: "alert_generic_error", error: error, context: mergedAuditContext(error: error, extra: extraContext))
+            Task {
+                let ctx = mergedAuditContext(error: error, extra: extraContext)
+                await Self.auditLogger.log(event: "alert_generic_error", error: error, context: ctx)
+                await ErrorAuditManager.shared.add(
+                    ErrorAuditEntry(
+                        event: "alert_generic_error",
+                        errorType: String(describing: error),
+                        context: ctx
+                    )
+                )
+            }
         }
     }
 
@@ -193,3 +342,18 @@ func someRiskyOperation() {
     }
 }
 */
+
+
+// MARK: - Diagnostics
+
+public extension ErrorHandlingService {
+    /// Fetch recent error audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [ErrorAuditEntry] {
+        await ErrorAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export error audit log as JSON string.
+    static func exportAuditLogJSON() async -> String {
+        await ErrorAuditManager.shared.exportJSON()
+    }
+}

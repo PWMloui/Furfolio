@@ -6,8 +6,69 @@
 //  Enhanced: Enterprise-grade, model-driven, analytics/audit, DI, attachments, MVP/prod.
 //
 
+/**
+ FeedbackSubmissionService
+ -------------------------
+ A service for submitting user feedback in Furfolio, supporting both completion-handler and async/await styles, with enterprise-grade analytics, audit logging, offline queuing, and attachments.
+
+ - **Purpose**: Validates, queues, and submits feedback, handling offline scenarios and retries.
+ - **Architecture**: Conforms to `FeedbackSubmissionServiceProtocol`, with dependency-injected `AnalyticsServiceProtocol`, `AuditLoggerProtocol`, and `OfflineFeedbackQueueProtocol`.
+ - **Concurrency & Async Logging**: Wraps analytics and audit calls in non-blocking `Task` blocks and supports async methods.
+ - **Diagnostics**: Provides an in-memory audit manager for troubleshooting and export of audit logs.
+ - **Localization**: Error messages are localized via `NSLocalizedString`.
+ */
+
 import Foundation
 import os
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a feedback submission event.
+public struct FeedbackAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let feedbackId: UUID
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, feedbackId: UUID) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.feedbackId = feedbackId
+    }
+}
+
+/// Manages concurrency-safe audit logging for feedback events.
+public actor FeedbackAuditManager {
+    private var buffer: [FeedbackAuditEntry] = []
+    private let maxEntries = 200
+    public static let shared = FeedbackAuditManager()
+
+    /// Add a new audit entry, retaining only the most recent `maxEntries`.
+    public func add(_ entry: FeedbackAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries.
+    public func recent(limit: Int = 20) -> [FeedbackAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit log as JSON.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - Protocols
 
@@ -66,11 +127,21 @@ final class FeedbackSubmissionService: FeedbackSubmissionServiceProtocol {
         guard !trimmedMessage.isEmpty else {
             completion(.failure(SubmissionError.emptyFeedback))
             logEvent(success: false, reason: "Empty feedback", feedback: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "empty_feedback", feedbackId: feedback.id)
+                )
+            }
             return
         }
         guard feedback.category != nil else {
             completion(.failure(SubmissionError.missingCategory))
             logEvent(success: false, reason: "Missing category", feedback: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "missing_category", feedbackId: feedback.id)
+                )
+            }
             return
         }
         // Simulate offline queue demo
@@ -79,8 +150,23 @@ final class FeedbackSubmissionService: FeedbackSubmissionServiceProtocol {
             offlineQueue.enqueue(feedback)
             completion(.failure(SubmissionError.offline))
             logEvent(success: false, reason: "Offline, queued", feedback: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "offline_queued", feedbackId: feedback.id)
+                )
+            }
             analytics?.log(event: .feedbackQueued, metadata: feedback.analyticsSummary)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_queued", feedbackId: feedback.id)
+                )
+            }
             auditLogger?.record(event: .feedbackQueued, data: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_queued", feedbackId: feedback.id)
+                )
+            }
             return
         }
 
@@ -96,18 +182,43 @@ final class FeedbackSubmissionService: FeedbackSubmissionServiceProtocol {
         let trimmedMessage = feedback.message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
             logEvent(success: false, reason: "Empty feedback", feedback: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "empty_feedback", feedbackId: feedback.id)
+                )
+            }
             return .failure(SubmissionError.emptyFeedback)
         }
         guard feedback.category != nil else {
             logEvent(success: false, reason: "Missing category", feedback: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "missing_category", feedbackId: feedback.id)
+                )
+            }
             return .failure(SubmissionError.missingCategory)
         }
         let isOffline = false // Replace with real reachability
         if isOffline, let offlineQueue {
             offlineQueue.enqueue(feedback)
             logEvent(success: false, reason: "Offline, queued", feedback: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "offline_queued", feedbackId: feedback.id)
+                )
+            }
             analytics?.log(event: .feedbackQueued, metadata: feedback.analyticsSummary)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_queued", feedbackId: feedback.id)
+                )
+            }
             auditLogger?.record(event: .feedbackQueued, data: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_queued", feedbackId: feedback.id)
+                )
+            }
             return .failure(SubmissionError.offline)
         }
         try? await Task.sleep(nanoseconds: UInt64(artificialDelay * 1_000_000_000))
@@ -128,11 +239,31 @@ final class FeedbackSubmissionService: FeedbackSubmissionServiceProtocol {
         logEvent(success: success, reason: success ? nil : "Network failure", feedback: feedback)
         if success {
             analytics?.log(event: .feedbackSubmitted, metadata: feedback.analyticsSummary)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_submitted", feedbackId: feedback.id)
+                )
+            }
             auditLogger?.record(event: .feedbackSubmitted, data: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_submitted", feedbackId: feedback.id)
+                )
+            }
             DispatchQueue.main.async { completion(.success(())) }
         } else {
             analytics?.log(event: .feedbackFailed, metadata: feedback.analyticsSummary)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_failed", feedbackId: feedback.id)
+                )
+            }
             auditLogger?.record(event: .feedbackFailed, data: feedback)
+            Task {
+                await FeedbackAuditManager.shared.add(
+                    FeedbackAuditEntry(event: "feedback_failed", feedbackId: feedback.id)
+                )
+            }
             DispatchQueue.main.async { completion(.failure(SubmissionError.networkFailure)) }
         }
     }
@@ -189,4 +320,18 @@ struct FeedbackAttachment: Codable, Equatable {
 }
 enum FeedbackCategory: String, Codable {
     case bug, feature, general, other
+}
+
+// MARK: - Diagnostics
+
+public extension FeedbackSubmissionService {
+    /// Fetch recent feedback audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [FeedbackAuditEntry] {
+        await FeedbackAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export feedback audit log as JSON.
+    static func exportAuditLogJSON() async -> String {
+        await FeedbackAuditManager.shared.exportJSON()
+    }
 }

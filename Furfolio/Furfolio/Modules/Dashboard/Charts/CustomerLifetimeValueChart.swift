@@ -51,6 +51,60 @@ fileprivate final class CustomerLifetimeValueChartAudit {
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No CLV chart events recorded."
     }
+
+    // MARK: - Enhancement: CSV export of audit events
+    /// Exports the last audit event as a CSV string with columns: timestamp,pointCount,valueRange,dateRange,tags
+    static func exportCSV() -> String? {
+        guard let last = log.last else { return nil }
+        // Escape commas in valueRange and dateRange if needed by quoting
+        let escapedValueRange = "\"\(last.valueRange.replacingOccurrences(of: "\"", with: "\"\""))\""
+        let escapedDateRange = "\"\(last.dateRange.replacingOccurrences(of: "\"", with: "\"\""))\""
+        let escapedTags = "\"\(last.tags.joined(separator: ",").replacingOccurrences(of: "\"", with: "\"\""))\""
+        let timestampStr = ISO8601DateFormatter().string(from: last.timestamp)
+        return "\(timestampStr),\(last.pointCount),\(escapedValueRange),\(escapedDateRange),\(escapedTags)"
+    }
+
+    // MARK: - Enhancement: Analytics computed properties
+
+    /// Calculates the average lifetime value from all events' valueRange minimum and maximum values, averaged.
+    /// Returns nil if no events or unable to parse.
+    static var averageLifetimeValue: Double? {
+        // Parse min and max from each event's valueRange string "min $X, max $Y"
+        let values = log.compactMap { event -> (Double, Double)? in
+            // Extract min and max strings
+            // Expected format: "min $X, max $Y"
+            let pattern = #"min \$([\d,]+), max \$([\d,]+)"#
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+                  let match = regex.firstMatch(in: event.valueRange, options: [], range: NSRange(location: 0, length: event.valueRange.utf16.count)),
+                  match.numberOfRanges == 3,
+                  let minRange = Range(match.range(at: 1), in: event.valueRange),
+                  let maxRange = Range(match.range(at: 2), in: event.valueRange)
+            else { return nil }
+
+            let minStr = event.valueRange[minRange].replacingOccurrences(of: ",", with: "")
+            let maxStr = event.valueRange[maxRange].replacingOccurrences(of: ",", with: "")
+            if let minVal = Double(minStr), let maxVal = Double(maxStr) {
+                return (minVal, maxVal)
+            }
+            return nil
+        }
+        guard !values.isEmpty else { return nil }
+        let averages = values.map { ($0.0 + $0.1) / 2.0 }
+        let sum = averages.reduce(0, +)
+        return sum / Double(averages.count)
+    }
+
+    /// Returns the most frequent pointCount value across all audit log events.
+    /// Returns nil if no events.
+    static var mostFrequentPointCount: Int? {
+        guard !log.isEmpty else { return nil }
+        let counts = Dictionary(grouping: log, by: { $0.pointCount })
+            .mapValues { $0.count }
+        if let (pointCount, _) = counts.max(by: { $0.value < $1.value }) {
+            return pointCount
+        }
+        return nil
+    }
 }
 
 // MARK: - Model
@@ -129,6 +183,12 @@ struct CustomerLifetimeValueChart: View {
             }
             .frame(height: 220)
             .accessibilityIdentifier("CustomerLifetimeValueChart-MainChart")
+
+            // MARK: - Enhancement: DEV overlay in DEBUG builds showing audit info
+            #if DEBUG
+            AuditInfoOverlay()
+                .padding(.top, 12)
+            #endif
         }
         .padding()
         .background(
@@ -145,6 +205,10 @@ struct CustomerLifetimeValueChart: View {
                 valueRange: valueRange,
                 dateRange: dateRange
             )
+            // MARK: - Enhancement: Accessibility announcement if any lifetimeValue == 0
+            if data.contains(where: { $0.lifetimeValue == 0 }) {
+                UIAccessibility.post(notification: .announcement, argument: "A customer has zero lifetime value.")
+            }
         }
     }
 }
@@ -157,9 +221,67 @@ public enum CustomerLifetimeValueChartAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         CustomerLifetimeValueChartAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
+
+    // MARK: - Enhancement: Expose CSV export
+    public static var exportCSV: String? { CustomerLifetimeValueChartAudit.exportCSV() }
+
+    // MARK: - Enhancement: Expose analytics
+    public static var averageLifetimeValue: Double? { CustomerLifetimeValueChartAudit.averageLifetimeValue }
+    public static var mostFrequentPointCount: Int? { CustomerLifetimeValueChartAudit.mostFrequentPointCount }
 }
 
 #if DEBUG
+// MARK: - Enhancement: DEV overlay view showing audit info
+private struct AuditInfoOverlay: View {
+    private let recentEvents: [String] = CustomerLifetimeValueChartAudit.log.suffix(3).map { $0.accessibilityLabel }
+    private let averageLifetimeValue: Double? = CustomerLifetimeValueChartAudit.averageLifetimeValue
+    private let mostFrequentPointCount: Int? = CustomerLifetimeValueChartAudit.mostFrequentPointCount
+
+    private var formattedAverageLifetimeValue: String {
+        guard let avg = averageLifetimeValue else { return "N/A" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: avg)) ?? "$0"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Audit Info (Last 3 Events):")
+                .font(.caption)
+                .bold()
+            ForEach(recentEvents, id: \.self) { event in
+                Text(event)
+                    .font(.caption2)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.5)
+            }
+            Divider()
+            HStack {
+                Text("Avg Lifetime Value:")
+                    .font(.caption2)
+                    .bold()
+                Spacer()
+                Text(formattedAverageLifetimeValue)
+                    .font(.caption2)
+            }
+            HStack {
+                Text("Most Frequent Point Count:")
+                    .font(.caption2)
+                    .bold()
+                Spacer()
+                Text(mostFrequentPointCount.map(String.init) ?? "N/A")
+                    .font(.caption2)
+            }
+        }
+        .padding(8)
+        .background(Color(.secondarySystemBackground).opacity(0.9))
+        .cornerRadius(8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Debug audit information overlay")
+    }
+}
+
 struct CustomerLifetimeValueChart_Previews: PreviewProvider {
     static var previews: some View {
         let calendar = Calendar.current

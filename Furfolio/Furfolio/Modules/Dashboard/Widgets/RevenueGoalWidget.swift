@@ -1,4 +1,3 @@
-
 //  RevenueGoalWidget.swift
 //  Furfolio
 //
@@ -26,6 +25,7 @@ fileprivate struct RevenueGoalAuditEvent: Codable {
 fileprivate final class RevenueGoalAudit {
     static private(set) var log: [RevenueGoalAuditEvent] = []
 
+    /// Records a new audit event with the given parameters.
     static func record(
         goal: Double,
         actual: Double,
@@ -45,17 +45,54 @@ fileprivate final class RevenueGoalAudit {
         if log.count > 40 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Exports all audit events as a CSV string with columns: timestamp,goal,actual,percent,status,tags.
+    static func exportCSV() -> String {
+        let header = "timestamp,goal,actual,percent,status,tags"
+        let rows = log.map { event in
+            let dateStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: "|")
+            return "\(dateStr),\(event.goal),\(event.actual),\(event.percent),\(event.status),\(tagsStr)"
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
 
+    /// Accessibility label summary of the last event or a default message.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No revenue goal widget events recorded."
     }
+    
+    /// Returns the accessibility labels of the most recent audit events, limited by `limit`.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+    
+    // MARK: - Analytics Enhancements
+    
+    /// Computes the average percent value of all audit events.
+    static var averagePercent: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0.0) { $0 + $1.percent }
+        return total / Double(log.count)
+    }
+    
+    /// Determines the most frequent status string among all audit events.
+    static var mostFrequentStatus: String {
+        guard !log.isEmpty else { return "none" }
+        let frequency = Dictionary(grouping: log, by: { $0.status })
+            .mapValues { $0.count }
+        return frequency.max(by: { $0.value < $1.value })?.key ?? "none"
+    }
+    
+    /// Total number of audit events recorded.
+    static var totalDisplays: Int {
+        log.count
     }
 }
 
@@ -155,7 +192,38 @@ public struct RevenueGoalWidget: View {
                 percent: percent,
                 status: status
             )
+            // Accessibility: Post VoiceOver announcement if percent < 0.5
+            if percent < 0.5 {
+                UIAccessibility.post(notification: .announcement, argument: "Warning: Revenue goal progress below 50 percent.")
+            }
         }
+        #if DEBUG
+        // DEV overlay showing recent audit info and analytics for debugging purposes
+        .overlay(
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                Text("Audit Events (last 3):")
+                    .font(.caption).bold()
+                ForEach(RevenueGoalAudit.recentEvents(limit: 3), id: \.self) { event in
+                    Text(event)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text(String(format: "Average Percent: %.2f%%", RevenueGoalAudit.averagePercent * 100))
+                    .font(.caption2)
+                Text("Most Frequent Status: \(RevenueGoalAudit.mostFrequentStatus)")
+                    .font(.caption2)
+                Text("Total Displays: \(RevenueGoalAudit.totalDisplays)")
+                    .font(.caption2)
+            }
+            .padding(6)
+            .background(Color(.systemBackground).opacity(0.85))
+            .cornerRadius(8)
+            .padding([.leading, .trailing, .bottom], 8),
+            alignment: .bottom
+        )
+        #endif
     }
 
     private var accessibilitySummary: String {
@@ -171,6 +239,22 @@ public enum RevenueGoalWidgetAuditAdmin {
     public static var lastJSON: String? { RevenueGoalAudit.exportLastJSON() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         RevenueGoalAudit.recentEvents(limit: limit)
+    }
+    
+    // Expose CSV export for audit events
+    public static func exportCSV() -> String {
+        RevenueGoalAudit.exportCSV()
+    }
+    
+    // Expose analytics properties
+    public static var averagePercent: Double {
+        RevenueGoalAudit.averagePercent
+    }
+    public static var mostFrequentStatus: String {
+        RevenueGoalAudit.mostFrequentStatus
+    }
+    public static var totalDisplays: Int {
+        RevenueGoalAudit.totalDisplays
     }
 }
 

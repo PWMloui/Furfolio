@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AVFoundation // For VoiceOver announcement
 
 // MARK: - Audit/Event Logging
 
@@ -57,6 +58,36 @@ fileprivate final class BehaviorBadgeAudit {
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No badge events recorded."
     }
+    
+    // MARK: - ENHANCEMENT: CSV export of all logged events
+    static func exportCSV() -> String {
+        let header = "timestamp,operation,badgeType,badgeLabel,tags,actor,context,detail"
+        let rows = log.map { event in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: "|")
+            let actorStr = event.actor ?? ""
+            let contextStr = event.context ?? ""
+            let detailStr = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            // Escape detail with quotes if contains comma or quotes
+            let escapedDetail = detailStr.contains(",") || detailStr.contains("\"") ? "\"\(detailStr)\"" : detailStr
+            return "\(timestampStr),\(event.operation),\(event.badgeType),\(event.badgeLabel),\(tagsStr),\(actorStr),\(contextStr),\(escapedDetail)"
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+    
+    // MARK: - ENHANCEMENT: Badge analytics
+    
+    /// Most frequent badgeType in the log (by count)
+    static var mostFrequentBadgeType: String? {
+        let counts = Dictionary(grouping: log, by: { $0.badgeType })
+            .mapValues { $0.count }
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+    
+    /// Total number of badge taps recorded
+    static var totalBadgeTaps: Int {
+        log.filter { $0.operation == "tap" }.count
+    }
 }
 
 // MARK: - BehaviorBadgeView (Auditable, Tokenized, Modular)
@@ -64,6 +95,9 @@ fileprivate final class BehaviorBadgeAudit {
 struct BehaviorBadgeView: View {
     let badges: [Badge]
     var showLabels: Bool = false // Show icon only, or icon + label
+    
+    // MARK: - ENHANCEMENT: DEV badge summary overlay (bottom)
+    @State private var isVoiceOverRunning = UIAccessibility.isVoiceOverRunning
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -85,6 +119,39 @@ struct BehaviorBadgeView: View {
                 )
             }
         }
+        #if DEBUG
+        // DEV-only overlay view at bottom showing last 3 badge events and most tapped badge
+        .overlay(
+            VStack(alignment: .leading, spacing: 4) {
+                Text("DEV Badge Audit Summary")
+                    .font(.caption)
+                    .bold()
+                    .foregroundColor(.white)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(BehaviorBadgeAudit.log.suffix(3).reversed(), id: \.timestamp) { event in
+                        Text(event.accessibilityLabel)
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.8))
+                            .lineLimit(1)
+                    }
+                }
+                if let mostFrequent = BehaviorBadgeAudit.mostFrequentBadgeType {
+                    Text("Most Frequent Badge: \(mostFrequent)")
+                        .font(.caption2)
+                        .foregroundColor(.yellow)
+                }
+                Text("Total Badge Taps: \(BehaviorBadgeAudit.totalBadgeTaps)")
+                    .font(.caption2)
+                    .foregroundColor(.yellow)
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.7))
+            .cornerRadius(8)
+            .padding(.horizontal)
+            .padding(.bottom, 8),
+            alignment: .bottom
+        )
+        #endif
     }
 }
 
@@ -141,6 +208,10 @@ private struct BadgeItemView: View {
                         badge: badge,
                         tags: ["popoverOpen", badge.type.rawValue]
                     )
+                    // MARK: - ENHANCEMENT: VoiceOver announcement on popover open
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        UIAccessibility.post(notification: .announcement, argument: "Info for \(badge.type.label) opened.")
+                    }
                 }
                 .onDisappear {
                     BehaviorBadgeAudit.record(
@@ -168,6 +239,19 @@ public enum BehaviorBadgeAuditAdmin {
     public static var lastJSON: String? { BehaviorBadgeAudit.exportLastJSON() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         BehaviorBadgeAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+    
+    // MARK: - ENHANCEMENT: Expose CSV export
+    public static func exportCSV() -> String {
+        BehaviorBadgeAudit.exportCSV()
+    }
+    
+    // MARK: - ENHANCEMENT: Expose analytics
+    public static var mostFrequentBadgeType: String? {
+        BehaviorBadgeAudit.mostFrequentBadgeType
+    }
+    public static var totalBadgeTaps: Int {
+        BehaviorBadgeAudit.totalBadgeTaps
     }
 }
 

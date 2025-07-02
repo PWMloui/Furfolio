@@ -101,7 +101,9 @@ final class FeedbackViewModel: ObservableObject {
         offlineStore.save(submission)
         queuedFeedbackCount = offlineStore.count
         showSuccess = true
-        analytics.log(event: .feedbackQueued)
+        Task {
+            analytics.log(event: .feedbackQueued)
+        }
         clearFields()
     }
 
@@ -149,7 +151,9 @@ final class FeedbackViewModel: ObservableObject {
 
     private func handleSuccess(_ submission: FeedbackSubmission) {
         showSuccess = true
-        analytics.log(event: .feedbackSubmitted)
+        Task {
+            analytics.log(event: .feedbackSubmitted)
+        }
         logAudit(success: true, submission: submission)
         clearFields()
     }
@@ -157,7 +161,9 @@ final class FeedbackViewModel: ObservableObject {
     private func handleFailure(_ submission: FeedbackSubmission, error: Error) {
         showSuccess = false
         errorLogger.log(error: error, context: "Feedback submission")
-        analytics.log(event: .feedbackFailed)
+        Task {
+            analytics.log(event: .feedbackFailed)
+        }
         logAudit(success: false, submission: submission, error: error)
         errorMessage = NSLocalizedString(
             "feedback_error_submission_failed",
@@ -167,9 +173,15 @@ final class FeedbackViewModel: ObservableObject {
     }
 
     // MARK: - Audit/Analytics
+    /// Logs feedback submission to the centralized audit system asynchronously.
+    /// - Parameters:
+    ///   - success: Whether submission succeeded.
+    ///   - submission: The feedback submission data.
+    ///   - error: Optional error on failure.
     private func logAudit(success: Bool, submission: FeedbackSubmission, error: Error? = nil) {
-        // Connect to unified audit log (Trust Center)
-        // Example: AuditLogManager.shared.logFeedback(submission, success: success, error: error)
+        Task {
+            await AuditLogManager.shared.logFeedback(submission, success: success, error: error)
+        }
     }
 
     // MARK: - Field/state reset

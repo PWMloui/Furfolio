@@ -5,6 +5,18 @@
 //  Created by mac on 6/27/25.
 //
 
+/**
+ ManagerOnboardingFlow
+ ---------------------
+ A SwiftUI view orchestrating the onboarding steps for manager users in Furfolio.
+
+ - **Architecture**: MVVM-capable, using `OnboardingTelemetryTracker` for analytics and audit.
+ - **Concurrency & Async Logging**: Wraps analytics and audit calls in async Tasks to avoid blocking the UI.
+ - **Localization**: All button titles and static text should be localized using `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: Navigation buttons include accessibility identifiers and labels.
+ - **Preview/Testability**: The flow can be injected with mock telemetry for testing and previews.
+ */
+
 // MARK: - ManagerOnboardingFlow.swift
 
 import SwiftUI
@@ -38,26 +50,37 @@ struct ManagerOnboardingFlow: View {
 
                 HStack {
                     if currentStepIndex > 0 {
-                        Button("Back") { currentStepIndex -= 1 }
+                        Button(LocalizedStringKey("Back")) { currentStepIndex -= 1 }
+                            .accessibilityIdentifier("OnboardingFlow_BackButton")
+                            .accessibilityLabel(LocalizedStringKey("Back"))
                     }
 
                     Spacer()
 
-                    Button(currentStepIndex == steps.count - 1 ? "Finish" : "Next") {
-                        if currentStepIndex == steps.count - 1 {
-                            telemetry.logCompletion(finalStep: steps[currentStepIndex])
-                            isComplete = true
-                        } else {
-                            telemetry.logAction("next", step: steps[currentStepIndex])
-                            currentStepIndex += 1
+                    Button(currentStepIndex == steps.count - 1 ? LocalizedStringKey("Finish") : LocalizedStringKey("Next")) {
+                        Task {
+                            if currentStepIndex == steps.count - 1 {
+                                await telemetry.analytics.log(event: "onboarding_finish", parameters: ["step": steps[currentStepIndex].rawValue])
+                                await telemetry.audit.record("Completed onboarding at step \(steps[currentStepIndex].rawValue)", metadata: ["step": "\(currentStepIndex)"])
+                                isComplete = true
+                            } else {
+                                await telemetry.analytics.log(event: "onboarding_next", parameters: ["step": steps[currentStepIndex].rawValue])
+                                await telemetry.audit.record("Advanced to next onboarding step from \(steps[currentStepIndex].rawValue)", metadata: ["step": "\(currentStepIndex)"])
+                                currentStepIndex += 1
+                            }
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("OnboardingFlow_NextButton")
+                    .accessibilityLabel(LocalizedStringKey(currentStepIndex == steps.count - 1 ? "Finish" : "Next"))
                 }
                 .padding()
             }
             .onAppear {
-                telemetry.logStepView(steps[currentStepIndex])
+                Task {
+                    await telemetry.analytics.screenView("onboarding_step_\(steps[currentStepIndex].rawValue)")
+                    await telemetry.audit.record("Viewed onboarding step \(steps[currentStepIndex].rawValue)", metadata: ["step": "\(currentStepIndex)"])
+                }
             }
         }
     }

@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Audit/Event Logging
 
 fileprivate struct AppointmentFilterAuditEvent: Codable {
     let timestamp: Date
-    let operation: String            // "menuOpen", "filterChange", "datePicker", "reset"
+    let operation: String            // "menuOpen", "filterChange", "datePicker", "reset", "preset"
     let service: String?
     let status: String?
     let dateRange: ClosedRange<Date>?
@@ -59,6 +60,26 @@ fileprivate final class AppointmentFilterAudit {
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Exports all audit events as a CSV string with headers.
+    static func exportAllCSV() -> String {
+        var csv = "timestamp,operation,service,status,dateRange,tags,actor,context,detail\n"
+        let dateFormatter = ISO8601DateFormatter()
+        for event in log {
+            let timestamp = dateFormatter.string(from: event.timestamp)
+            let operation = event.operation
+            let service = event.service ?? ""
+            let status = event.status ?? ""
+            let dateRange = event.dateRange.map { "\($0.lowerBound.timeIntervalSince1970)-\($0.upperBound.timeIntervalSince1970)" } ?? ""
+            let tags = event.tags.joined(separator: "|")
+            let actor = event.actor ?? ""
+            let context = event.context ?? ""
+            let detail = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let detailEscaped = "\"\(detail)\""
+            csv += "\(timestamp),\(operation),\(service),\(status),\(dateRange),\(tags),\(actor),\(context),\(detailEscaped)\n"
+        }
+        return csv
+    }
 
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No filter events recorded."
@@ -86,8 +107,27 @@ struct AppointmentFilterMenu: View {
 
     @State private var isDatePickerPresented = false
 
+    // MARK: - Haptic feedback generator
+    private let feedbackGenerator = UIImpactFeedbackGenerator(style: .light)
+
     var body: some View {
         Menu {
+            // MARK: Quick Presets Section
+            Section("Quick Presets") {
+                // "Today's Appointments" preset button
+                Button("Today's Appointments") {
+                    applyPresetToday()
+                }
+                // "This Week" preset button
+                Button("This Week") {
+                    applyPresetThisWeek()
+                }
+                // "Uncompleted Only" preset button
+                Button("Uncompleted Only") {
+                    applyPresetUncompleted()
+                }
+            }
+
             // MARK: Service Type Picker
             Section("Service Type") {
                 Picker("Service Type", selection: Binding(
@@ -107,6 +147,20 @@ struct AppointmentFilterMenu: View {
                     Text("All Services").tag(String?.none)
                     ForEach(serviceTypes, id: \.self) { service in
                         Text(service).tag(Optional(service))
+                    }
+                }
+                // Clear button to quickly unset the service filter if set
+                if selectedService != nil {
+                    Button("Clear Service Filter") {
+                        selectedService = nil
+                        AppointmentFilterAudit.record(
+                            operation: "filterChange",
+                            service: nil,
+                            status: selectedStatus,
+                            dateRange: dateRange,
+                            tags: ["serviceType", "clear"],
+                            detail: "Service filter cleared"
+                        )
                     }
                 }
             }
@@ -130,6 +184,20 @@ struct AppointmentFilterMenu: View {
                     Text("All Statuses").tag(String?.none)
                     ForEach(statuses, id: \.self) { status in
                         Text(status).tag(Optional(status))
+                    }
+                }
+                // Clear button to quickly unset the status filter if set
+                if selectedStatus != nil {
+                    Button("Clear Status Filter") {
+                        selectedStatus = nil
+                        AppointmentFilterAudit.record(
+                            operation: "filterChange",
+                            service: selectedService,
+                            status: nil,
+                            dateRange: dateRange,
+                            tags: ["status", "clear"],
+                            detail: "Status filter cleared"
+                        )
                     }
                 }
             }
@@ -168,13 +236,26 @@ struct AppointmentFilterMenu: View {
                 }
             }
         } label: {
-            Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
-                .labelStyle(IconOnlyLabelStyle())
-                .font(AppFonts.title3)
-                .accessibilityLabel("Filter Appointments")
-                .accessibilityAddTraits(.isButton)
+            ZStack(alignment: .topTrailing) {
+                Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                    .labelStyle(IconOnlyLabelStyle())
+                    .font(AppFonts.title3)
+                    .accessibilityLabel("Filter Appointments")
+                    .accessibilityAddTraits(.isButton)
+                // MARK: Dynamic badge if any filters are active
+                if hasActiveFilters {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 10, height: 10)
+                        .offset(x: 8, y: -4)
+                        .accessibilityLabel("Filters active")
+                }
+            }
         }
         .onAppear {
+            // Play haptic feedback when filter menu opens
+            feedbackGenerator.prepare()
+            feedbackGenerator.impactOccurred()
             AppointmentFilterAudit.record(
                 operation: "menuOpen",
                 service: selectedService,
@@ -199,15 +280,82 @@ struct AppointmentFilterMenu: View {
         }
     }
 
+    /// Indicates if any filters are currently active.
     private var hasActiveFilters: Bool {
         selectedService != nil || selectedStatus != nil || dateRange != nil
     }
 
+    /// Resets all filters to nil and calls onReset closure if provided.
     private func resetFilters() {
         selectedService = nil
         selectedStatus = nil
         dateRange = nil
         onReset?()
+    }
+
+    // MARK: - Quick Preset Actions
+
+    /// Applies the "Today's Appointments" preset: sets date range to today and clears status.
+    private func applyPresetToday() {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .day, value: 1, to: start)?.addingTimeInterval(-1) ?? Date()
+        dateRange = start...end
+        selectedStatus = nil
+        AppointmentFilterAudit.record(
+            operation: "preset",
+            service: selectedService,
+            status: selectedStatus,
+            dateRange: dateRange,
+            tags: ["preset", "today"],
+            detail: "Applied 'Today's Appointments' preset"
+        )
+        closeMenuIfPossible()
+    }
+
+    /// Applies the "This Week" preset: sets date range to the current week and clears status.
+    private func applyPresetThisWeek() {
+        let calendar = Calendar.current
+        let now = Date()
+        let weekInterval = calendar.dateInterval(of: .weekOfYear, for: now) ?? DateInterval(start: now, duration: 0)
+        let start = weekInterval.start
+        let end = weekInterval.end.addingTimeInterval(-1)
+        dateRange = start...end
+        selectedStatus = nil
+        AppointmentFilterAudit.record(
+            operation: "preset",
+            service: selectedService,
+            status: selectedStatus,
+            dateRange: dateRange,
+            tags: ["preset", "thisWeek"],
+            detail: "Applied 'This Week' preset"
+        )
+        closeMenuIfPossible()
+    }
+
+    /// Applies the "Uncompleted Only" preset: clears date range and sets status to uncompleted statuses.
+    private func applyPresetUncompleted() {
+        // Assuming "Scheduled" and "In Progress" are uncompleted statuses; adjust as needed.
+        // Here we set status filter to "Scheduled" only for simplicity.
+        dateRange = nil
+        selectedStatus = "Scheduled"
+        AppointmentFilterAudit.record(
+            operation: "preset",
+            service: selectedService,
+            status: selectedStatus,
+            dateRange: dateRange,
+            tags: ["preset", "uncompleted"],
+            detail: "Applied 'Uncompleted Only' preset"
+        )
+        closeMenuIfPossible()
+    }
+
+    /// Attempts to close the menu if possible by toggling isDatePickerPresented false.
+    /// Since SwiftUI Menu does not provide a direct way to close programmatically,
+    /// this is a best-effort placeholder.
+    private func closeMenuIfPossible() {
+        // No direct API to close Menu programmatically in SwiftUI.
+        // This function is a placeholder for future improvements or UIKit bridging if needed.
     }
 }
 
@@ -253,6 +401,8 @@ struct DateRangePickerView: View {
 public enum AppointmentFilterAuditAdmin {
     public static var lastSummary: String { AppointmentFilterAudit.accessibilitySummary }
     public static var lastJSON: String? { AppointmentFilterAudit.exportLastJSON() }
+    /// Export all audit events as CSV string.
+    public static func exportCSV() -> String { AppointmentFilterAudit.exportAllCSV() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         AppointmentFilterAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }

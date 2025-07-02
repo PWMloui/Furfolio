@@ -1,4 +1,3 @@
-
 //
 //  WatchConnectivityService.swift
 //  Furfolio
@@ -11,6 +10,87 @@
 import Foundation
 import WatchConnectivity
 import Combine
+
+/**
+ WatchConnectivityService
+ -------------------------
+ Manages communication between the iOS and watchOS apps with async analytics and audit logging.
+
+ - **Purpose**: Sends application context and messages, and handles incoming data.
+ - **Architecture**: Singleton `ObservableObject` using `WCSession`.
+ - **Concurrency & Async Logging**: Wraps all WCSession operations in non-blocking `Task` blocks.
+ - **Audit/Analytics Ready**: Defines async protocols for event tracking and integrates a dedicated audit manager actor.
+ - **Localization**: Log messages use `NSLocalizedString`.
+ - **Diagnostics & Preview/Testability**: Exposes async methods to fetch and export recent audit entries.
+ */
+
+// MARK: - Analytics & Audit Protocols
+
+public protocol WatchConnectivityAnalyticsLogger {
+    /// Log a connectivity event asynchronously.
+    func log(event: String, metadata: [String: Any]?) async
+}
+
+public protocol WatchConnectivityAuditLogger {
+    /// Record an audit entry asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+}
+
+public struct NullWatchConnectivityAnalyticsLogger: WatchConnectivityAnalyticsLogger {
+    public init() {}
+    public func log(event: String, metadata: [String : Any]?) async {}
+}
+
+public struct NullWatchConnectivityAuditLogger: WatchConnectivityAuditLogger {
+    public init() {}
+    public func record(_ message: String, metadata: [String : String]?) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a watch connectivity audit event.
+public struct WatchConnectivityAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let detail: String?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, detail: String? = nil) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.detail = detail
+    }
+}
+
+/// Concurrency-safe actor for logging watch connectivity events.
+public actor WatchConnectivityAuditManager {
+    private var buffer: [WatchConnectivityAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = WatchConnectivityAuditManager()
+
+    public func add(_ entry: WatchConnectivityAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    public func recent(limit: Int = 20) -> [WatchConnectivityAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - Data Transfer Objects (DTOs)
 
@@ -42,10 +122,14 @@ struct WatchAppContext: Codable {
 @MainActor
 final class WatchConnectivityService: NSObject, ObservableObject {
     
-    static let shared = WatchConnectivityService()
+    static let shared = WatchConnectivityService(
+        analytics: NullWatchConnectivityAnalyticsLogger(),
+        audit: NullWatchConnectivityAuditLogger()
+    )
 
-    // MARK: - Published Properties for watchOS UI
-    
+    private let analytics: WatchConnectivityAnalyticsLogger
+    private let audit: WatchConnectivityAuditLogger
+
     @Published private(set) var lastReceivedContext: WatchAppContext?
     @Published private(set) var isReachable: Bool = false
 
@@ -53,8 +137,13 @@ final class WatchConnectivityService: NSObject, ObservableObject {
 
     // MARK: - Initialization
     
-    private override init() {
+    private init(
+        analytics: WatchConnectivityAnalyticsLogger,
+        audit: WatchConnectivityAuditLogger
+    ) {
         self.session = .default
+        self.analytics = analytics
+        self.audit = audit
         super.init()
         
         if WCSession.isSupported() {
@@ -70,6 +159,14 @@ final class WatchConnectivityService: NSObject, ObservableObject {
     /// This should be called when data changes or periodically in the background.
     func sendContextToWatch() {
         guard session.isPaired, session.isWatchAppInstalled else { return }
+        
+        Task {
+            await analytics.log(event: "send_context_start", metadata: ["isPaired": session.isPaired])
+            await audit.record("Context send started", metadata: ["paired": "\(session.isPaired)"])
+            await WatchConnectivityAuditManager.shared.add(
+                WatchConnectivityAuditEntry(event: "send_context_start", detail: nil)
+            )
+        }
         
         Task {
             // Fetch real data from your DataStoreService
@@ -93,9 +190,18 @@ final class WatchConnectivityService: NSObject, ObservableObject {
             do {
                 let data = try JSONEncoder().encode(context)
                 try session.updateApplicationContext(["appContext": data])
-                print("WatchConnectivityService: Sent context to watch.")
+                
+                Task {
+                    await analytics.log(event: "send_context_complete", metadata: nil)
+                    await audit.record("Context send completed", metadata: nil)
+                    await WatchConnectivityAuditManager.shared.add(
+                        WatchConnectivityAuditEntry(event: "send_context_complete", detail: nil)
+                    )
+                }
+                
+                print(NSLocalizedString("WatchConnectivityService: Sent context to watch.", comment: ""))
             } catch {
-                print("WatchConnectivityService: Failed to send context - \(error.localizedDescription)")
+                print(NSLocalizedString("WatchConnectivityService: Failed to send context - \(error.localizedDescription)", comment: ""))
             }
         }
     }
@@ -105,12 +211,29 @@ final class WatchConnectivityService: NSObject, ObservableObject {
     
     /// Sends a message from the watch to the phone (e.g., to mark a task complete).
     func sendMessageToPhone(_ message: [String: Any]) {
+        Task {
+            await analytics.log(event: "send_message_start", metadata: message)
+            await audit.record("Message send started", metadata: message.mapValues { "\($0)" })
+            await WatchConnectivityAuditManager.shared.add(
+                WatchConnectivityAuditEntry(event: "send_message_start", detail: "\(message)")
+            )
+        }
+        
         guard session.isReachable else {
-            print("WatchConnectivityService: iPhone is not reachable.")
+            print(NSLocalizedString("WatchConnectivityService: iPhone is not reachable.", comment: ""))
             return
         }
         session.sendMessage(message, replyHandler: nil) { error in
-            print("WatchConnectivityService: Failed to send message to phone - \(error.localizedDescription)")
+            Task {
+                await self.analytics.log(event: "send_message_result", metadata: error == nil ? ["status":"success"] : ["status":"error"])
+                await self.audit.record("Message send result", metadata: ["error": error?.localizedDescription ?? "none"])
+                await WatchConnectivityAuditManager.shared.add(
+                    WatchConnectivityAuditEntry(event: error == nil ? "send_message_success" : "send_message_error", detail: error?.localizedDescription)
+                )
+            }
+            if let error = error {
+                print(NSLocalizedString("WatchConnectivityService: Failed to send message to phone - \(error.localizedDescription)", comment: ""))
+            }
         }
     }
 }
@@ -122,9 +245,9 @@ extension WatchConnectivityService: WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         DispatchQueue.main.async {
             self.isReachable = (activationState == .activated)
-            print("WatchConnectivityService: Session activation completed with state: \(activationState.rawValue)")
+            print(NSLocalizedString("WatchConnectivityService: Session activation completed with state: \(activationState.rawValue)", comment: ""))
             if let error = error {
-                print("WatchConnectivityService: Activation error: \(error.localizedDescription)")
+                print(NSLocalizedString("WatchConnectivityService: Activation error: \(error.localizedDescription)", comment: ""))
             }
         }
     }
@@ -141,14 +264,29 @@ extension WatchConnectivityService: WCSessionDelegate {
     
     /// Receives a message from the watch on the phone.
     func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
+        Task {
+            await analytics.log(event: "receive_message", metadata: message)
+            await audit.record("Message received", metadata: message.mapValues { "\($0)" })
+            await WatchConnectivityAuditManager.shared.add(
+                WatchConnectivityAuditEntry(event: "receive_message", detail: "\(message)")
+            )
+        }
         // Handle incoming commands from the watch on the iOS app
         // e.g., if message["action"] == "completeTask", get task ID and update in SwiftData
-        print("WatchConnectivityService: Received message on iPhone: \(message)")
+        print(NSLocalizedString("WatchConnectivityService: Received message on iPhone: \(message)", comment: ""))
     }
     #endif
     
     /// Receives application context on the watch.
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String : Any]) {
+        Task {
+            await analytics.log(event: "receive_context", metadata: ["items": applicationContext.keys.joined(separator: ",")])
+            await audit.record("Context received", metadata: nil)
+            await WatchConnectivityAuditManager.shared.add(
+                WatchConnectivityAuditEntry(event: "receive_context", detail: nil)
+            )
+        }
+        
         guard let data = applicationContext["appContext"] as? Data else {
             return
         }
@@ -157,10 +295,24 @@ extension WatchConnectivityService: WCSessionDelegate {
             let context = try JSONDecoder().decode(WatchAppContext.self, from: data)
             DispatchQueue.main.async {
                 self.lastReceivedContext = context
-                print("WatchConnectivityService: Received and decoded context on watch.")
+                print(NSLocalizedString("WatchConnectivityService: Received and decoded context on watch.", comment: ""))
             }
         } catch {
-            print("WatchConnectivityService: Failed to decode context on watch - \(error.localizedDescription)")
+            print(NSLocalizedString("WatchConnectivityService: Failed to decode context on watch - \(error.localizedDescription)", comment: ""))
         }
+    }
+}
+
+// MARK: - Diagnostics
+
+public extension WatchConnectivityService {
+    /// Fetch recent audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [WatchConnectivityAuditEntry] {
+        await WatchConnectivityAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export audit log as JSON.
+    static func exportAuditLogJSON() async -> String {
+        await WatchConnectivityAuditManager.shared.exportJSON()
     }
 }

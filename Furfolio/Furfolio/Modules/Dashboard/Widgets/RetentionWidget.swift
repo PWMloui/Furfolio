@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import Combine
+import AVFoundation
 
 // MARK: - Audit/Event Logging
 
@@ -24,6 +26,7 @@ fileprivate struct RetentionWidgetAuditEvent: Codable {
 fileprivate final class RetentionWidgetAudit {
     static private(set) var log: [RetentionWidgetAuditEvent] = []
 
+    /// Records a new audit event with the provided metrics and tags.
     static func record(
         retentionRate: Double?,
         churnRate: Double?,
@@ -41,16 +44,61 @@ fileprivate final class RetentionWidgetAudit {
         if log.count > 40 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+
+    /// Accessibility summary of the most recent audit event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No retention widget events recorded."
     }
+
+    /// Returns the accessibility labels of the most recent audit events, limited by `limit`.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+
+    // MARK: - New Analytics Computed Properties
+
+    /// Computes the average of all non-nil retentionRate values in the audit log.
+    static var averageRetentionRate: Double? {
+        let rates = log.compactMap { $0.retentionRate }
+        guard !rates.isEmpty else { return nil }
+        let total = rates.reduce(0, +)
+        return total / Double(rates.count)
+    }
+
+    /// Determines the most frequently occurring loyaltyCount value in the audit log.
+    static var mostFrequentLoyaltyCount: Int? {
+        let counts = log.compactMap { $0.loyaltyCount }
+        guard !counts.isEmpty else { return nil }
+        let frequency = Dictionary(grouping: counts, by: { $0 }).mapValues { $0.count }
+        return frequency.max(by: { $0.value < $1.value })?.key
+    }
+
+    /// Total number of audit events recorded.
+    static var totalWidgetDisplays: Int {
+        log.count
+    }
+
+    // MARK: - CSV Export
+
+    /// Exports all audit events as a CSV string with columns: timestamp,retentionRate,churnRate,loyaltyCount,tags
+    static func exportCSV() -> String {
+        var csv = "timestamp,retentionRate,churnRate,loyaltyCount,tags\n"
+        let formatter = ISO8601DateFormatter()
+        for event in log {
+            let timestamp = formatter.string(from: event.timestamp)
+            let retention = event.retentionRate.map { String($0) } ?? ""
+            let churn = event.churnRate.map { String($0) } ?? ""
+            let loyalty = event.loyaltyCount.map { String($0) } ?? ""
+            let tags = event.tags.joined(separator: ";")
+            csv += "\(timestamp),\(retention),\(churn),\(loyalty),\(tags)\n"
+        }
+        return csv
     }
 }
 
@@ -100,6 +148,34 @@ public struct RetentionWidget: View {
         .accessibilityLabel(accessibilitySummary)
         .accessibilityIdentifier("RetentionWidget-Container")
         .onAppear(perform: fetchMetrics)
+#if DEBUG
+        // DEV overlay showing audit info for debugging and analytics
+        .overlay(
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                Text("Audit Events (last 3):")
+                    .font(.caption).bold()
+                ForEach(RetentionWidgetAudit.recentEvents(limit: 3), id: \.self) { event in
+                    Text(event)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text("Average Retention Rate: \(RetentionWidgetAudit.averageRetentionRate?.formatted(.number.precision(.fractionLength(1))) ?? "n/a")%")
+                    .font(.caption2)
+                Text("Most Frequent Loyalty Count: \(RetentionWidgetAudit.mostFrequentLoyaltyCount.map(String.init) ?? "n/a")")
+                    .font(.caption2)
+                Text("Total Widget Displays: \(RetentionWidgetAudit.totalWidgetDisplays)")
+                    .font(.caption2)
+            }
+            .padding(6)
+            .background(Color.black.opacity(0.6))
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            .padding(),
+            alignment: .bottom
+        )
+#endif
     }
 
     private var retentionMetricView: some View {
@@ -178,6 +254,12 @@ public struct RetentionWidget: View {
                 churnRate: churn,
                 loyaltyCount: loyalty
             )
+            // Accessibility enhancement: announce if retentionRate is below 85%
+            if let retention = retention, retention < 85 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    UIAccessibility.post(notification: .announcement, argument: "Warning: Retention rate is below 85 percent.")
+                }
+            }
         }
     }
 
@@ -199,6 +281,21 @@ public enum RetentionWidgetAuditAdmin {
     public static var lastJSON: String? { RetentionWidgetAudit.exportLastJSON() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         RetentionWidgetAudit.recentEvents(limit: limit)
+    }
+
+    // Expose new analytics properties
+    /// Average retention rate across all audit events.
+    public static var averageRetentionRate: Double? { RetentionWidgetAudit.averageRetentionRate }
+
+    /// Most frequent loyalty count across all audit events.
+    public static var mostFrequentLoyaltyCount: Int? { RetentionWidgetAudit.mostFrequentLoyaltyCount }
+
+    /// Total number of widget displays recorded.
+    public static var totalWidgetDisplays: Int { RetentionWidgetAudit.totalWidgetDisplays }
+
+    /// Export all audit events as CSV string.
+    public static func exportCSV() -> String {
+        RetentionWidgetAudit.exportCSV()
     }
 }
 

@@ -7,75 +7,140 @@
 
 import SwiftUI
 
-// MARK: - FilterBar Audit/Event Logging
+// MARK: - Analytics & Audit Protocols
 
-fileprivate struct FilterBarAuditEvent: Codable {
-    let timestamp: Date
-    let operation: String            // "editSearch", "clearSearch", "filterChange"
-    let searchText: String
-    let filter: String
-    let tags: [String]
-    let actor: String?
-    let context: String?
-    var accessibilityLabel: String {
+public protocol FilterBarAnalyticsLogger {
+    /// Log a filter bar event asynchronously.
+    func log(event: String, searchText: String, filter: String) async
+}
+
+public protocol FilterBarAuditLogger {
+    /// Record a filter bar audit entry asynchronously.
+    func record(event: String, searchText: String, filter: String, tags: [String]) async
+}
+
+public struct NullFilterBarAnalyticsLogger: FilterBarAnalyticsLogger {
+    public init() {}
+    public func log(event: String, searchText: String, filter: String) async {}
+}
+
+public struct NullFilterBarAuditLogger: FilterBarAuditLogger {
+    public init() {}
+    public func record(event: String, searchText: String, filter: String, tags: [String]) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a filter bar audit event.
+public struct FilterBarAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let searchText: String
+    public let filter: String
+    public let tags: [String]
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        event: String,
+        searchText: String,
+        filter: String,
+        tags: [String]
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.searchText = searchText
+        self.filter = filter
+        self.tags = tags
+    }
+
+    public var accessibilityLabel: String {
         let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
-        return "\(operation.capitalized) [\(filter)] \"\(searchText)\" at \(dateStr)"
+        return "\(event.capitalized) [\(filter)] \"\(searchText)\" at \(dateStr)"
     }
 }
 
-fileprivate final class FilterBarAudit {
-    static private(set) var log: [FilterBarAuditEvent] = []
+/// Concurrency-safe actor for logging filter bar events.
+public actor FilterBarAuditManager {
+    private var buffer: [FilterBarAuditEntry] = []
+    private let maxEntries = 500
+    public static let shared = FilterBarAuditManager()
 
-    static func record(
-        operation: String,
-        searchText: String,
-        filter: String,
-        tags: [String],
-        actor: String? = nil,
-        context: String? = nil
-    ) {
-        let event = FilterBarAuditEvent(
-            timestamp: Date(),
-            operation: operation,
-            searchText: searchText,
-            filter: filter,
-            tags: tags,
-            actor: actor,
-            context: context
-        )
-        log.append(event)
-        if log.count > 500 { log.removeFirst() }
+    public func add(_ entry: FilterBarAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
     }
 
-    static func exportLastJSON() -> String? {
-        guard let last = log.last else { return nil }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+    public func recent(limit: Int = 20) -> [FilterBarAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportLastJSON() -> String? {
+        guard let last = buffer.last else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    static var accessibilitySummary: String {
-        log.last?.accessibilityLabel ?? "No filter/search events recorded."
+    public var accessibilitySummary: String {
+        recent(limit: 1).first?.accessibilityLabel ??
+           "No filter/search events recorded."
     }
 }
 
 // MARK: - FilterBar (Tokenized, Modular, Auditable Filter/Search Bar)
 
-struct FilterBar: View {
+public struct FilterBar: View {
     @Binding var searchText: String
     @Binding var selectedFilter: FilterOption
     var filterOptions: [FilterOption]
+    var analytics: FilterBarAnalyticsLogger
+    var audit: FilterBarAuditLogger
     var placeholder: String = NSLocalizedString("Search", comment: "Placeholder for filter bar")
     var accessibilityID: String? = nil
     var trailingButtons: [AnyView] = []
     var isEnabled: Bool = true
-    var actor: String? = nil
+    var actorID: String? = nil
     var context: String? = nil
 
     // Local state to track changes for audit
     @State private var previousSearch: String = ""
     @State private var previousFilter: FilterOption? = nil
 
-    var body: some View {
+    public init(
+        searchText: Binding<String>,
+        selectedFilter: Binding<FilterOption>,
+        filterOptions: [FilterOption],
+        analytics: FilterBarAnalyticsLogger = NullFilterBarAnalyticsLogger(),
+        audit: FilterBarAuditLogger = NullFilterBarAuditLogger(),
+        placeholder: String = NSLocalizedString("Search", comment: "Placeholder for filter bar"),
+        accessibilityID: String? = nil,
+        trailingButtons: [AnyView] = [],
+        isEnabled: Bool = true,
+        actorID: String? = nil,
+        context: String? = nil
+    ) {
+        self._searchText = searchText
+        self._selectedFilter = selectedFilter
+        self.filterOptions = filterOptions
+        self.analytics = analytics
+        self.audit = audit
+        self.placeholder = placeholder
+        self.accessibilityID = accessibilityID
+        self.trailingButtons = trailingButtons
+        self.isEnabled = isEnabled
+        self.actorID = actorID
+        self.context = context
+        self.previousSearch = searchText.wrappedValue
+        self.previousFilter = selectedFilter.wrappedValue
+    }
+
+    public var body: some View {
         VStack(spacing: AppSpacing.small) {
             HStack {
                 Image(systemName: "magnifyingglass")
@@ -83,14 +148,28 @@ struct FilterBar: View {
                 TextField(placeholder, text: $searchText, onEditingChanged: { _ in
                     // Log only if changed
                     if previousSearch != searchText {
-                        FilterBarAudit.record(
-                            operation: "editSearch",
-                            searchText: searchText,
-                            filter: selectedFilter.id,
-                            tags: ["search", "filter", "edit"],
-                            actor: actor,
-                            context: context
-                        )
+                        let tags = ["search", "filter", "edit"]
+                        Task {
+                            await analytics.log(
+                                event: "editSearch",
+                                searchText: searchText,
+                                filter: selectedFilter.id
+                            )
+                            await audit.record(
+                                event: "editSearch",
+                                searchText: searchText,
+                                filter: selectedFilter.id,
+                                tags: tags
+                            )
+                            await FilterBarAuditManager.shared.add(
+                                FilterBarAuditEntry(
+                                    event: "editSearch",
+                                    searchText: searchText,
+                                    filter: selectedFilter.id,
+                                    tags: tags
+                                )
+                            )
+                        }
                         previousSearch = searchText
                     }
                 })
@@ -98,28 +177,56 @@ struct FilterBar: View {
                 .disableAutocorrection(true)
                 .autocapitalization(.none)
                 .onSubmit {
-                    FilterBarAudit.record(
-                        operation: "editSearch",
-                        searchText: searchText,
-                        filter: selectedFilter.id,
-                        tags: ["search", "filter", "submit"],
-                        actor: actor,
-                        context: context
-                    )
+                    let tags = ["search", "filter", "submit"]
+                    Task {
+                        await analytics.log(
+                            event: "editSearch",
+                            searchText: searchText,
+                            filter: selectedFilter.id
+                        )
+                        await audit.record(
+                            event: "editSearch",
+                            searchText: searchText,
+                            filter: selectedFilter.id,
+                            tags: tags
+                        )
+                        await FilterBarAuditManager.shared.add(
+                            FilterBarAuditEntry(
+                                event: "editSearch",
+                                searchText: searchText,
+                                filter: selectedFilter.id,
+                                tags: tags
+                            )
+                        )
+                    }
                 }
                 .accessibilityIdentifier(accessibilityID)
                 .disabled(!isEnabled)
                 if !searchText.isEmpty {
                     Button(action: {
                         searchText = ""
-                        FilterBarAudit.record(
-                            operation: "clearSearch",
-                            searchText: "",
-                            filter: selectedFilter.id,
-                            tags: ["search", "filter", "clear"],
-                            actor: actor,
-                            context: context
-                        )
+                        let tags = ["search", "filter", "clear"]
+                        Task {
+                            await analytics.log(
+                                event: "clearSearch",
+                                searchText: "",
+                                filter: selectedFilter.id
+                            )
+                            await audit.record(
+                                event: "clearSearch",
+                                searchText: "",
+                                filter: selectedFilter.id,
+                                tags: tags
+                            )
+                            await FilterBarAuditManager.shared.add(
+                                FilterBarAuditEntry(
+                                    event: "clearSearch",
+                                    searchText: "",
+                                    filter: selectedFilter.id,
+                                    tags: tags
+                                )
+                            )
+                        }
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(AppColors.secondaryText)
@@ -148,14 +255,28 @@ struct FilterBar: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
                 .onChange(of: selectedFilter) { newValue in
                     if previousFilter?.id != newValue.id {
-                        FilterBarAudit.record(
-                            operation: "filterChange",
-                            searchText: searchText,
-                            filter: newValue.id,
-                            tags: ["search", "filter", "segment"],
-                            actor: actor,
-                            context: context
-                        )
+                        let tags = ["search", "filter", "segment"]
+                        Task {
+                            await analytics.log(
+                                event: "filterChange",
+                                searchText: searchText,
+                                filter: newValue.id
+                            )
+                            await audit.record(
+                                event: "filterChange",
+                                searchText: searchText,
+                                filter: newValue.id,
+                                tags: tags
+                            )
+                            await FilterBarAuditManager.shared.add(
+                                FilterBarAuditEntry(
+                                    event: "filterChange",
+                                    searchText: searchText,
+                                    filter: newValue.id,
+                                    tags: tags
+                                )
+                            )
+                        }
                         previousFilter = newValue
                     }
                 }
@@ -195,10 +316,26 @@ struct FilterOption: Hashable, Identifiable {
 // MARK: - Audit/Admin Accessors
 
 public enum FilterBarAuditAdmin {
-    public static var lastSummary: String { FilterBarAudit.accessibilitySummary }
-    public static var lastJSON: String? { FilterBarAudit.exportLastJSON() }
-    public static func recentEvents(limit: Int = 5) -> [String] {
-        FilterBarAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    public static var lastSummary: String {
+        get async { await FilterBarAuditManager.shared.accessibilitySummary }
+    }
+    public static func lastJSON() async -> String? {
+        await FilterBarAuditManager.shared.exportLastJSON()
+    }
+    public static func recentEvents(limit: Int = 5) async -> [String] {
+        await FilterBarAuditManager.shared.recent(limit: limit)
+            .map { $0.accessibilityLabel }
+    }
+}
+
+// MARK: - Diagnostics
+
+public extension FilterBar {
+    static func recentAuditEntries(limit: Int = 20) async -> [FilterBarAuditEntry] {
+        await FilterBarAuditManager.shared.recent(limit: limit)
+    }
+    static func exportLastAuditJSON() async -> String? {
+        await FilterBarAuditManager.shared.exportLastJSON()
     }
 }
 

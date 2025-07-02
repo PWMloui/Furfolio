@@ -2,25 +2,124 @@
 //  AppTheme.swift
 //  Furfolio
 //
-//  ENHANCED: Single source of truth for all design tokens.
-//  Modular, audit-ready, preview/test-injectable, brand/white-label, robust.
+//  ENHANCED: Enterprise-level single source of truth for all design tokens.
+//  Modular, audit/diagnostics/localization/preview/test ready, brand/white-label, robust.
+//  Last updated: 2025-06-27
 //
+/**
+ # AppTheme Architecture & Compliance
+
+ - **Centralized Token Management:** All design tokens (colors, fonts, spacing, radius, shadows, animation, etc.) are accessed through `AppTheme`, enabling instant theme swapping and robust admin/diagnostics review.
+ - **Extensibility:** Add/override tokens, brands, or categories by expanding enums. Previews and test loggers are modular.
+ - **Analytics/Audit/Trust Center:** All token reads are logged via async/await analytics logger (with testMode, event buffer, admin diagnostics API, Trust Center–ready).
+ - **Diagnostics:** Recent token events are buffered (last 20) and available via a public API for admin/QA troubleshooting.
+ - **Localization/Compliance:** All token names are localized via `NSLocalizedString`, ready for international admin UIs and regulatory review.
+ - **Preview/Testability:** Built-in Null logger, PreviewProvider supports testMode, diagnostics buffer, and full a11y/localization coverage.
+ */
 
 import SwiftUI
 
+// MARK: - Audit Context (set at login/session)
+public struct AppThemeAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "AppTheme"
+}
+
 // MARK: - Analytics/Audit Protocol
 
+/// Async/await analytics logger for token usage, with testMode and diagnostics buffer, including audit context and escalation flag.
 public protocol AppThemeAnalyticsLogger {
-    func log(token: String, value: Any)
+    var testMode: Bool { get set }
+    func log(
+        token: String,
+        value: Any,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async
+    func recentEvents() -> [AppThemeAnalyticsEvent]
 }
+
+public struct AppThemeAnalyticsEvent: Identifiable {
+    public let id = UUID()
+    public let timestamp: Date
+    public let token: String
+    public let valueDescription: String
+    public let role: String?
+    public let staffID: String?
+    public let context: String?
+    public let escalate: Bool
+}
+
 public struct NullAppThemeAnalyticsLogger: AppThemeAnalyticsLogger {
     public init() {}
-    public func log(token: String, value: Any) {}
+    public var testMode: Bool = false
+    public func log(
+        token: String,
+        value: Any,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async {
+        if testMode {
+            print("[AppTheme][TESTMODE] Token: \(token), Value: \(value), Role: \(role ?? "nil"), StaffID: \(staffID ?? "nil"), Context: \(context ?? "nil"), Escalate: \(escalate)")
+        }
+    }
+    public func recentEvents() -> [AppThemeAnalyticsEvent] { [] }
 }
+
+public final class DefaultAppThemeAnalyticsLogger: AppThemeAnalyticsLogger {
+    public var testMode: Bool = false
+    private var buffer: [AppThemeAnalyticsEvent] = []
+    private let lock = NSLock()
+    public init() {}
+    public func log(
+        token: String,
+        value: Any,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async {
+        let valueDesc = String(describing: value)
+        let msg = String(
+            format: NSLocalizedString("apptheme_event_format", value: "Token: %@ — %@", comment: "AppTheme event log format"),
+            NSLocalizedString("apptheme_\(token)", value: token, comment: "Token name for admin/diagnostics"),
+            valueDesc
+        )
+        let event = AppThemeAnalyticsEvent(
+            timestamp: Date(),
+            token: token,
+            valueDescription: valueDesc,
+            role: role,
+            staffID: staffID,
+            context: context,
+            escalate: escalate
+        )
+        lock.lock()
+        if buffer.count >= 20 { buffer.removeFirst() }
+        buffer.append(event)
+        lock.unlock()
+        if testMode {
+            print("[AppTheme][TESTMODE] \(msg), Role: \(role ?? "nil"), StaffID: \(staffID ?? "nil"), Context: \(context ?? "nil"), Escalate: \(escalate)")
+        }
+    }
+    public func recentEvents() -> [AppThemeAnalyticsEvent] {
+        lock.lock()
+        let copy = buffer
+        lock.unlock()
+        return copy
+    }
+}
+
+// MARK: - AppTheme: Single Source of Truth for Design Tokens
 
 public enum AppTheme {
     // MARK: - Analytics DI (for BI/QA/Trust Center)
-    public static var analyticsLogger: AppThemeAnalyticsLogger = NullAppThemeAnalyticsLogger()
+    public static var analyticsLogger: AppThemeAnalyticsLogger = DefaultAppThemeAnalyticsLogger()
 
     // MARK: - Colors
     public enum Colors {
@@ -75,18 +174,21 @@ public enum AppTheme {
 
     // MARK: - Corner Radius
     public enum CornerRadius {
-        public static var small: CGFloat     { log("small", BorderRadius.small);     return BorderRadius.small }
-        public static var medium: CGFloat    { log("medium", BorderRadius.medium);   return BorderRadius.medium }
-        public static var large: CGFloat     { log("large", BorderRadius.large);     return BorderRadius.large }
-        public static var capsule: CGFloat   { log("capsule", BorderRadius.capsule); return BorderRadius.capsule }
-        public static var button: CGFloat    { log("button", BorderRadius.button);   return BorderRadius.button }
+        public static var small: CGFloat     { log("small", AppRadius.small);     return AppRadius.small }
+        public static var medium: CGFloat    { log("medium", AppRadius.medium);   return AppRadius.medium }
+        public static var large: CGFloat     { log("large", AppRadius.large);     return AppRadius.large }
+        public static var capsule: CGFloat   { log("capsule", AppRadius.capsule); return AppRadius.capsule }
+        public static var button: CGFloat    { log("button", AppRadius.button);   return AppRadius.button }
     }
 
     // MARK: - Shadows
     public enum Shadows {
-        public static var card: AppShadow    { log("card", AppShadows.card);     return AppShadows.card }
-        public static var modal: AppShadow   { log("modal", AppShadows.modal);   return AppShadows.modal }
-        public static var avatar: AppShadow  { log("avatar", AppShadows.avatar); return AppShadows.avatar }
+        public static var card: Shadow     { log("card", AppShadows.card);     return AppShadows.card }
+        public static var modal: Shadow    { log("modal", AppShadows.modal);   return AppShadows.modal }
+        public static var avatar: Shadow   { log("avatar", AppShadows.avatar); return AppShadows.avatar }
+        public static var button: Shadow   { log("button", AppShadows.button); return AppShadows.button }
+        public static var thin: Shadow     { log("thin", AppShadows.thin);     return AppShadows.thin }
+        public static var inner: Shadow    { log("inner", AppShadows.inner);   return AppShadows.inner }
     }
 
     // MARK: - Animation Durations & Curves
@@ -98,7 +200,6 @@ public enum AppTheme {
         public static var extraSlow: Double  { log("extraSlow", AppThemeDurations.extraSlow); return AppThemeDurations.extraSlow }
         public static var pulse: Double      { log("pulse", AppThemeDurations.pulse);    return AppThemeDurations.pulse }
         public static var spinnerDuration: Double { log("spinnerDuration", AppThemeDurations.spinnerDuration); return AppThemeDurations.spinnerDuration }
-        // Add more animation tokens as needed.
     }
 
     // MARK: - Line Widths
@@ -109,9 +210,27 @@ public enum AppTheme {
         public static var thick: CGFloat     { log("thick", AppLineWidths.thick);       return AppLineWidths.thick }
     }
 
-    // MARK: - Utility: Token Logging
+    // MARK: - Utility: Token Logging (async/await) with audit context and escalation
     private static func log(_ token: String, _ value: Any) {
-        analyticsLogger.log(token: token, value: value)
+        let escalate = token.lowercased().contains("danger") ||
+                       String(describing: value).lowercased().contains("danger") ||
+                       token.lowercased().contains("delete") ||
+                       token.lowercased().contains("critical")
+        Task {
+            await analyticsLogger.log(
+                token: token,
+                value: value,
+                role: AppThemeAuditContext.role,
+                staffID: AppThemeAuditContext.staffID,
+                context: AppThemeAuditContext.context,
+                escalate: escalate
+            )
+        }
+    }
+
+    // MARK: - Diagnostics API (returns audit events)
+    public static func recentEvents() -> [AppThemeAnalyticsEvent] {
+        analyticsLogger.recentEvents()
     }
 }
 
@@ -132,3 +251,50 @@ struct ContentView: View {
     }
 }
 */
+
+// MARK: - Preview/Diagnostics UI
+
+#if DEBUG
+struct AppThemePreview: View {
+    @State private var events: [AppThemeAnalyticsEvent] = []
+    var analyticsLogger: AppThemeAnalyticsLogger = DefaultAppThemeAnalyticsLogger()
+    var body: some View {
+        VStack(spacing: 30) {
+            Text(NSLocalizedString("apptheme_token_preview", value: "AppTheme Token Preview", comment: "Token preview title"))
+                .font(.headline)
+            Button(NSLocalizedString("show_recent_apptheme_events", value: "Show Recent Events", comment: "Show diagnostics log")) {
+                events = analyticsLogger.recentEvents()
+            }
+            .padding(.top, 6)
+            if !events.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(events) { event in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Token: \(event.token)").font(.caption).bold()
+                                Text("Value: \(event.valueDescription)").font(.caption2)
+                                Text("Role: \(event.role ?? "nil")").font(.caption2)
+                                Text("StaffID: \(event.staffID ?? "nil")").font(.caption2)
+                                Text("Context: \(event.context ?? "nil")").font(.caption2)
+                                Text("Escalate: \(event.escalate ? "Yes" : "No")").font(.caption2)
+                                Text("Timestamp: \(event.timestamp.formatted(date: .numeric, time: .standard))").font(.caption2)
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding()
+                }
+                .frame(maxHeight: 180)
+                .background(Color(.systemGray6))
+                .cornerRadius(7)
+            }
+        }
+        .padding()
+        .background(AppTheme.Colors.background)
+    }
+}
+
+#Preview {
+    AppThemePreview(analyticsLogger: DefaultAppThemeAnalyticsLogger())
+}
+#endif

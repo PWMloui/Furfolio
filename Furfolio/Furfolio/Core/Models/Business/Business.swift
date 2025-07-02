@@ -9,105 +9,194 @@ import Foundation
 import SwiftData
 import SwiftUI
 
-// MARK: - Analytics/Audit Protocol
+// MARK: - Audit Context (set at login/session)
+public struct BusinessAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "Business"
+}
+
+// MARK: - Audit Event
+public struct BusinessAuditEvent: Codable, Identifiable {
+    public let id: UUID
+    public let timestamp: Date
+    public let operation: String
+    public let businessID: UUID
+    public let detail: String
+    public let user: String?
+    public let context: String?
+    public let role: String?
+    public let staffID: String?
+    public let escalate: Bool
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        operation: String,
+        businessID: UUID,
+        detail: String,
+        user: String?,
+        context: String?,
+        role: String?,
+        staffID: String?,
+        escalate: Bool
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.operation = operation
+        self.businessID = businessID
+        self.detail = detail
+        self.user = user
+        self.context = context
+        self.role = role
+        self.staffID = staffID
+        self.escalate = escalate
+    }
+
+    public var accessibilityLabel: String {
+        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
+        var base = "[\(dateStr)] \(operation.capitalized) (\(detail))"
+        var details = [String]()
+        if let user = user { details.append("User: \(user)") }
+        if let role = role { details.append("Role: \(role)") }
+        if let staffID = staffID { details.append("StaffID: \(staffID)") }
+        if let context = context { details.append("Context: \(context)") }
+        if escalate { details.append("Escalate: YES") }
+        return ([base] + details).joined(separator: " | ")
+    }
+}
+
+// MARK: - BusinessAuditLogger
+
+fileprivate final class BusinessAuditLogger {
+    private static let queue = DispatchQueue(label: "furfolio.business.audit.logger")
+    private static var log: [BusinessAuditEvent] = []
+    private static let maxLogSize = 200
+
+    static func record(
+        operation: String,
+        businessID: UUID,
+        detail: String,
+        user: String? = nil,
+        context: String? = nil,
+        escalate: Bool = false
+    ) {
+        let escalateFlag = escalate || operation.lowercased().contains("danger")
+            || operation.lowercased().contains("critical") || operation.lowercased().contains("delete")
+        let event = BusinessAuditEvent(
+            operation: operation,
+            businessID: businessID,
+            detail: detail,
+            user: user,
+            context: context ?? BusinessAuditContext.context,
+            role: BusinessAuditContext.role,
+            staffID: BusinessAuditContext.staffID,
+            escalate: escalateFlag
+        )
+        queue.async {
+            log.append(event)
+            if log.count > maxLogSize { log.removeFirst(log.count - maxLogSize) }
+        }
+    }
+
+    static func allEvents(completion: @escaping ([BusinessAuditEvent]) -> Void) {
+        queue.async { completion(log) }
+    }
+    static func exportLastJSON(completion: @escaping (String?) -> Void) {
+        queue.async {
+            guard let last = log.last else { completion(nil); return }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let json = (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
+            completion(json)
+        }
+    }
+    static func recentEvents(limit: Int = 5, completion: @escaping ([String]) -> Void) {
+        queue.async {
+            let events = log.suffix(limit).map { $0.accessibilityLabel }
+            completion(events)
+        }
+    }
+    static func clearLog() {
+        queue.async { log.removeAll() }
+    }
+    static func lastSummary(completion: @escaping (String) -> Void) {
+        queue.async {
+            if let last = log.last {
+                completion(last.accessibilityLabel)
+            } else {
+                completion("No business audit events recorded.")
+            }
+        }
+    }
+}
+
+// MARK: - Analytics/Audit Protocols
 
 public protocol BusinessAnalyticsLogger {
-    func log(event: String, info: [String: Any]?)
+    func log(event: String, info: [String: Any]?) async
 }
 public struct NullBusinessAnalyticsLogger: BusinessAnalyticsLogger {
     public init() {}
-    public func log(event: String, info: [String: Any]?) {}
+    public func log(event: String, info: [String: Any]?) async {}
 }
 
-// MARK: - Trust Center Permission Protocol
-
 public protocol BusinessTrustCenterDelegate {
-    func permission(for action: String, context: [String: Any]?) -> Bool
+    func permission(for action: String, context: [String: Any]?) async -> Bool
 }
 public struct NullBusinessTrustCenterDelegate: BusinessTrustCenterDelegate {
     public init() {}
-    public func permission(for action: String, context: [String: Any]?) -> Bool { true }
+    public func permission(for action: String, context: [String: Any]?) async -> Bool { true }
 }
 
 // MARK: - AuditLoggable Protocol
 
 protocol AuditLoggable {
-    func logChange(description: String)
+    func logChange(description: String) async
+}
+
+// MARK: - Audit Logger Actor (for legacy protocol conformance)
+actor AuditLogger {
+    func log(_ message: String) {
+        // Legacy fallback (now handled by BusinessAuditLogger)
+        print("[AuditLog] \(Date()): \(message)")
+    }
 }
 
 // MARK: - Business (Enterprise Enhanced)
 
 @Model
 final class Business: Identifiable, ObservableObject, AuditLoggable {
-    // MARK: - Audit/Analytics/Trust Center Injectables
     static var analyticsLogger: BusinessAnalyticsLogger = NullBusinessAnalyticsLogger()
     static var trustCenterDelegate: BusinessTrustCenterDelegate = NullBusinessTrustCenterDelegate()
+    private let auditLogger = AuditLogger()
 
-    // MARK: - Unique Identifier
     @Attribute(.unique)
     var id: UUID
 
-    // MARK: - Core Business Details
     @Published @Attribute(.indexed)
     var name: String
 
     @Published @Attribute(.indexed)
     var ownerName: String
 
-    @Published
-    var address: String?
-
-    @Published
-    var phone: String?
-
-    @Published
-    var email: String?
-
-    @Published
-    var website: String?
-
-    // MARK: - Branding
-    @Published
-    var logoImageData: Data?
-
-    @Published
-    var colorTheme: String?
-
-    // MARK: - Staff and Multi-user/Role Support
+    @Published var address: String?
+    @Published var phone: String?
+    @Published var email: String?
+    @Published var website: String?
+    @Published var logoImageData: Data?
+    @Published var colorTheme: String?
     @Published @Relationship(deleteRule: .cascade)
     var staff: [StaffMember]
-
-    // MARK: - Settings
-    @Published
-    var defaultServiceDuration: Int
-
-    @Published
-    var currency: String
-
-    @Published
-    var timeZone: String
-
-    @Published
-    var locale: String
-
-    // MARK: - Analytics and Status
-    @Published
-    var dateCreated: Date
-
-    @Published
-    var lastModified: Date
-
-    @Published
-    var isActive: Bool
-
-    // MARK: - Feature Flags and TSP Integration
-    @Published
-    var featureFlags: [String: Bool]
-
-    @Published
-    var tspIntegrationEnabled: Bool
-
-    // MARK: - Initializer
+    @Published var defaultServiceDuration: Int
+    @Published var currency: String
+    @Published var timeZone: String
+    @Published var locale: String
+    @Published var dateCreated: Date
+    @Published var lastModified: Date
+    @Published var isActive: Bool
+    @Published var featureFlags: [String: Bool]
+    @Published var tspIntegrationEnabled: Bool
 
     init(
         id: UUID = UUID(),
@@ -149,12 +238,16 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         self.isActive = isActive
         self.featureFlags = featureFlags
         self.tspIntegrationEnabled = tspIntegrationEnabled
-        Self.analyticsLogger.log(event: "created", info: [
-            "id": id.uuidString,
-            "name": name,
-            "ownerName": ownerName,
-            "createdAt": dateCreated
-        ])
+
+        Task {
+            await Self.analyticsLogger.log(event: NSLocalizedString("BusinessCreated", comment: "Event when business is created"), info: [
+                "id": id.uuidString,
+                "name": name,
+                "ownerName": ownerName,
+                "createdAt": dateCreated
+            ])
+            BusinessAuditLogger.record(operation: "create", businessID: id, detail: "Business created: \(name)", user: ownerName)
+        }
     }
 
     // MARK: - Computed Properties
@@ -169,9 +262,7 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         return addr
     }
 
-    var staffCount: Int {
-        staff.count
-    }
+    var staffCount: Int { staff.count }
 
     var formattedLastModified: String {
         let formatter = DateFormatter()
@@ -189,7 +280,6 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         return false
     }
 
-    /// Accessibility: Concise business summary for UI/VoiceOver.
     var accessibilityLabel: String {
         var summary = "Business: \(name). Owner: \(ownerName)."
         summary += isActive ? " Active." : " Inactive."
@@ -197,10 +287,10 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         summary += " Last modified: \(formattedLastModified)."
         return summary
     }
+    var accessibilityLabelAsync: String { get async { accessibilityLabel } }
 
     // MARK: - Methods
 
-    /// Updates business settings, with analytics and Trust Center hooks.
     func updateSettings(
         name: String? = nil,
         ownerName: String? = nil,
@@ -218,21 +308,18 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         featureFlags: [String: Bool]? = nil,
         tspIntegrationEnabled: Bool? = nil,
         auditTag: String? = nil
-    ) {
-        guard Self.trustCenterDelegate.permission(for: "updateSettings", context: [
+    ) async {
+        let permissionContext: [String: Any] = [
             "id": id.uuidString,
             "name": name as Any,
             "ownerName": ownerName as Any,
             "user": ownerName as Any,
             "auditTag": auditTag as Any
-        ]) else {
-            Self.analyticsLogger.log(event: "updateSettings_denied", info: [
-                "id": id.uuidString,
-                "name": name as Any,
-                "ownerName": ownerName as Any,
-                "user": ownerName as Any,
-                "auditTag": auditTag as Any
-            ])
+        ]
+        let permitted = await Self.trustCenterDelegate.permission(for: "updateSettings", context: permissionContext)
+        guard permitted else {
+            await Self.analyticsLogger.log(event: NSLocalizedString("UpdateSettingsDenied", comment: "Event when updateSettings is denied"), info: permissionContext)
+            BusinessAuditLogger.record(operation: "settingsDenied", businessID: id, detail: "Update denied", user: ownerName, context: auditTag)
             return
         }
         if let name = name { self.name = name }
@@ -251,8 +338,10 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         if let featureFlags = featureFlags { self.featureFlags = featureFlags }
         if let tspIntegrationEnabled = tspIntegrationEnabled { self.tspIntegrationEnabled = tspIntegrationEnabled }
         self.lastModified = Date()
-        logChange(description: "Business settings updated")
-        Self.analyticsLogger.log(event: "settings_updated", info: [
+        let changed = "Business settings updated"
+        await logChange(description: changed)
+        BusinessAuditLogger.record(operation: "updateSettings", businessID: id, detail: changed, user: ownerName, context: auditTag)
+        await Self.analyticsLogger.log(event: NSLocalizedString("SettingsUpdated", comment: "Event when settings updated"), info: [
             "id": id.uuidString,
             "user": ownerName as Any,
             "fieldsChanged": [
@@ -268,26 +357,25 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         ])
     }
 
-    /// Adds a staff member, with audit and Trust Center logic.
-    func addStaff(_ staffMember: StaffMember, by user: String?, auditTag: String? = nil) {
-        guard Self.trustCenterDelegate.permission(for: "addStaff", context: [
+    func addStaff(_ staffMember: StaffMember, by user: String?, auditTag: String? = nil) async {
+        let permissionContext: [String: Any] = [
             "businessID": id.uuidString,
             "staffName": staffMember.name,
             "user": user as Any,
             "auditTag": auditTag as Any
-        ]) else {
-            Self.analyticsLogger.log(event: "addStaff_denied", info: [
-                "businessID": id.uuidString,
-                "staffName": staffMember.name,
-                "user": user as Any,
-                "auditTag": auditTag as Any
-            ])
+        ]
+        let permitted = await Self.trustCenterDelegate.permission(for: "addStaff", context: permissionContext)
+        guard permitted else {
+            await Self.analyticsLogger.log(event: NSLocalizedString("AddStaffDenied", comment: "Event when addStaff is denied"), info: permissionContext)
+            BusinessAuditLogger.record(operation: "addStaffDenied", businessID: id, detail: "Add staff denied: \(staffMember.name)", user: user, context: auditTag)
             return
         }
         staff.append(staffMember)
         lastModified = Date()
-        logChange(description: "Added staff: \(staffMember.name)")
-        Self.analyticsLogger.log(event: "staff_added", info: [
+        let desc = "Added staff: \(staffMember.name)"
+        await logChange(description: desc)
+        BusinessAuditLogger.record(operation: "addStaff", businessID: id, detail: desc, user: user, context: auditTag)
+        await Self.analyticsLogger.log(event: NSLocalizedString("StaffAdded", comment: "Event when staff added"), info: [
             "businessID": id.uuidString,
             "staffName": staffMember.name,
             "user": user as Any,
@@ -295,26 +383,25 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
         ])
     }
 
-    /// Removes a staff member, with audit and Trust Center logic.
-    func removeStaff(_ staffMember: StaffMember, by user: String?, auditTag: String? = nil) {
-        guard Self.trustCenterDelegate.permission(for: "removeStaff", context: [
+    func removeStaff(_ staffMember: StaffMember, by user: String?, auditTag: String? = nil) async {
+        let permissionContext: [String: Any] = [
             "businessID": id.uuidString,
             "staffName": staffMember.name,
             "user": user as Any,
             "auditTag": auditTag as Any
-        ]) else {
-            Self.analyticsLogger.log(event: "removeStaff_denied", info: [
-                "businessID": id.uuidString,
-                "staffName": staffMember.name,
-                "user": user as Any,
-                "auditTag": auditTag as Any
-            ])
+        ]
+        let permitted = await Self.trustCenterDelegate.permission(for: "removeStaff", context: permissionContext)
+        guard permitted else {
+            await Self.analyticsLogger.log(event: NSLocalizedString("RemoveStaffDenied", comment: "Event when removeStaff is denied"), info: permissionContext)
+            BusinessAuditLogger.record(operation: "removeStaffDenied", businessID: id, detail: "Remove staff denied: \(staffMember.name)", user: user, context: auditTag)
             return
         }
         staff.removeAll { $0.id == staffMember.id }
         lastModified = Date()
-        logChange(description: "Removed staff: \(staffMember.name)")
-        Self.analyticsLogger.log(event: "staff_removed", info: [
+        let desc = "Removed staff: \(staffMember.name)"
+        await logChange(description: desc)
+        BusinessAuditLogger.record(operation: "removeStaff", businessID: id, detail: desc, user: user, context: auditTag)
+        await Self.analyticsLogger.log(event: NSLocalizedString("StaffRemoved", comment: "Event when staff removed"), info: [
             "businessID": id.uuidString,
             "staffName": staffMember.name,
             "user": user as Any,
@@ -323,15 +410,13 @@ final class Business: Identifiable, ObservableObject, AuditLoggable {
     }
 
     // MARK: - AuditLoggable
-
-    func logChange(description: String) {
-        // Replace or extend this for true audit storage, BI, or compliance reporting.
-        print("[AuditLog] \(Date()): \(description)")
+    func logChange(description: String) async {
+        await auditLogger.log(description)
+        BusinessAuditLogger.record(operation: "logChange", businessID: id, detail: description, user: ownerName)
     }
 }
 
 // MARK: - StaffMember Struct (Tokenized)
-
 struct StaffMember: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
@@ -344,6 +429,23 @@ struct StaffMember: Identifiable, Codable, Hashable {
     }
 }
 
+// MARK: - Audit/Admin Accessors
+
+public enum BusinessAuditAdmin {
+    public static func lastSummary(completion: @escaping (String) -> Void) {
+        BusinessAuditLogger.lastSummary(completion: completion)
+    }
+    public static func lastJSON(completion: @escaping (String?) -> Void) {
+        BusinessAuditLogger.exportLastJSON(completion: completion)
+    }
+    public static func recentEvents(limit: Int = 5, completion: @escaping ([String]) -> Void) {
+        BusinessAuditLogger.recentEvents(limit: limit, completion: completion)
+    }
+    public static func clearAuditLog() {
+        BusinessAuditLogger.clearLog()
+    }
+}
+
 #if DEBUG
 import SwiftUI
 
@@ -352,7 +454,6 @@ struct Business_Previews: PreviewProvider {
         Group {
             BusinessPreviewView()
                 .previewDisplayName("Default Business")
-
             BusinessPreviewView()
                 .previewDisplayName("Branding Complete")
                 .environment(\.colorScheme, .dark)
@@ -379,6 +480,12 @@ struct Business_Previews: PreviewProvider {
             tspIntegrationEnabled: true
         )
 
+        @State private var userName: String = "Jane Doe"
+        @State private var auditTag: String = "previewUpdate"
+        @State private var lastAuditSummary: String = ""
+        @State private var lastAuditJSON: String = ""
+        @State private var auditEvents: [String] = []
+
         var body: some View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(business.name)
@@ -398,8 +505,78 @@ struct Business_Previews: PreviewProvider {
                 Text(business.accessibilityLabel)
                     .font(.footnote)
                     .foregroundColor(.secondary)
+
+                Button("Add Staff Member") {
+                    Task {
+                        let newStaff = StaffMember(name: "New Stylist", role: "Stylist")
+                        await business.addStaff(newStaff, by: userName, auditTag: auditTag)
+                        await refreshAudit()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Update Business Name") {
+                    Task {
+                        await business.updateSettings(name: "Furfolio Studio Updated", auditTag: auditTag)
+                        await refreshAudit()
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                Button("Remove First Staff Member") {
+                    Task {
+                        if let firstStaff = business.staff.first {
+                            await business.removeStaff(firstStaff, by: userName, auditTag: auditTag)
+                            await refreshAudit()
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(business.staff.isEmpty)
+
+                Button("Show Last Audit Event") {
+                    BusinessAuditAdmin.lastSummary { summary in
+                        lastAuditSummary = summary
+                    }
+                    BusinessAuditAdmin.lastJSON { json in
+                        lastAuditJSON = json ?? "No JSON"
+                    }
+                }
+                .padding(.top)
+                Text("Last Audit Summary: \(lastAuditSummary)")
+                    .font(.caption)
+                ScrollView(.horizontal) {
+                    Text(lastAuditJSON)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(maxHeight: 100)
+                }
+
+                Button("Show Recent Audit Events") {
+                    BusinessAuditAdmin.recentEvents(limit: 10) { events in
+                        auditEvents = events
+                    }
+                }
+                .padding(.top)
+                List(auditEvents, id: \.self) { event in
+                    Text(event)
+                }
+
+                Button("Clear Audit Log") {
+                    BusinessAuditAdmin.clearAuditLog()
+                    auditEvents = []
+                    lastAuditSummary = ""
+                    lastAuditJSON = ""
+                }
+                .foregroundColor(.red)
             }
             .padding()
+            .onAppear { Task { await refreshAudit() } }
+        }
+
+        func refreshAudit() async {
+            BusinessAuditAdmin.lastSummary { lastAuditSummary = $0 }
+            BusinessAuditAdmin.lastJSON { lastAuditJSON = $0 ?? "" }
+            BusinessAuditAdmin.recentEvents(limit: 10) { auditEvents = $0 }
         }
     }
 }

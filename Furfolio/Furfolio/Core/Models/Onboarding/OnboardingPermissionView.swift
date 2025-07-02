@@ -5,6 +5,20 @@
 //  Enhanced: Analytics/audit-ready, modular, fully tokenized, accessible, and preview/testable.
 //
 
+/**
+ OnboardingPermissionView
+ ------------------------
+ A SwiftUI view that requests notification permissions during onboarding in Furfolio.
+
+ - **Purpose**: Guides users to enable notifications for key business updates.
+ - **Architecture**: MVVM-capable, dependency-injectable analytics and audit loggers.
+ - **Concurrency & Async Logging**: Wraps analytics and audit calls in async `Task` to avoid blocking UI.
+ - **Audit/Analytics Ready**: Defines protocols for async logging and provides hooks for permission events.
+ - **Localization**: All user-facing strings use `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: Accessibility labels, hints, and grouping ensure VoiceOver compatibility.
+ - **Preview/Testability**: Previews inject mock async loggers and demonstrate light/dark and large-text modes.
+ */
+
 import SwiftUI
 import UserNotifications
 import OSLog
@@ -12,13 +26,17 @@ import OSLog
 // MARK: - Centralized Analytics and Audit Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
 }
 
 // MARK: - OnboardingPermissionView
@@ -155,9 +173,11 @@ struct OnboardingPermissionView: View {
                 .accessibilityHint(Text("Requests permission from the system"))
 
                 Button(action: {
-                    analytics.log(event: "permission_skip", parameters: nil)
-                    audit.record("User skipped permission screen", metadata: nil)
-                    onContinue?()
+                    Task {
+                        await analytics.log(event: "permission_skip", parameters: nil)
+                        await audit.record("User skipped permission screen", metadata: nil)
+                        onContinue?()
+                    }
                 }) {
                     Text("Skip for now")
                 }
@@ -180,17 +200,23 @@ struct OnboardingPermissionView: View {
                 if let error = error {
                     logger.error("Notification permission error: \(error.localizedDescription)")
                     permissionState = .error
-                    analytics.log(event: "permission_error", parameters: ["error": error.localizedDescription])
-                    audit.record("Permission error: \(error.localizedDescription)", metadata: nil)
+                    Task {
+                        await analytics.log(event: "permission_error", parameters: ["error": error.localizedDescription])
+                        await audit.record("Permission error: \(error.localizedDescription)", metadata: nil)
+                    }
                 } else if granted {
                     permissionState = .granted
-                    analytics.log(event: "permission_granted", parameters: ["granted": true])
-                    audit.record("Notification permission granted", metadata: nil)
-                    onContinue?()
+                    Task {
+                        await analytics.log(event: "permission_granted", parameters: ["granted": true])
+                        await audit.record("Notification permission granted", metadata: nil)
+                        onContinue?()
+                    }
                 } else {
                     permissionState = .denied
-                    analytics.log(event: "permission_denied", parameters: ["granted": false])
-                    audit.record("Notification permission denied", metadata: nil)
+                    Task {
+                        await analytics.log(event: "permission_denied", parameters: ["granted": false])
+                        await audit.record("Notification permission denied", metadata: nil)
+                    }
                 }
             }
         }
@@ -201,17 +227,17 @@ struct OnboardingPermissionView: View {
 
 #Preview {
     struct PreviewAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String: Any]?) {
+        func log(event: String, parameters: [String: Any]?) async {
             print("[Analytics] \(event) → \(parameters ?? [:])")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
 
     struct PreviewAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String: String]?) {
+        func record(_ message: String, metadata: [String: String]?) async {
             print("[Audit] \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     return Group {

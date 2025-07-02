@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -26,6 +27,7 @@ fileprivate struct HeatmapAuditEvent: Codable {
 fileprivate final class HeatmapAudit {
     static private(set) var log: [HeatmapAuditEvent] = []
 
+    /// Records a new heatmap audit event with given parameters.
     static func record(
         rowCount: Int,
         colCount: Int,
@@ -47,16 +49,52 @@ fileprivate final class HeatmapAudit {
         if log.count > 40 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+
+    /// Provides an accessibility summary string for the last event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No heatmap events recorded."
     }
+
+    /// Returns the accessibility labels of recent audit events up to the specified limit.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+
+    // MARK: - New Enhancements for Analytics and CSV Export
+
+    /// Computes the average maxValue across all logged events.
+    static var averageMaxValue: Double {
+        guard !log.isEmpty else { return 0 }
+        let sum = log.reduce(0) { $0 + $1.maxValue }
+        return sum / Double(log.count)
+    }
+
+    /// Determines the most frequently occurring peakCell string in the log.
+    static var mostFrequentPeakCell: String {
+        guard !log.isEmpty else { return "none" }
+        var frequency: [String: Int] = [:]
+        for event in log {
+            frequency[event.peakCell, default: 0] += 1
+        }
+        return frequency.max(by: { $0.value < $1.value })?.key ?? "none"
+    }
+
+    /// Exports all audit events to CSV format with columns:
+    /// timestamp,rowCount,colCount,maxValue,minValue,peakCell,tags
+    static func exportCSV() -> String {
+        let header = "timestamp,rowCount,colCount,maxValue,minValue,peakCell,tags"
+        let rows = log.map { event in
+            let dateStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: "|")
+            return "\(dateStr),\(event.rowCount),\(event.colCount),\(event.maxValue),\(event.minValue),\"\(event.peakCell)\",\"\(tagsStr)\""
+        }
+        return ([header] + rows).joined(separator: "\n")
     }
 }
 
@@ -84,6 +122,9 @@ public struct Heatmap: View {
         }
         return best
     }
+
+    /// Publisher to trigger VoiceOver announcements.
+    @State private var voiceOverAnnouncement: String?
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -127,6 +168,12 @@ public struct Heatmap: View {
                     }
                 }
             }
+
+            #if DEBUG
+            // DEV overlay showing last 3 audit events and analytics
+            HeatmapAuditOverlay()
+                .padding(.top, 8)
+            #endif
         }
         .padding()
         .background(
@@ -145,6 +192,13 @@ public struct Heatmap: View {
                 minValue: minValue,
                 peakCell: peakCell != nil ? "\(rowLabels[peakCell!.row]),\(colLabels[peakCell!.col])" : "none"
             )
+            // Accessibility enhancement: VoiceOver announcement if minValue is zero
+            if minValue == 0 {
+                // Post notification to announce warning
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    UIAccessibility.post(notification: .announcement, argument: "Warning: At least one cell has a value of zero.")
+                }
+            }
         }
     }
 
@@ -175,6 +229,18 @@ public enum HeatmapAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         HeatmapAudit.recentEvents(limit: limit)
     }
+
+    // Expose new analytics properties
+    /// Average of all maxValue entries in audit log.
+    public static var averageMaxValue: Double { HeatmapAudit.averageMaxValue }
+
+    /// Most frequent peakCell string in audit log.
+    public static var mostFrequentPeakCell: String { HeatmapAudit.mostFrequentPeakCell }
+
+    /// Exports audit log as CSV string.
+    public static func exportCSV() -> String {
+        HeatmapAudit.exportCSV()
+    }
 }
 
 // MARK: - Color Luminance Extension
@@ -190,6 +256,49 @@ private extension Color {
         #endif
     }
 }
+
+// MARK: - DEV Overlay View for Debugging
+
+#if DEBUG
+/// SwiftUI overlay view showing recent audit events and analytics for development purposes.
+private struct HeatmapAuditOverlay: View {
+    private let recentEvents: [String] = HeatmapAudit.recentEvents(limit: 3)
+    private let averageMax: Double = HeatmapAudit.averageMaxValue
+    private let frequentPeak: String = HeatmapAudit.mostFrequentPeakCell
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("DEV Audit Overlay")
+                .font(.headline)
+                .foregroundColor(.blue)
+            Divider()
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Last 3 Events:")
+                    .font(.subheadline)
+                    .bold()
+                ForEach(recentEvents, id: \.self) { event in
+                    Text(event)
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.5)
+                }
+            }
+            Divider()
+            Text(String(format: "Average Max Value: %.2f", averageMax))
+                .font(.footnote)
+                .foregroundColor(.primary)
+            Text("Most Frequent Peak Cell: \(frequentPeak)")
+                .font(.footnote)
+                .foregroundColor(.primary)
+        }
+        .padding(8)
+        .background(Color(.systemGray6).opacity(0.9))
+        .cornerRadius(10)
+        .frame(maxWidth: .infinity)
+    }
+}
+#endif
 
 // MARK: - Preview
 

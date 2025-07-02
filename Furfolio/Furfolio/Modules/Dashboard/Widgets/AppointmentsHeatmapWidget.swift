@@ -26,6 +26,7 @@ fileprivate struct AppointmentsHeatmapAuditEvent: Codable {
 fileprivate final class AppointmentsHeatmapAudit {
     static private(set) var log: [AppointmentsHeatmapAuditEvent] = []
 
+    /// Records a new audit event with the provided heatmap data.
     static func record(
         rowCount: Int,
         colCount: Int,
@@ -47,16 +48,49 @@ fileprivate final class AppointmentsHeatmapAudit {
         if log.count > 40 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Accessibility summary string for the most recent audit event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No appointments heatmap events recorded."
     }
+    
+    /// Returns accessibility labels for the most recent audit events up to the specified limit.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+    
+    /// Computes the average maxValue across all logged audit events.
+    static var averageMaxValue: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0) { $0 + $1.maxValue }
+        return Double(total) / Double(log.count)
+    }
+    
+    /// Determines the most frequent peakCell string among all logged audit events.
+    static var mostFrequentPeakCell: String {
+        guard !log.isEmpty else { return "none" }
+        let frequency = Dictionary(grouping: log, by: { $0.peakCell })
+            .mapValues { $0.count }
+        return frequency.max(by: { $0.value < $1.value })?.key ?? "none"
+    }
+    
+    /// Exports all audit events as CSV string with columns: timestamp,rowCount,colCount,maxValue,minValue,peakCell,tags
+    static func exportCSV() -> String {
+        let header = "timestamp,rowCount,colCount,maxValue,minValue,peakCell,tags"
+        let rows = log.map { event -> String in
+            let dateStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: ";")
+            // Escape commas in peakCell if any
+            let peakCellEscaped = event.peakCell.contains(",") ? "\"\(event.peakCell)\"" : event.peakCell
+            return "\(dateStr),\(event.rowCount),\(event.colCount),\(event.maxValue),\(event.minValue),\(peakCellEscaped),\(tagsStr)"
+        }
+        return ([header] + rows).joined(separator: "\n")
     }
 }
 
@@ -126,6 +160,33 @@ public struct AppointmentsHeatmapWidget: View {
                     }
                 }
             }
+            
+            #if DEBUG
+            // DEV overlay showing last 3 audit events and analytics
+            if !AppointmentsHeatmapAudit.log.isEmpty {
+                Divider().padding(.top, 8)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("DEV Audit Overlay")
+                        .font(.footnote).bold()
+                    ForEach(AppointmentsHeatmapAudit.recentEvents(limit: 3), id: \.self) { eventDesc in
+                        Text(eventDesc)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                    }
+                    Text(String(format: "Average Max Value: %.2f", AppointmentsHeatmapAudit.averageMaxValue))
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                    Text("Most Frequent Peak Cell: \(AppointmentsHeatmapAudit.mostFrequentPeakCell)")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                }
+                .padding(6)
+                .background(Color(.systemGray6).opacity(0.9))
+                .cornerRadius(8)
+                .padding(.top, 8)
+            }
+            #endif
         }
         .padding()
         .background(
@@ -144,6 +205,10 @@ public struct AppointmentsHeatmapWidget: View {
                 minValue: minValue,
                 peakCell: peakCell != nil ? "\(rowLabels[peakCell!.row]),\(colLabels[peakCell!.col])" : "none"
             )
+            // Accessibility: VoiceOver announcement if any cell has zero appointments
+            if minValue == 0 {
+                UIAccessibility.post(notification: .announcement, argument: "Warning: At least one heatmap cell has zero appointments.")
+            }
         }
     }
 
@@ -173,6 +238,21 @@ public enum AppointmentsHeatmapWidgetAuditAdmin {
     public static var lastJSON: String? { AppointmentsHeatmapAudit.exportLastJSON() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         AppointmentsHeatmapAudit.recentEvents(limit: limit)
+    }
+    
+    /// Exposes CSV export of all audit events.
+    public static func exportCSV() -> String {
+        AppointmentsHeatmapAudit.exportCSV()
+    }
+    
+    /// Exposes average maxValue across all audit events.
+    public static var averageMaxValue: Double {
+        AppointmentsHeatmapAudit.averageMaxValue
+    }
+    
+    /// Exposes the most frequent peakCell string among audit events.
+    public static var mostFrequentPeakCell: String {
+        AppointmentsHeatmapAudit.mostFrequentPeakCell
     }
 }
 

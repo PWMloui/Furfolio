@@ -74,83 +74,181 @@ fileprivate final class DragDropAudit {
 final class AppointmentDragDropManager: ObservableObject {
     // MARK: - Drag State
 
+    /// The IDs of the appointments currently being dragged.
     @Published var draggingAppointmentIDs: Set<UUID> = []
+    /// The current drop target date, if any.
     @Published var dropTargetDate: Date? = nil
+    /// Whether a drag is currently active.
     @Published var isDragging: Bool = false
+    /// The current drag offset.
     @Published var dragOffset: CGSize = .zero
+    /// The last drop operation's info.
     @Published var lastDropInfo: (appointmentIDs: Set<UUID>, date: Date)? = nil
 
+    /// Optional group ID for grouped drag operations (e.g., recurring series, multi-dog families).
+    /// When set, all drag/drop actions and audits will reference this group.
+    @Published var dragGroupID: UUID? = nil
 
     // MARK: - Begin Drag
 
+    /// Begin dragging a set of appointments as a single (possibly grouped) operation.
+    /// - Parameter appointmentIDs: The IDs of the appointments to drag.
     func beginDrag(appointmentIDs: Set<UUID>) {
         draggingAppointmentIDs = appointmentIDs
         isDragging = true
         dragOffset = .zero
+        dragGroupID = nil // Not a group drag unless specified.
         DragDropAudit.record(
             operation: "begin",
             appointmentIDs: appointmentIDs,
-            tags: ["beginDrag", appointmentIDs.count > 1 ? "multi" : "single"]
+            tags: ["beginDrag", appointmentIDs.count > 1 ? "multi" : "single"] + (dragGroupID != nil ? ["group"] : []),
+            context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager"
         )
     }
 
+    /// Begin dragging a single appointment.
     func beginDrag(appointmentID: UUID) {
         beginDrag(appointmentIDs: [appointmentID])
     }
 
+    /// Begin dragging a group of related appointments (for batch/group drag).
+    /// - Parameters:
+    ///   - groupID: The ID of the drag group.
+    ///   - appointmentIDs: The set of appointment IDs included in this group drag.
+    func beginGroupDrag(groupID: UUID, appointmentIDs: Set<UUID>) {
+        // Set both the group ID and the appointment IDs as the current drag state.
+        draggingAppointmentIDs = appointmentIDs
+        dragGroupID = groupID
+        isDragging = true
+        dragOffset = .zero
+        DragDropAudit.record(
+            operation: "beginGroupDrag",
+            appointmentIDs: appointmentIDs,
+            tags: ["beginGroupDrag", "group", appointmentIDs.count > 1 ? "multi" : "single"],
+            context: "groupID:\(groupID.uuidString)"
+        )
+    }
+
+    /// Update the drag offset during a drag operation.
     func updateDrag(offset: CGSize) {
         dragOffset = offset
         DragDropAudit.record(
             operation: "updateDrag",
             appointmentIDs: draggingAppointmentIDs,
             offset: offset,
-            tags: ["updateDrag"]
+            tags: ["updateDrag"] + (dragGroupID != nil ? ["group"] : []),
+            context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager"
         )
     }
 
+    /// Update the current drop target date during a drag.
     func updateDropTarget(date: Date) {
         dropTargetDate = date
         DragDropAudit.record(
             operation: "updateDropTarget",
             appointmentIDs: draggingAppointmentIDs,
             date: date,
-            tags: ["updateDropTarget"]
+            tags: ["updateDropTarget"] + (dragGroupID != nil ? ["group"] : []),
+            context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager"
         )
     }
 
+    /// Ends the current drag operation, resetting all related state and logging the event.
     func endDrag() {
         DragDropAudit.record(
             operation: "end",
             appointmentIDs: draggingAppointmentIDs,
-            tags: ["endDrag"]
+            tags: ["endDrag"] + (dragGroupID != nil ? ["group"] : []),
+            context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager"
         )
         draggingAppointmentIDs = []
         dropTargetDate = nil
         isDragging = false
         dragOffset = .zero
+        dragGroupID = nil
     }
 
-    // MARK: - End Drag
-
-    /// Ends the current drag operation, resetting all related state.
-    /// This method clears UI state and resets any audit/event tracking related to dragging.
-    /// Should be called after a drop completes or a drag is cancelled.
-    func endDrag() {
-        // Clean up drag state and reset audit/event tracking flags.
+    /// Instantly aborts the current drag operation, clears drag state, and logs the reason for audit.
+    /// - Parameter reason: Human-readable reason for aborting/cancelling the drag.
+    func abortDrag(reason: String) {
+        DragDropAudit.record(
+            operation: "abortDrag",
+            appointmentIDs: draggingAppointmentIDs,
+            tags: ["abortDrag"] + (dragGroupID != nil ? ["group"] : []),
+            context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager",
+            detail: reason
+        )
         draggingAppointmentIDs = []
         dropTargetDate = nil
         isDragging = false
         dragOffset = .zero
+        dragGroupID = nil
     }
 
     // MARK: - Drop Logic
 
+    /// Attempts to perform a drop operation for the current drag state.
+    /// If dragging a group, all group members are updated together; if any conflict, the entire drop is skipped.
+    /// - Parameters:
+    ///   - date: The target date for the drop.
+    ///   - appointments: The array of appointments to update.
+    ///   - conflictCheck: Optional closure to check for conflicts.
+    /// - Returns: True if the drop was successful, false otherwise.
     func performDrop(
         on date: Date,
         appointments: inout [Appointment],
         conflictCheck: ((Appointment, Date, [Appointment]) -> Bool)? = nil
     ) -> Bool {
         guard !draggingAppointmentIDs.isEmpty else { endDrag(); return false }
+        // If dragging a group, ensure all group members are updated together, or none if any conflict.
+        if let groupID = dragGroupID {
+            // Group drop: check all for conflicts first
+            var conflictIDs: [UUID] = []
+            for id in draggingAppointmentIDs {
+                if let idx = appointments.firstIndex(where: { $0.id == id }) {
+                    let appointment = appointments[idx]
+                    if let conflictCheck, !conflictCheck(appointment, date, appointments) {
+                        conflictIDs.append(id)
+                    }
+                } else {
+                    conflictIDs.append(id) // Not found = treat as conflict
+                }
+            }
+            if !conflictIDs.isEmpty {
+                // Log group conflict and skip the entire drop for integrity
+                DragDropAudit.record(
+                    operation: "dropGroupConflict",
+                    appointmentIDs: Set(conflictIDs),
+                    date: date,
+                    tags: ["drop", "skipped", "conflict", "group"],
+                    context: "groupID:\(groupID.uuidString)",
+                    detail: "Group drop aborted due to conflict for \(conflictIDs.count) appointments"
+                )
+                endDrag()
+                return false
+            }
+            // All clear: update all group member dates
+            var didMove = false
+            for id in draggingAppointmentIDs {
+                if let idx = appointments.firstIndex(where: { $0.id == id }) {
+                    appointments[idx].date = date
+                    didMove = true
+                }
+            }
+            if didMove {
+                lastDropInfo = (appointmentIDs: draggingAppointmentIDs, date: date)
+                DragDropAudit.record(
+                    operation: "drop",
+                    appointmentIDs: draggingAppointmentIDs,
+                    date: date,
+                    tags: ["drop", "success", "group", draggingAppointmentIDs.count > 1 ? "multi" : "single"],
+                    context: "groupID:\(groupID.uuidString)"
+                )
+            }
+            endDrag()
+            return didMove
+        }
+        // Not a group drag: proceed as before, but include group context if present
         var didMove = false
         var skippedIDs: [UUID] = []
 
@@ -172,7 +270,8 @@ final class AppointmentDragDropManager: ObservableObject {
                 operation: "drop",
                 appointmentIDs: draggingAppointmentIDs.subtracting(skippedIDs),
                 date: date,
-                tags: ["drop", "success", draggingAppointmentIDs.count > 1 ? "multi" : "single"],
+                tags: ["drop", "success", draggingAppointmentIDs.count > 1 ? "multi" : "single"] + (dragGroupID != nil ? ["group"] : []),
+                context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager",
                 detail: skippedIDs.isEmpty ? nil : "Skipped \(skippedIDs.count) due to conflict"
             )
         }
@@ -181,7 +280,8 @@ final class AppointmentDragDropManager: ObservableObject {
                 operation: "drop",
                 appointmentIDs: Set(skippedIDs),
                 date: date,
-                tags: ["drop", "skipped", "conflict"],
+                tags: ["drop", "skipped", "conflict"] + (dragGroupID != nil ? ["group"] : []),
+                context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager",
                 detail: "Appointments not moved due to conflict"
             )
         }
@@ -189,6 +289,8 @@ final class AppointmentDragDropManager: ObservableObject {
         return didMove
     }
 
+    /// Checks if the current drag operation can be dropped on the given date.
+    /// Audit logging includes group context if present.
     func canDrop(
         on date: Date,
         appointments: [Appointment],
@@ -204,7 +306,8 @@ final class AppointmentDragDropManager: ObservableObject {
                     operation: "permissionDenied",
                     appointmentIDs: [id],
                     date: date,
-                    tags: ["canDrop", !noOverlap ? "overlap" : "roleDenied"],
+                    tags: ["canDrop", !noOverlap ? "overlap" : "roleDenied"] + (dragGroupID != nil ? ["group"] : []),
+                    context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager",
                     detail: !noOverlap ? "Overlap detected" : "Role denied"
                 )
                 return false
@@ -214,14 +317,33 @@ final class AppointmentDragDropManager: ObservableObject {
             operation: "canDrop",
             appointmentIDs: draggingAppointmentIDs,
             date: date,
-            tags: ["canDrop", draggingAppointmentIDs.count > 1 ? "multi" : "single"]
+            tags: ["canDrop", draggingAppointmentIDs.count > 1 ? "multi" : "single"] + (dragGroupID != nil ? ["group"] : []),
+            context: dragGroupID != nil ? "groupID:\(dragGroupID!.uuidString)" : "AppointmentDragDropManager"
         )
         return true
     }
     
     // MARK: - Utility
 
+    /// Reset drag state (alias for endDrag).
     func reset() { endDrag() }
+
+    // MARK: - Audit Summary
+
+    /// Returns a summary string describing the current drag, group, and audit state.
+    public var dragAuditSummary: String {
+        let dragState = isDragging ? "Dragging" : "Idle"
+        let apptCount = draggingAppointmentIDs.count
+        let groupText = dragGroupID.map { "GroupID: \($0.uuidString)" } ?? "No group"
+        let apptIDs = draggingAppointmentIDs.isEmpty ? "None" : draggingAppointmentIDs.map { $0.uuidString.prefix(8) }.joined(separator: ",")
+        let lastAudit = DragDropAudit.accessibilitySummary
+        return """
+        Drag State: \(dragState)
+        Appointments: \(apptCount) [\(apptIDs)]
+        \(groupText)
+        Last Audit: \(lastAudit)
+        """
+    }
 }
 
 // MARK: - Appointment Model Placeholder

@@ -4,6 +4,19 @@
 //
 //  Enhanced: Analytics/audit-ready, tokenized, accessible, modular, test/preview-injectable.
 //
+/**
+ OnboardingFlowManager
+ ---------------------
+ Orchestrates user onboarding steps in Furfolio with async analytics and audit logging.
+
+ - **Architecture**: ObservableObject singleton for MVVM binding.
+ - **Concurrency & Async Logging**: Wraps analytics and audit calls in async Tasks.
+ - **Audit Management**: Uses `OnboardingFlowAuditManager` actor to record events.
+ - **Localization**: All event strings use `NSLocalizedString`.
+ - **Diagnostics**: Provides async methods to fetch/export recent audit entries.
+ - **Accessibility**: State changes are exposed via published properties for UI updates.
+ - **Preview/Testability**: Analytics and audit services are injectable for mocks.
+ */
 
 import Foundation
 import SwiftUI
@@ -11,13 +24,62 @@ import SwiftUI
 // MARK: - Analytics/Audit Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit entry asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
+}
+
+/// A record of an onboarding flow audit event.
+public struct OnboardingFlowAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+    }
+}
+
+/// Manages concurrency-safe audit logging for onboarding flow events.
+public actor OnboardingFlowAuditManager {
+    private var buffer: [OnboardingFlowAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = OnboardingFlowAuditManager()
+
+    /// Add a new audit entry, capping buffer at `maxEntries`.
+    public func add(_ entry: OnboardingFlowAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries.
+    public func recent(limit: Int = 20) -> [OnboardingFlowAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit entries as JSON.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
 }
 
 // MARK: - Onboarding Steps
@@ -119,9 +181,22 @@ final class OnboardingFlowManager: ObservableObject {
     }
 
     func skipOnboarding() {
-        analytics.log(event: "skip_onboarding", parameters: ["step": currentStep.rawValue])
-        audit.record("User skipped onboarding at step \(currentStep)", metadata: nil)
-        completeOnboarding()
+        Task {
+            await analytics.log(
+                event: NSLocalizedString("skip_onboarding", comment: ""),
+                parameters: ["step": currentStep.rawValue]
+            )
+            await audit.record(
+                NSLocalizedString("User skipped onboarding at step \(currentStep)", comment: ""),
+                metadata: nil
+            )
+            await OnboardingFlowAuditManager.shared.add(
+                OnboardingFlowAuditEntry(
+                    event: NSLocalizedString("skip_onboarding step \(currentStep.rawValue)", comment: "")
+                )
+            )
+            completeOnboarding()
+        }
     }
 
     // MARK: - Private Helpers
@@ -129,20 +204,44 @@ final class OnboardingFlowManager: ObservableObject {
     private func setStep(_ step: OnboardingStep, event: String) {
         currentStep = step
         UserDefaults.standard.set(step.rawValue, forKey: onboardingCurrentStepKey)
-
-        analytics.log(event: event, parameters: [
-            "step": step.rawValue,
-            "title": String(describing: step.localizedTitle)
-        ])
-        audit.record("Navigated to step \(step)", metadata: nil)
+        Task {
+            await analytics.log(
+                event: NSLocalizedString(event, comment: ""),
+                parameters: [
+                    "step": step.rawValue,
+                    "title": String(describing: step.localizedTitle)
+                ]
+            )
+            await audit.record(
+                NSLocalizedString("Navigated to step \(step)", comment: ""),
+                metadata: nil
+            )
+            await OnboardingFlowAuditManager.shared.add(
+                OnboardingFlowAuditEntry(
+                    event: NSLocalizedString("\(event) step \(step.rawValue)", comment: "")
+                )
+            )
+        }
     }
 
     private func completeOnboarding() {
         isOnboardingComplete = true
         UserDefaults.standard.set(true, forKey: onboardingCompleteKey)
-
-        analytics.log(event: "onboarding_complete", parameters: ["final_step": currentStep.rawValue])
-        audit.record("User completed onboarding at step \(currentStep)", metadata: nil)
+        Task {
+            await analytics.log(
+                event: NSLocalizedString("onboarding_complete", comment: ""),
+                parameters: ["final_step": currentStep.rawValue]
+            )
+            await audit.record(
+                NSLocalizedString("User completed onboarding at step \(currentStep)", comment: ""),
+                metadata: nil
+            )
+            await OnboardingFlowAuditManager.shared.add(
+                OnboardingFlowAuditEntry(
+                    event: NSLocalizedString("onboarding_complete step \(currentStep.rawValue)", comment: "")
+                )
+            )
+        }
     }
 
     // MARK: - Persistence
@@ -159,8 +258,31 @@ final class OnboardingFlowManager: ObservableObject {
         currentStep = .welcome
         UserDefaults.standard.set(false, forKey: onboardingCompleteKey)
         UserDefaults.standard.set(OnboardingStep.welcome.rawValue, forKey: onboardingCurrentStepKey)
+        Task {
+            await analytics.log(
+                event: NSLocalizedString("reset_onboarding", comment: ""),
+                parameters: ["step": OnboardingStep.welcome.rawValue]
+            )
+            await audit.record(
+                NSLocalizedString("User reset onboarding", comment: ""),
+                metadata: nil
+            )
+            await OnboardingFlowAuditManager.shared.add(
+                OnboardingFlowAuditEntry(
+                    event: NSLocalizedString("reset_onboarding", comment: "")
+                )
+            )
+        }
+    }
+}
 
-        analytics.log(event: "reset_onboarding", parameters: ["step": OnboardingStep.welcome.rawValue])
-        audit.record("User reset onboarding", metadata: nil)
+public extension OnboardingFlowManager {
+    /// Fetch recent onboarding audit entries.
+    func recentAuditEntries(limit: Int = 20) async -> [OnboardingFlowAuditEntry] {
+        await OnboardingFlowAuditManager.shared.recent(limit: limit)
+    }
+    /// Export onboarding audit log as JSON.
+    func exportAuditLogJSON() async -> String {
+        await OnboardingFlowAuditManager.shared.exportJSON()
     }
 }

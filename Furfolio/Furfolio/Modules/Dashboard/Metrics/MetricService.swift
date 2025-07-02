@@ -2,7 +2,7 @@
 //  MetricService.swift
 //  Furfolio
 //
-//  Enhanced 2025: Auditable, Accessible, Modular Metric Service
+//  Enhanced 2025: Auditable, Accessible, Modular Metric Service with CSV Export, Analytics, Accessibility, DEV Overlay
 //
 
 import Foundation
@@ -53,6 +53,37 @@ fileprivate final class MetricServiceAudit {
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
     }
+
+    // MARK: - CSV Export
+    /// Export all audit events as CSV (timestamp,widgetType,config,metricsCount,tags)
+    static func exportCSV() -> String {
+        var csv = "timestamp,widgetType,configurationDescription,metricsCount,tags\n"
+        let dateFormatter = ISO8601DateFormatter()
+        for event in log {
+            let ts = dateFormatter.string(from: event.timestamp)
+            let wtype = event.widgetType.replacingOccurrences(of: ",", with: ";")
+            let config = event.configurationDescription.replacingOccurrences(of: ",", with: ";")
+            let tags = event.tags.joined(separator: "|")
+            csv += "\(ts),\(wtype),\(config),\(event.metricsCount),\(tags)\n"
+        }
+        return csv
+    }
+
+    // MARK: - Analytics
+    /// Most requested widget type
+    static var mostFrequentWidgetType: String? {
+        let types = log.map { $0.widgetType }
+        let counts = Dictionary(grouping: types, by: { $0 }).mapValues { $0.count }
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+    /// Average metricsCount per fetch
+    static var averageMetricsCount: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0) { $0 + $1.metricsCount }
+        return Double(total) / Double(log.count)
+    }
+    /// Total fetches
+    static var totalFetches: Int { log.count }
 }
 
 // MARK: - Metric Model
@@ -111,6 +142,12 @@ class MetricService {
             configurationDescription: configuration.description,
             metricsCount: metrics.count
         )
+        // Accessibility: Announce major metric fetches (for e.g., revenue widget)
+        #if os(iOS)
+        if type == .revenue && metrics.count > 0 {
+            UIAccessibility.post(notification: .announcement, argument: "Revenue metrics fetched: \(metrics.count) values.")
+        }
+        #endif
         return metrics
     }
 
@@ -138,6 +175,11 @@ class MetricService {
     static func recentEvents(limit: Int = 5) -> [String] {
         MetricServiceAudit.recentEvents(limit: limit)
     }
+    static func exportCSV() -> String { MetricServiceAudit.exportCSV() }
+    // Analytics
+    static var mostFrequentWidgetType: String? { MetricServiceAudit.mostFrequentWidgetType }
+    static var averageMetricsCount: Double { MetricServiceAudit.averageMetricsCount }
+    static var totalFetches: Int { MetricServiceAudit.totalFetches }
 }
 
 // MARK: - Metric Data Source Protocol
@@ -176,3 +218,34 @@ struct MetricLocalStore: MetricDataSource {
         }
     }
 }
+
+#if DEBUG
+import SwiftUI
+struct MetricServiceAuditOverlay: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("MetricService Audit")
+                .font(.caption.bold())
+                .foregroundColor(.accentColor)
+            ForEach(MetricServiceAudit.log.suffix(3), id: \.timestamp) { event in
+                Text(event.accessibilityLabel)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if let mostWidget = MetricServiceAudit.mostFrequentWidgetType {
+                Text("Most Widget: \(mostWidget)").font(.caption2)
+            }
+            Text("Avg Count: \(String(format: "%.1f", MetricServiceAudit.averageMetricsCount))")
+                .font(.caption2)
+            Text("Total: \(MetricServiceAudit.totalFetches)").font(.caption2)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemBackground)).opacity(0.95))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.accentColor, lineWidth: 1)
+        )
+        .shadow(radius: 2)
+    }
+}
+#endif

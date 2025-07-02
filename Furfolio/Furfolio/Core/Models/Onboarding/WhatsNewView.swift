@@ -5,16 +5,69 @@
 //  Enhanced: Analytics/audit-ready, token-compliant, modular, preview/test-injectable, accessible, and enterprise-ready.
 //
 
+/**
+ WhatsNewView
+ ------------
+ A SwiftUI view showcasing the latest features in Furfolio, fully instrumented for async analytics and audit logging.
+
+ - **Architecture**: MVVM-capable, dependency-injectable style and telemetry tokens.
+ - **Concurrency & Async Logging**: All logging calls wrapped in non-blocking `Task` blocks.
+ - **Audit Readiness**: Introduces a `WhatsNewAuditManager` actor for concurrency-safe audit logging.
+ - **Localization**: All strings use `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: UI elements include labels, hints and traits for VoiceOver.
+ - **Diagnostics & Preview/Testability**: Exposes methods to fetch and export audit logs; preview injects a spy logger.
+*/
+
 import SwiftUI
 
 // MARK: - Analytics/Audit Logger Protocol
 
 public protocol WhatsNewAnalyticsLogger {
-    func log(event: String, feature: String?)
+    /// Log a feature event asynchronously.
+    func log(event: String, feature: String?) async
 }
 public struct NullWhatsNewAnalyticsLogger: WhatsNewAnalyticsLogger {
     public init() {}
-    public func log(event: String, feature: String?) {}
+    public func log(event: String, feature: String?) async {}
+}
+
+/// A record of a "What's New" view audit event.
+public struct WhatsNewAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let feature: String?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, feature: String? = nil) {
+        self.id = id; self.timestamp = timestamp; self.event = event; self.feature = feature
+    }
+}
+
+/// Manages concurrency-safe audit logging for the "What's New" view.
+public actor WhatsNewAuditManager {
+    private var buffer: [WhatsNewAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = WhatsNewAuditManager()
+
+    public func add(_ entry: WhatsNewAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    public func recent(limit: Int = 20) -> [WhatsNewAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
+    }
 }
 
 // MARK: - Data Model
@@ -148,7 +201,11 @@ struct WhatsNewView: View {
                             analyticsLogger: analyticsLogger
                         )
                         .onAppear {
-                            analyticsLogger.log(event: "feature_view", feature: String(localized: feature.title))
+                            Task {
+                                let feat = String(localized: feature.title)
+                                await analyticsLogger.log(event: "feature_view", feature: feat)
+                                await WhatsNewAuditManager.shared.add(WhatsNewAuditEntry(event: "feature_view", feature: feat))
+                            }
                         }
                     }
                 }
@@ -157,8 +214,11 @@ struct WhatsNewView: View {
 
             // MARK: - Continue Button
             Button(action: {
-                analyticsLogger.log(event: "continue_tap", feature: nil)
-                dismiss()
+                Task {
+                    await analyticsLogger.log(event: "continue_tap", feature: nil)
+                    await WhatsNewAuditManager.shared.add(WhatsNewAuditEntry(event: "continue_tap"))
+                    dismiss()
+                }
             }) {
                 Text(LocalizedStringKey("Continue"))
                     .font(fontButton)
@@ -172,7 +232,10 @@ struct WhatsNewView: View {
         .background(background.ignoresSafeArea())
         .accessibilityElement(children: .contain)
         .onAppear {
-            analyticsLogger.log(event: "whats_new_appear", feature: nil)
+            Task {
+                await analyticsLogger.log(event: "whats_new_appear", feature: nil)
+                await WhatsNewAuditManager.shared.add(WhatsNewAuditEntry(event: "view_appear"))
+            }
         }
     }
 }
@@ -209,11 +272,25 @@ private struct NewFeatureRowView: View {
     }
 }
 
+// MARK: - Diagnostics
+
+public extension WhatsNewView {
+    /// Fetch recent audit entries for diagnostics.
+    static func recentAuditEntries(limit: Int = 20) async -> [WhatsNewAuditEntry] {
+        await WhatsNewAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export audit log as a JSON string.
+    static func exportAuditLogJSON() async -> String {
+        await WhatsNewAuditManager.shared.exportJSON()
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
     struct SpyLogger: WhatsNewAnalyticsLogger {
-        func log(event: String, feature: String?) {
+        func log(event: String, feature: String?) async {
             print("Analytics Event: \(event), Feature: \(feature ?? "-")")
         }
     }

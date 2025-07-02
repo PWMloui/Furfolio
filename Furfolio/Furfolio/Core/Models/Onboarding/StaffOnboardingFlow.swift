@@ -5,10 +5,23 @@
 //  Created by mac on 6/26/25.
 //
 
+/**
+ StaffOnboardingFlow
+ -------------------
+ A SwiftUI view guiding staff users through their role-specific onboarding sequence in Furfolio.
+
+ - **Architecture**: MVVM-compatible View with internal @State for step tracking; injects `OnboardingTelemetryTracker` for analytics and audit.
+ - **Concurrency & Async Logging**: Wraps telemetry calls in non-blocking async `Task` blocks to avoid UI delays.
+ - **Audit/Analytics Ready**: Uses `telemetry` for centralized event logging; all user navigation actions are recorded.
+ - **Localization**: All button titles and static text use `LocalizedStringKey`.
+ - **Accessibility**: Navigation buttons include identifiers and labels for VoiceOver and UI testing.
+ - **Diagnostics & Preview/Testability**: Can fetch and export audit logs via TelemetryTracker’s diagnostics APIs.
+ */
+
 import SwiftUI
 
 /// A complete onboarding flow for users with the `.staff` role
-struct StaffOnboardingFlow: View {
+public struct StaffOnboardingFlow: View {
     @State private var currentStepIndex = 0
     @State private var isComplete = false
 
@@ -38,28 +51,52 @@ struct StaffOnboardingFlow: View {
 
                 HStack {
                     if currentStepIndex > 0 {
-                        Button("Back") {
-                            currentStepIndex -= 1
+                        Button(action: {
+                            Task {
+                                let step = steps[currentStepIndex]
+                                await telemetry.logAction("onboarding_back", step: step)
+                                await MainActor.run {
+                                    currentStepIndex -= 1
+                                }
+                            }
+                        }) {
+                            Text(LocalizedStringKey("Back"))
                         }
+                        .accessibilityIdentifier("StaffOnboarding_BackButton")
+                        .accessibilityLabel(LocalizedStringKey("Back"))
                     }
 
                     Spacer()
 
-                    Button(currentStepIndex == steps.count - 1 ? "Finish" : "Next") {
-                        if currentStepIndex == steps.count - 1 {
-                            telemetry.logCompletion(finalStep: steps[currentStepIndex])
-                            isComplete = true
-                        } else {
-                            telemetry.logAction("next", step: steps[currentStepIndex])
-                            currentStepIndex += 1
+                    Button(action: {
+                        Task {
+                            let step = steps[currentStepIndex]
+                            if currentStepIndex == steps.count - 1 {
+                                await telemetry.logCompletion(finalStep: step)
+                                await MainActor.run {
+                                    isComplete = true
+                                }
+                            } else {
+                                await telemetry.logAction("onboarding_next", step: step)
+                                await MainActor.run {
+                                    currentStepIndex += 1
+                                }
+                            }
                         }
+                    }) {
+                        Text(LocalizedStringKey(currentStepIndex == steps.count - 1 ? "Finish" : "Next"))
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("StaffOnboarding_NextButton")
+                    .accessibilityLabel(LocalizedStringKey(currentStepIndex == steps.count - 1 ? "Finish" : "Next"))
                 }
                 .padding()
             }
             .onAppear {
-                telemetry.logStepView(steps[currentStepIndex])
+                Task {
+                    let step = steps[currentStepIndex]
+                    await telemetry.logStepView(step)
+                }
             }
         }
     }

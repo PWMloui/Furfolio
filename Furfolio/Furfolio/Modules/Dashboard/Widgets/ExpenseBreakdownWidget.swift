@@ -21,9 +21,13 @@ fileprivate struct ExpenseBreakdownAuditEvent: Codable {
     }
 }
 
+/// Audit/event logger for ExpenseBreakdownWidget.
+/// Includes analytics, CSV export, and accessibility logic.
 fileprivate final class ExpenseBreakdownAudit {
     static private(set) var log: [ExpenseBreakdownAuditEvent] = []
 
+    /// Records an audit event and maintains log size.
+    /// Posts VoiceOver announcement if segmentCount > 5 for accessibility.
     static func record(
         segmentCount: Int,
         categories: [String],
@@ -39,19 +43,62 @@ fileprivate final class ExpenseBreakdownAudit {
         )
         log.append(event)
         if log.count > 40 { log.removeFirst() }
+
+        // Accessibility enhancement: Announce if > 5 segments.
+        if segmentCount > 5 {
+            #if os(iOS)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                UIAccessibility.post(notification: .announcement, argument: "Pie chart has more than five expense categories.")
+            }
+            #endif
+        }
     }
 
+    /// Exports the last audit event as JSON.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// Exports all audit events as CSV.
+    /// CSV columns: timestamp,segmentCount,categories,valueRange,tags
+    static func exportCSV() -> String {
+        var rows: [String] = ["timestamp,segmentCount,categories,valueRange,tags"]
+        let df = ISO8601DateFormatter()
+        for event in log {
+            let ts = df.string(from: event.timestamp)
+            let seg = "\(event.segmentCount)"
+            let cats = "\"\(event.categories.joined(separator: ";"))\""
+            let vr = "\"\(event.valueRange.replacingOccurrences(of: "\"", with: "'"))\""
+            let tags = "\"\(event.tags.joined(separator: ";"))\""
+            rows.append([ts, seg, cats, vr, tags].joined(separator: ","))
+        }
+        return rows.joined(separator: "\n")
+    }
+
+    /// Accessibility summary of last event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No expense breakdown events recorded."
     }
+    /// Returns recent events' accessibility labels.
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+
+    /// Analytics: Average segment count of all audit events.
+    static var averageSegmentCount: Double {
+        guard !log.isEmpty else { return 0 }
+        let total = log.reduce(0) { $0 + $1.segmentCount }
+        return Double(total) / Double(log.count)
+    }
+
+    /// Analytics: Most frequent category name across all audit events.
+    static var mostFrequentCategory: String? {
+        let allCats = log.flatMap { $0.categories }
+        guard !allCats.isEmpty else { return nil }
+        let counts = Dictionary(grouping: allCats, by: { $0 }).mapValues { $0.count }
+        return counts.max(by: { $0.value < $1.value })?.key
     }
 }
 
@@ -196,17 +243,60 @@ private struct PieSegmentShape: Shape {
 
 // MARK: - Audit/Admin Accessors
 
+/// Admin/audit API for ExpenseBreakdownWidget.
+/// Exposes summaries, analytics, and CSV export.
 public enum ExpenseBreakdownWidgetAuditAdmin {
+    /// Last event's accessibility summary.
     public static var lastSummary: String { ExpenseBreakdownAudit.accessibilitySummary }
+    /// Last event as JSON.
     public static var lastJSON: String? { ExpenseBreakdownAudit.exportLastJSON() }
+    /// Recent event summaries.
     public static func recentEvents(limit: Int = 5) -> [String] {
         ExpenseBreakdownAudit.recentEvents(limit: limit)
     }
+    /// Exports all audit events as CSV.
+    public static func exportCSV() -> String { ExpenseBreakdownAudit.exportCSV() }
+    /// Analytics: Average segment count.
+    public static var averageSegmentCount: Double { ExpenseBreakdownAudit.averageSegmentCount }
+    /// Analytics: Most frequent category.
+    public static var mostFrequentCategory: String? { ExpenseBreakdownAudit.mostFrequentCategory }
 }
 
 // MARK: - Preview
 
 #if DEBUG
+/// DEV overlay for audit analytics and recent events.
+fileprivate struct ExpenseBreakdownDevOverlay: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("DEV: Audit Log (last 3)")
+                .font(.caption.bold())
+                .foregroundColor(.blue)
+            ForEach(Array(ExpenseBreakdownAudit.log.suffix(3).enumerated()), id: \.offset) { idx, event in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(idx + 1). \(event.accessibilityLabel)")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+            }
+            Divider()
+            Text(String(format: "Average segments: %.2f", ExpenseBreakdownAudit.averageSegmentCount))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text("Most frequent category: \(ExpenseBreakdownAudit.mostFrequentCategory ?? "-")")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(radius: 1)
+        )
+        .padding(.top, 12)
+    }
+}
+
 struct ExpenseBreakdownWidget_Previews: PreviewProvider {
     static var previews: some View {
         let sample = [
@@ -214,11 +304,16 @@ struct ExpenseBreakdownWidget_Previews: PreviewProvider {
             ExpenseCategory(name: "Wages", amount: 1650, color: .green),
             ExpenseCategory(name: "Rent", amount: 890, color: .purple),
             ExpenseCategory(name: "Utilities", amount: 210, color: .orange),
-            ExpenseCategory(name: "Other", amount: 80, color: .pink)
+            ExpenseCategory(name: "Other", amount: 80, color: .pink),
+            ExpenseCategory(name: "Travel", amount: 120, color: .red)
         ]
-        ExpenseBreakdownWidget(categories: sample)
-            .frame(width: 340, height: 340)
-            .previewLayout(.sizeThatFits)
+        ZStack(alignment: .bottom) {
+            ExpenseBreakdownWidget(categories: sample)
+                .frame(width: 340, height: 340)
+                .previewLayout(.sizeThatFits)
+            ExpenseBreakdownDevOverlay()
+                .frame(maxWidth: .infinity)
+        }
     }
 }
 #endif

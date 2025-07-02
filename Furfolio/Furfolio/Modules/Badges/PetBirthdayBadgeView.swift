@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -23,7 +24,13 @@ fileprivate struct PetBirthdayBadgeAuditEvent: Codable {
 
 fileprivate final class PetBirthdayBadgeAudit {
     static private(set) var log: [PetBirthdayBadgeAuditEvent] = []
-
+    
+    /// Records a birthday badge appearance event.
+    /// - Parameters:
+    ///   - petName: The name of the pet.
+    ///   - ageNote: Optional age note associated with the badge.
+    ///   - tags: Tags related to the badge event.
+    ///   - context: Context string identifying the source.
     static func record(
         petName: String,
         ageNote: String?,
@@ -40,15 +47,59 @@ fileprivate final class PetBirthdayBadgeAudit {
         log.append(event)
         if log.count > 80 { log.removeFirst() }
     }
-
+    
+    /// Exports the last logged event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
-
+    
+    /// Accessibility summary string for the last event or a default message.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No birthday badge events recorded."
+    }
+    
+    /// CSV export of all logged events.
+    /// Format: timestamp,petName,ageNote,tags,context
+    static func exportCSV() -> String {
+        let header = "timestamp,petName,ageNote,tags,context"
+        let rows = log.map { event -> String in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let petNameEscaped = event.petName.replacingOccurrences(of: "\"", with: "\"\"")
+            let ageNoteEscaped = (event.ageNote ?? "").replacingOccurrences(of: "\"", with: "\"\"")
+            let tagsEscaped = event.tags.joined(separator: ";").replacingOccurrences(of: "\"", with: "\"\"")
+            let contextEscaped = event.context.replacingOccurrences(of: "\"", with: "\"\"")
+            // Wrap fields with commas or special chars in quotes
+            func quoteIfNeeded(_ str: String) -> String {
+                if str.contains(",") || str.contains("\"") || str.contains("\n") {
+                    return "\"\(str)\""
+                } else {
+                    return str
+                }
+            }
+            return [
+                quoteIfNeeded(timestampStr),
+                quoteIfNeeded(petNameEscaped),
+                quoteIfNeeded(ageNoteEscaped),
+                quoteIfNeeded(tagsEscaped),
+                quoteIfNeeded(contextEscaped)
+            ].joined(separator: ",")
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+    
+    /// The ageNote string that appears most frequently in the log, if any.
+    static var mostFrequentAgeNote: String? {
+        let notes = log.compactMap { $0.ageNote }
+        guard !notes.isEmpty else { return nil }
+        let counts = Dictionary(grouping: notes, by: { $0 }).mapValues { $0.count }
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+    
+    /// Total count of all badge appearance events recorded.
+    static var totalBadgeShows: Int {
+        log.count
     }
 }
 
@@ -59,7 +110,7 @@ fileprivate final class PetBirthdayBadgeAudit {
 struct PetBirthdayBadgeView: View {
     let petName: String
     let badge: Badge // Expects a pre-calculated badge object
-
+    
     var body: some View {
         if badge.type == .birthday {
             HStack(spacing: 8) {
@@ -87,12 +138,46 @@ struct PetBirthdayBadgeView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Happy Birthday, \(petName). \(badge.notes ?? "")")
             .onAppear {
+                // Record the badge appearance event for auditing.
                 PetBirthdayBadgeAudit.record(
                     petName: petName,
                     ageNote: badge.notes,
                     tags: ["birthday", "badge"]
                 )
+                // Post VoiceOver announcement for accessibility.
+                UIAccessibility.post(notification: .announcement, argument: "Birthday badge for \(petName) displayed.")
             }
+            #if DEBUG
+            // DEV overlay showing last 3 events and most frequent ageNote.
+            .overlay(
+                VStack(alignment: .leading, spacing: 4) {
+                    Divider()
+                    Text("DEV Audit Summary:")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    ForEach(PetBirthdayBadgeAudit.log.suffix(3).reversed(), id: \.timestamp) { event in
+                        Text(event.accessibilityLabel)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                    }
+                    if let frequent = PetBirthdayBadgeAudit.mostFrequentAgeNote {
+                        Text("Most Frequent AgeNote: \(frequent)")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    } else {
+                        Text("Most Frequent AgeNote: None")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                }
+                .padding(6)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(6)
+                .padding([.top], 48),
+                alignment: .bottom
+            )
+            #endif
         }
     }
 }
@@ -105,6 +190,12 @@ public enum PetBirthdayBadgeAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         PetBirthdayBadgeAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
+    /// CSV export of all logged badge appearance events.
+    public static var exportCSV: String { PetBirthdayBadgeAudit.exportCSV() }
+    /// The ageNote string that appears most frequently in the log, if any.
+    public static var mostFrequentAgeNote: String? { PetBirthdayBadgeAudit.mostFrequentAgeNote }
+    /// Total count of all badge appearance events recorded.
+    public static var totalBadgeShows: Int { PetBirthdayBadgeAudit.totalBadgeShows }
 }
 
 // MARK: - Demo/Business/Tokenized Preview

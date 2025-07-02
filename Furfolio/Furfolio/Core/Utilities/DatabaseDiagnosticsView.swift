@@ -5,71 +5,94 @@
 //  ENHANCED: Auditable, Tokenized, BI/Compliance-Ready Database Integrity Diagnostics UI (2025)
 //
 
+
 import SwiftUI
 
-// MARK: - Audit/Event Logging
+// MARK: - Analytics & Audit Protocols
 
-fileprivate struct DiagnosticsAuditEvent: Codable {
-    let timestamp: Date
-    let operation: String         // "view", "run"
-    let issueCount: Int
-    let tags: [String]
-    let actor: String?
-    let context: String?
-    let detail: String?
-    var accessibilityLabel: String {
-        let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
-        return "[\(operation.capitalized)] \(issueCount) issues at \(dateStr)\(detail != nil ? ": \(detail!)" : "")"
+public protocol DatabaseDiagnosticsAnalyticsLogger {
+    /// Log a diagnostics event asynchronously.
+    func log(event: String, issueCount: Int, tags: [String]) async
+}
+
+public protocol DatabaseDiagnosticsAuditLogger {
+    /// Record a diagnostics audit entry asynchronously.
+    func record(event: String, issueCount: Int, tags: [String], detail: String?) async
+}
+
+public struct NullDatabaseDiagnosticsAnalyticsLogger: DatabaseDiagnosticsAnalyticsLogger {
+    public init() {}
+    public func log(event: String, issueCount: Int, tags: [String]) async {}
+}
+
+public struct NullDatabaseDiagnosticsAuditLogger: DatabaseDiagnosticsAuditLogger {
+    public init() {}
+    public func record(event: String, issueCount: Int, tags: [String], detail: String?) async {}
+}
+
+// MARK: - In-Memory Audit Actor
+
+/// A record of a diagnostics audit event.
+public struct DiagnosticsAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let operation: String
+    public let issueCount: Int
+    public let tags: [String]
+    public let detail: String?
+}
+
+/// Actor for concurrency-safe diagnostics audit logging.
+public actor DiagnosticsAuditManager {
+    private var buffer: [DiagnosticsAuditEntry] = []
+    private let maxEntries = 1000
+    public static let shared = DiagnosticsAuditManager()
+
+    public func add(_ entry: DiagnosticsAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    public func recent(limit: Int = 100) -> [DiagnosticsAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportLastJSON() -> String? {
+        guard let last = buffer.last else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(last) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }
 
-fileprivate final class DiagnosticsAudit {
-    static private(set) var log: [DiagnosticsAuditEvent] = []
-
-    static func record(
-        operation: String,
-        issueCount: Int,
-        tags: [String] = [],
-        actor: String? = "admin",
-        context: String? = nil,
-        detail: String? = nil
-    ) {
-        let event = DiagnosticsAuditEvent(
-            timestamp: Date(),
-            operation: operation,
-            issueCount: issueCount,
-            tags: tags,
-            actor: actor,
-            context: context,
-            detail: detail
-        )
-        log.append(event)
-        if log.count > 1000 { log.removeFirst() }
-    }
-
-    static func exportLastJSON() -> String? {
-        guard let last = log.last else { return nil }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
-        return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
-    }
-
-    static var accessibilitySummary: String {
-        log.last?.accessibilityLabel ?? "No diagnostics events recorded."
-    }
-}
 
 // MARK: - DatabaseDiagnosticsView (Tokenized, Modular, Audit-Ready Diagnostics UI)
 
-struct DatabaseDiagnosticsView: View {
-    /// The list of integrity issues found by the checker.
+public struct DatabaseDiagnosticsView: View {
     let issues: [IntegrityIssue]
-
-    /// The action to re-run the diagnostic check.
     let onRunCheck: () -> Void
+    let analytics: DatabaseDiagnosticsAnalyticsLogger
+    let audit: DatabaseDiagnosticsAuditLogger
 
     @State private var showAuditSheet = false
 
-    var body: some View {
+    public init(
+        issues: [IntegrityIssue],
+        onRunCheck: @escaping () -> Void,
+        analytics: DatabaseDiagnosticsAnalyticsLogger = NullDatabaseDiagnosticsAnalyticsLogger(),
+        audit: DatabaseDiagnosticsAuditLogger = NullDatabaseDiagnosticsAuditLogger()
+    ) {
+        self.issues = issues
+        self.onRunCheck = onRunCheck
+        self.analytics = analytics
+        self.audit = audit
+    }
+
+    public var body: some View {
         List {
             // Summary Section
             Section {
@@ -99,14 +122,20 @@ struct DatabaseDiagnosticsView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    DiagnosticsAudit.record(
-                        operation: "run",
-                        issueCount: issues.count,
-                        tags: ["run", issues.isEmpty ? "noIssues" : "issuesFound"],
-                        actor: "admin",
-                        context: "DatabaseDiagnosticsView",
-                        detail: issues.isEmpty ? "No issues" : "\(issues.count) issues"
-                    )
+                    Task {
+                        let tags = ["run", issues.isEmpty ? "noIssues" : "issuesFound"]
+                        await analytics.log(event: "run", issueCount: issues.count, tags: tags)
+                        await audit.record(event: "run", issueCount: issues.count, tags: tags,
+                                           detail: issues.isEmpty ? "No issues" : "\(issues.count) issues")
+                        await DiagnosticsAuditManager.shared.add(
+                            DiagnosticsAuditEntry(
+                                id: UUID(), timestamp: Date(),
+                                operation: "run", issueCount: issues.count,
+                                tags: tags,
+                                detail: issues.isEmpty ? "No issues" : "\(issues.count) issues"
+                            )
+                        )
+                    }
                     onRunCheck()
                 } label: {
                     Label("Run Again", systemImage: "arrow.clockwise")
@@ -122,13 +151,18 @@ struct DatabaseDiagnosticsView: View {
             }
         }
         .onAppear {
-            DiagnosticsAudit.record(
-                operation: "view",
-                issueCount: issues.count,
-                tags: ["view", issues.isEmpty ? "noIssues" : "issuesFound"],
-                actor: "admin",
-                context: "DatabaseDiagnosticsView"
-            )
+            Task {
+                let tags = ["view", issues.isEmpty ? "noIssues" : "issuesFound"]
+                await analytics.log(event: "view", issueCount: issues.count, tags: tags)
+                await audit.record(event: "view", issueCount: issues.count, tags: tags, detail: nil)
+                await DiagnosticsAuditManager.shared.add(
+                    DiagnosticsAuditEntry(
+                        id: UUID(), timestamp: Date(),
+                        operation: "view", issueCount: issues.count,
+                        tags: tags, detail: nil
+                    )
+                )
+            }
         }
         .sheet(isPresented: $showAuditSheet) {
             DiagnosticsAuditSheetView(isPresented: $showAuditSheet)
@@ -178,22 +212,22 @@ private struct IntegrityIssueRow: View {
 
 private struct DiagnosticsAuditSheetView: View {
     @Binding var isPresented: Bool
+    @State private var entries: [DiagnosticsAuditEntry] = []
+    @State private var lastJSON: String? = nil
 
     var body: some View {
         NavigationStack {
             List {
-                if DiagnosticsAudit.log.isEmpty {
+                if entries.isEmpty {
                     ContentUnavailableView("No Diagnostics Events", systemImage: "doc.text.magnifyingglass")
                 } else {
-                    ForEach(DiagnosticsAudit.log.suffix(40).reversed(), id: \.timestamp) { event in
+                    ForEach(entries.reversed()) { entry in
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(event.accessibilityLabel)
+                            let dateStr = DateFormatter.localizedString(from: entry.timestamp, dateStyle: .short, timeStyle: .short)
+                            Text("[\(entry.operation.capitalized)] \(entry.issueCount) issues at \(dateStr)\(entry.detail != nil ? ": \(entry.detail!)" : "")")
                                 .font(.footnote)
                                 .foregroundColor(.primary)
-                            if let context = event.context, !context.isEmpty {
-                                Text("Context: \(context)").font(.caption2).foregroundColor(.secondary)
-                            }
-                            if let detail = event.detail, !detail.isEmpty {
+                            if let detail = entry.detail, !detail.isEmpty {
                                 Text("Detail: \(detail)").font(.caption2).foregroundColor(.secondary)
                             }
                         }
@@ -207,7 +241,7 @@ private struct DiagnosticsAuditSheetView: View {
                     Button("Close") { isPresented = false }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if let json = DiagnosticsAudit.exportLastJSON() {
+                    if let json = lastJSON {
                         Button {
                             UIPasteboard.general.string = json
                         } label: {
@@ -217,12 +251,19 @@ private struct DiagnosticsAuditSheetView: View {
                     }
                 }
             }
+            .onAppear {
+                Task {
+                    self.entries = await DiagnosticsAuditManager.shared.recent(limit: 40)
+                    self.lastJSON = await DiagnosticsAuditManager.shared.exportLastJSON()
+                }
+            }
         }
     }
 }
 
 // MARK: - Preview
 
+#if DEBUG
 #if DEBUG
 struct DatabaseDiagnosticsView_Previews: PreviewProvider {
     struct PreviewWrapper: View {
@@ -253,3 +294,17 @@ struct DatabaseDiagnosticsView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Diagnostics Helpers
+
+public extension DatabaseDiagnosticsView {
+    /// Fetch recent audit entries.
+    static func recentAuditEntries(limit: Int = 100) async -> [DiagnosticsAuditEntry] {
+        await DiagnosticsAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export last audit entry as JSON.
+    static func exportLastAuditJSON() async -> String? {
+        await DiagnosticsAuditManager.shared.exportLastJSON()
+    }
+}

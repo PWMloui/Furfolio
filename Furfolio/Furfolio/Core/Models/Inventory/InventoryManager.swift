@@ -5,6 +5,60 @@
 //  Enhanced: Adds audit logging, notification hooks, predictive restock, and robust handling of discontinued/archived items.
 //
 
+/**
+ InventoryManager
+ ----------------
+ Manages inventory operations including stock usage, receipt, automated task generation, and analytics/audit logging for Furfolio.
+ 
+ - **Architecture**: Follows MVVM with @MainActor and ObservableObject for UI binding.
+ - **Concurrency**: Uses async/await for data store operations and audit logging, ensuring thread safety.
+ - **Audit Logging**: All stock changes and task creations are recorded via a centralized async audit manager.
+ - **Notifications**: Low stock events trigger notification hooks for user alerts.
+ - **Predictive Restock**: Stub for future ML-powered forecasting.
+ - **Localization**: All user-facing strings are wrapped in NSLocalizedString for i18n.
+ - **Accessibility**: Exposes localized accessibility labels for key UI metrics.
+ - **Preview/Testability**: SwiftUI preview demonstrates core features with in-memory data store.
+ */
+
+/// Represents an audit entry for inventory actions.
+@Model public struct InventoryManagerAuditEntry: Identifiable {
+    @Attribute(.unique) public var id: UUID
+    public let timestamp: Date
+    public let action: String
+    public let itemID: UUID
+}
+
+/// Actor to manage concurrency-safe audit logging.
+public actor InventoryManagerAuditLog {
+    private var buffer: [InventoryManagerAuditEntry] = []
+    let maxEntries = 500
+    public static let shared = InventoryManagerAuditLog()
+    
+    /// Append a new audit entry, capping buffer size.
+    public func add(_ entry: InventoryManagerAuditEntry) {
+      buffer.append(entry)
+      if buffer.count > maxEntries {
+        buffer.removeFirst(buffer.count - maxEntries)
+      }
+    }
+    
+    /// Retrieve recent audit entries.
+    public func recent(limit: Int = 20) -> [InventoryManagerAuditEntry] {
+      Array(buffer.suffix(limit))
+    }
+    
+    /// Export audit log as JSON.
+    public func exportJSON() -> String {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = .prettyPrinted
+      encoder.dateEncodingStrategy = .iso8601
+      guard let data = try? encoder.encode(buffer),
+            let json = String(data: data, encoding: .utf8)
+      else { return "[]" }
+      return json
+    }
+}
+
 import Foundation
 import SwiftData
 
@@ -14,17 +68,28 @@ final class InventoryManager: ObservableObject {
     private let dataStore: DataStoreService
 
     // For audit logs
-    private func addAudit(for item: InventoryItem, action: String, user: String? = nil) {
-        let userText = user ?? "system"
-        let logEntry = "[\(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))] \(action) (\(userText))"
-        item.auditLog.append(logEntry)
+    private func addAudit(for item: InventoryItem, action: String, user: String? = nil) async {
+        let userText = user ?? NSLocalizedString("system", comment: "System user for audit")
+        let entryText = String(
+          format: NSLocalizedString("Audit [%@] %@ by %@", comment: "Audit log entry format: date, action, user"),
+          DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short),
+          NSLocalizedString(action, comment: "Audit action description"),
+          userText
+        )
+        let auditEntry = InventoryManagerAuditEntry(
+          id: UUID(),
+          timestamp: Date(),
+          action: entryText,
+          itemID: item.id
+        )
+        await InventoryManagerAuditLog.shared.add(auditEntry)
         item.lastUpdated = Date()
     }
 
     // Notification stub: Call your app’s notification service here.
     private func notifyLowStock(for item: InventoryItem) {
         // e.g., NotificationCenter.default.post(name: .inventoryLowStock, object: item)
-        print("Notify: Low stock alert for \(item.name)")
+        print(String(format: NSLocalizedString("Notify: Low stock alert for %@", comment: "Notify low stock"), item.name))
     }
 
     init(dataStore: DataStoreService = .shared) {
@@ -36,21 +101,21 @@ final class InventoryManager: ObservableObject {
     /// Decrements stock, logs audit, and triggers notification/task if needed.
     func useStock(for itemID: UUID, quantity: Int = 1, user: String? = nil) async {
         guard let item = await dataStore.fetchByID(InventoryItem.self, id: itemID) else {
-            print("InventoryManager Error: Could not find item with ID \(itemID)")
+            print(String(format: NSLocalizedString("InventoryManager Error: Could not find item with ID %@", comment: "InventoryManager error missing item"), "\(itemID)"))
             return
         }
         guard !item.isArchived && !item.isDiscontinued else {
-            print("InventoryManager: Item \(item.name) is archived/discontinued. No stock change.")
+            print(String(format: NSLocalizedString("InventoryManager: Item %@ is archived/discontinued. No stock change.", comment: "Archived/discontinued item"), item.name))
             return
         }
         guard item.stockLevel >= quantity else {
-            print("InventoryManager Warning: Attempted to use more stock than available for \(item.name). Setting to 0.")
+            print(String(format: NSLocalizedString("InventoryManager Warning: Attempted to use more stock than available for %@. Setting to 0.", comment: "Stock depleted to zero"), item.name))
             item.stockLevel = 0
-            addAudit(for: item, action: "Stock depleted to 0", user: user)
+            await addAudit(for: item, action: "Stock depleted to 0", user: user)
             return
         }
         item.stockLevel -= quantity
-        addAudit(for: item, action: "Used \(quantity) unit(s). New stock: \(item.stockLevel)", user: user)
+        await addAudit(for: item, action: "Used \(quantity) unit(s). New stock: \(item.stockLevel)", user: user)
         await checkForLowStockAndCreateTask(for: item)
         await updateLowStockCount()
     }
@@ -60,7 +125,7 @@ final class InventoryManager: ObservableObject {
         guard let item = await dataStore.fetchByID(InventoryItem.self, id: itemID) else { return }
         item.stockLevel += quantity
         item.pendingReorder = false
-        addAudit(for: item, action: "Received \(quantity) unit(s). New stock: \(item.stockLevel)", user: user)
+        await addAudit(for: item, action: "Received \(quantity) unit(s). New stock: \(item.stockLevel)", user: user)
         await updateLowStockCount()
     }
 
@@ -80,7 +145,7 @@ final class InventoryManager: ObservableObject {
                 priority: .medium
             )
             await dataStore.insert(newTask)
-            addAudit(for: item, action: "Created reorder task for \(reorderQty) units")
+            await addAudit(for: item, action: "Created reorder task for \(reorderQty) units")
             notifyLowStock(for: item)
             item.pendingReorder = true
         }
@@ -115,7 +180,7 @@ final class InventoryManager: ObservableObject {
 
     // MARK: - Accessibility (example for badge)
     var lowStockAccessibilityLabel: String {
-        "There are \(lowStockItemCount) items low on stock"
+        NSLocalizedString("There are \(lowStockItemCount) items low on stock", comment: "Low stock accessibility label")
     }
 }
 

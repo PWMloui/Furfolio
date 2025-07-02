@@ -4,7 +4,6 @@
 //  Furfolio
 //
 //  Enhanced 2025: Auditable, Tokenized, BI/Compliance-Ready Date & Time Utilities
-//
 
 import Foundation
 import SwiftUI
@@ -500,6 +499,210 @@ enum DateUtils {
         )
         return dates
     }
+
+    // MARK: - Enhanced Utilities
+
+    /// Returns true if two dates fall on the same calendar day (uses current calendar). Audit-logged.
+    static func isSameDay(_ date1: Date, _ date2: Date, actor: String? = nil, context: String? = nil) -> Bool {
+        let same = calendar.isDate(date1, inSameDayAs: date2)
+        DateUtilsAudit.record(
+            operation: "isSameDay",
+            date: date1,
+            date2: date2,
+            value: "\(same)",
+            tags: ["compare", "sameDay"],
+            actor: actor,
+            context: context
+        )
+        return same
+    }
+
+    /// Returns the ISO week number for a given date (1...53). Audit-logged.
+    static func weekNumber(of date: Date, actor: String? = nil, context: String? = nil) -> Int {
+        let week = calendar.component(.weekOfYear, from: date)
+        DateUtilsAudit.record(
+            operation: "weekNumber",
+            date: date,
+            value: "\(week)",
+            tags: ["week", "number"],
+            actor: actor,
+            context: context
+        )
+        return week
+    }
+
+    /// Returns the number of days in the given date's month. Audit-logged.
+    static func daysInMonth(_ date: Date, actor: String? = nil, context: String? = nil) -> Int {
+        let range = calendar.range(of: .day, in: .month, for: date)
+        let count = range?.count ?? 0
+        DateUtilsAudit.record(
+            operation: "daysInMonth",
+            date: date,
+            value: "\(count)",
+            tags: ["month", "daysInMonth"],
+            actor: actor,
+            context: context
+        )
+        return count
+    }
+
+    /// Returns a concise, localized, human-friendly interval string for two dates (e.g. "Jun 1–3, 2025", "Today–Friday", "Yesterday–Today").
+    /// Audit-logged. Full localization support.
+    static func prettyInterval(from start: Date, to end: Date, actor: String? = nil, context: String? = nil) -> String {
+        let cal = calendar
+        let locale = Locale.current
+        let df = DateFormatter()
+        df.locale = locale
+
+        // Helper: weekday name (e.g., "Monday")
+        func weekdayString(_ date: Date) -> String {
+            df.dateFormat = DateFormatter.dateFormat(fromTemplate: "EEEE", options: 0, locale: locale) ?? "EEEE"
+            return df.string(from: date)
+        }
+
+        // Helper: short month + day (e.g., "Jun 1")
+        func monthDay(_ date: Date) -> String {
+            df.dateFormat = DateFormatter.dateFormat(fromTemplate: "MMM d", options: 0, locale: locale) ?? "MMM d"
+            return df.string(from: date)
+        }
+
+        // Helper: short date with year (e.g., "Jun 1, 2025")
+        func monthDayYear(_ date: Date) -> String {
+            df.dateFormat = DateFormatter.dateFormat(fromTemplate: "MMM d, yyyy", options: 0, locale: locale) ?? "MMM d, yyyy"
+            return df.string(from: date)
+        }
+
+        // Relative string (Today, Yesterday, Tomorrow, else nil)
+        func relative(_ date: Date) -> String? {
+            if cal.isDateInToday(date) { return NSLocalizedString("Today", comment: "Today label") }
+            if cal.isDateInYesterday(date) { return NSLocalizedString("Yesterday", comment: "Yesterday label") }
+            if cal.isDateInTomorrow(date) { return NSLocalizedString("Tomorrow", comment: "Tomorrow label") }
+            return nil
+        }
+
+        // If same day
+        if cal.isDate(start, inSameDayAs: end) {
+            let rel = relative(start)
+            let result = rel ?? monthDayYear(start)
+            DateUtilsAudit.record(
+                operation: "prettyInterval",
+                date: start,
+                date2: end,
+                value: result,
+                tags: ["interval", "pretty", "sameDay"],
+                actor: actor,
+                context: context
+            )
+            return result
+        }
+
+        // If both are relative (Today, Yesterday, Tomorrow)
+        let relStart = relative(start)
+        let relEnd = relative(end)
+        if let relStart = relStart, let relEnd = relEnd {
+            let result = "\(relStart)–\(relEnd)"
+            DateUtilsAudit.record(
+                operation: "prettyInterval",
+                date: start,
+                date2: end,
+                value: result,
+                tags: ["interval", "pretty", "relative-both"],
+                actor: actor,
+                context: context
+            )
+            return result
+        }
+
+        // If start is relative
+        if let relStart = relStart {
+            // If end is within 6 days, show weekday
+            let days = cal.dateComponents([.day], from: start, to: end).day ?? 0
+            if days < 7 && days > 0 {
+                let result = "\(relStart)–\(weekdayString(end))"
+                DateUtilsAudit.record(
+                    operation: "prettyInterval",
+                    date: start,
+                    date2: end,
+                    value: result,
+                    tags: ["interval", "pretty", "relative-start"],
+                    actor: actor,
+                    context: context
+                )
+                return result
+            }
+        }
+
+        // If end is relative
+        if let relEnd = relEnd {
+            let days = cal.dateComponents([.day], from: start, to: end).day ?? 0
+            if days < 7 && days > 0 {
+                let result = "\(weekdayString(start))–\(relEnd)"
+                DateUtilsAudit.record(
+                    operation: "prettyInterval",
+                    date: start,
+                    date2: end,
+                    value: result,
+                    tags: ["interval", "pretty", "relative-end"],
+                    actor: actor,
+                    context: context
+                )
+                return result
+            }
+        }
+
+        // If same year
+        let startYear = cal.component(.year, from: start)
+        let endYear = cal.component(.year, from: end)
+        if startYear == endYear {
+            // If same month
+            let startMonth = cal.component(.month, from: start)
+            let endMonth = cal.component(.month, from: end)
+            if startMonth == endMonth {
+                // "Jun 1–3, 2025"
+                df.dateFormat = DateFormatter.dateFormat(fromTemplate: "MMM", options: 0, locale: locale) ?? "MMM"
+                let monthStr = df.string(from: start)
+                let day1 = cal.component(.day, from: start)
+                let day2 = cal.component(.day, from: end)
+                let result = String(format: NSLocalizedString("%@ %d–%d, %d", comment: "Interval: Jun 1–3, 2025"), monthStr, day1, day2, startYear)
+                DateUtilsAudit.record(
+                    operation: "prettyInterval",
+                    date: start,
+                    date2: end,
+                    value: result,
+                    tags: ["interval", "pretty", "range-month"],
+                    actor: actor,
+                    context: context
+                )
+                return result
+            } else {
+                // "Jun 29 – Jul 2, 2025"
+                let result = String(format: NSLocalizedString("%@ – %@, %d", comment: "Interval: Jun 29 – Jul 2, 2025"), monthDay(start), monthDay(end), startYear)
+                DateUtilsAudit.record(
+                    operation: "prettyInterval",
+                    date: start,
+                    date2: end,
+                    value: result,
+                    tags: ["interval", "pretty", "range-year"],
+                    actor: actor,
+                    context: context
+                )
+                return result
+            }
+        } else {
+            // "Dec 31, 2024 – Jan 2, 2025"
+            let result = String(format: NSLocalizedString("%@ – %@", comment: "Interval: Dec 31, 2024 – Jan 2, 2025"), monthDayYear(start), monthDayYear(end))
+            DateUtilsAudit.record(
+                operation: "prettyInterval",
+                date: start,
+                date2: end,
+                value: result,
+                tags: ["interval", "pretty", "range-multiyear"],
+                actor: actor,
+                context: context
+            )
+            return result
+        }
+    }
 }
 
 // MARK: - Audit/Admin Accessors
@@ -519,3 +722,20 @@ private extension LocalizedStringKey {
         Mirror(reflecting: self).children.first(where: { $0.label == "key" })?.value as? String ?? ""
     }
 }
+
+// MARK: - Sample Usage for Enhanced Utilities
+/*
+ // 1. isSameDay
+ let same = DateUtils.isSameDay(Date(), Date()) // true
+
+ // 2. weekNumber(of:)
+ let week = DateUtils.weekNumber(of: Date()) // e.g. 23
+
+ // 3. daysInMonth(_:)
+ let days = DateUtils.daysInMonth(Date()) // e.g. 30
+
+ // 4. prettyInterval(from:to:)
+ let today = Date()
+ let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+ let interval = DateUtils.prettyInterval(from: today, to: tomorrow) // e.g. "Today–Tomorrow"
+*/

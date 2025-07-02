@@ -2,31 +2,46 @@
 //  AboutAppView.swift
 //  Furfolio
 //
-//  Enhanced: token-compliant, analytics/audit-ready, fully accessible, brand/white-label, modular.
+//  ENHANCED 2025-06-30: Role-aware, analytics/audit-trail, compliance, business branding, future-proof.
 //
 import SwiftUI
 
-// MARK: - About App Analytics Protocol
+// MARK: - Analytics Protocol (Role/Staff/Context-Aware)
 
 public protocol AboutAppViewAnalyticsLogger {
-    func log(event: String, info: String)
+    func log(event: String, info: String, role: String?, staffID: String?, context: String?) async
+    var testMode: Bool { get set }
 }
 public struct NullAboutAppViewAnalyticsLogger: AboutAppViewAnalyticsLogger {
     public init() {}
-    public func log(event: String, info: String) {}
+    public var testMode: Bool = false
+    public func log(event: String, info: String, role: String?, staffID: String?, context: String?) async {}
 }
 
-// MARK: - AboutAppView (Furfolio About & Credits, Tokenized Styling)
+// MARK: - AboutAppView
 
 struct AboutAppView: View {
     @State private var showDeveloperDebugSection = false
+    @State private var lastAnalyticsEvent: String = ""
+    @State private var currentRole: FurfolioRole = .owner
+    @State private var staffID: String? = nil
+    @State private var businessContext: String? = "AboutAppView"
+    @Environment(\.colorScheme) private var colorScheme
+
+    // Analytics logger (swappable)
     static var analyticsLogger: AboutAppViewAnalyticsLogger = NullAboutAppViewAnalyticsLogger()
+
+    // For role-based diagnostics section
+    private var canShowDevSection: Bool {
+        currentRole == .owner || currentRole == .admin || currentRole == .developer
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: AppSpacing.large) {
-                    // MARK: About Furfolio Card
+
+                    // MARK: Brand Card
                     VStack(spacing: AppSpacing.medium) {
                         Image(systemName: "pawprint.circle.fill")
                             .resizable()
@@ -34,13 +49,13 @@ struct AboutAppView: View {
                             .frame(width: 80, height: 80)
                             .foregroundStyle(AppColors.accent)
                             .accessibilityHidden(true)
-                        Text("Furfolio")
+                        Text(NSLocalizedString("about_app_title", value: "Furfolio", comment: "App name"))
                             .font(AppFonts.largeTitleBold)
                             .accessibilityAddTraits(.isHeader)
-                        Text("Version \(Bundle.appVersionDisplay)")
+                        Text(String(format: NSLocalizedString("about_app_version_fmt", value: "Version %@", comment: "App version label"), Bundle.appVersionDisplay))
                             .font(AppFonts.title3)
                             .foregroundStyle(AppColors.secondary)
-                            .accessibilityLabel("App version \(Bundle.appVersionDisplay)")
+                            .accessibilityLabel(String(format: NSLocalizedString("about_app_version_accessibility_fmt", value: "App version %@", comment: "Accessibility: app version"), Bundle.appVersionDisplay))
                     }
                     .padding(AppSpacing.medium)
                     .frame(maxWidth: .infinity)
@@ -52,70 +67,73 @@ struct AboutAppView: View {
 
                     // MARK: Business Description & Features
                     VStack(alignment: .leading, spacing: AppSpacing.medium) {
-                        Text("Furfolio is your all-in-one grooming business manager, designed to streamline appointments, track clients and pets, and grow your business — all offline, private, and secure.")
+                        Text(NSLocalizedString("about_app_description", value: "Furfolio is your all-in-one grooming business manager, designed to streamline appointments, track clients and pets, and grow your business — all offline, private, and secure.", comment: "App business description"))
                             .font(AppFonts.body)
                             .foregroundStyle(AppColors.primary)
                             .multilineTextAlignment(.leading)
-                            .accessibilityLabel("Business description: Furfolio is your all-in-one grooming business manager, designed to streamline appointments, track clients and pets, and grow your business — all offline, private, and secure.")
+                            .accessibilityLabel(NSLocalizedString("about_app_description_accessibility", value: "Business description: Furfolio is your all-in-one grooming business manager, designed to streamline appointments, track clients and pets, and grow your business — all offline, private, and secure.", comment: "Accessibility: business description"))
 
-                        Text("Key Features")
+                        Text(NSLocalizedString("about_app_features_header", value: "Key Features", comment: "Key features header"))
                             .font(AppFonts.title2Bold)
                             .accessibilityAddTraits(.isHeader)
 
                         VStack(alignment: .leading, spacing: AppSpacing.small) {
-                            FeatureLabel(text: "Appointments")
-                            FeatureLabel(text: "Clients & Pets")
-                            FeatureLabel(text: "Grooming History")
-                            FeatureLabel(text: "Financials")
-                            FeatureLabel(text: "Analytics")
-                            FeatureLabel(text: "Security")
+                            FeatureLabel(text: NSLocalizedString("about_feature_appointments", value: "Appointments", comment: "Feature: Appointments"))
+                            FeatureLabel(text: NSLocalizedString("about_feature_clients_pets", value: "Clients & Pets", comment: "Feature: Clients & Pets"))
+                            FeatureLabel(text: NSLocalizedString("about_feature_grooming_history", value: "Grooming History", comment: "Feature: Grooming History"))
+                            FeatureLabel(text: NSLocalizedString("about_feature_financials", value: "Financials", comment: "Feature: Financials"))
+                            FeatureLabel(text: NSLocalizedString("about_feature_analytics", value: "Analytics", comment: "Feature: Analytics"))
+                            FeatureLabel(text: NSLocalizedString("about_feature_security", value: "Security", comment: "Feature: Security"))
                         }
                     }
                     .padding(.horizontal, AppSpacing.medium)
 
                     // MARK: Privacy & Trust Center Navigation
                     NavigationLink(destination: TrustCenterView()) {
-                        Text("Privacy & Trust Center")
+                        Text(NSLocalizedString("about_nav_trust_center", value: "Privacy & Trust Center", comment: "Navigation link: Privacy & Trust Center"))
                             .font(AppFonts.headline)
                             .frame(maxWidth: .infinity)
                             .padding(AppSpacing.medium)
                             .background(AppColors.accent.opacity(0.1))
                             .foregroundColor(AppColors.accent)
                             .cornerRadius(BorderRadius.medium)
-                            .accessibilityLabel("Navigate to Privacy and Trust Center")
                     }
                     .padding(.horizontal, AppSpacing.medium)
+                    .accessibilityLabel(NSLocalizedString("about_nav_trust_center_accessibility", value: "Navigate to Privacy and Trust Center", comment: "Accessibility: nav to privacy center"))
+                    .accessibilityHint(NSLocalizedString("about_nav_trust_center_hint", value: "Opens Furfolio privacy and trust information.", comment: "Accessibility hint: privacy center"))
 
-                    // MARK: Developer / Credits Section
+                    // MARK: Credits/Team Section
                     VStack(spacing: AppSpacing.small) {
-                        Text("Developed by Furfolio Team")
+                        Text(NSLocalizedString("about_credits_developed_by", value: "Developed by Furfolio Team", comment: "Credits: developed by"))
                             .font(AppFonts.footnote)
                             .accessibilityAddTraits(.isStaticText)
-                        Text("Contact: support@furfolio.app")
+                        Text(NSLocalizedString("about_credits_contact", value: "Contact: support@furfolio.app", comment: "Credits: contact email"))
                             .font(AppFonts.footnote)
                             .foregroundStyle(AppColors.secondary)
-                            .accessibilityLabel("Contact email support at furfolio dot app")
-                        Link("Visit Website", destination: URL(string: "https://furfolio.app")!)
+                            .accessibilityLabel(NSLocalizedString("about_credits_contact_accessibility", value: "Contact email support at furfolio dot app", comment: "Accessibility: contact email"))
+                        Link(NSLocalizedString("about_credits_website", value: "Visit Website", comment: "Credits: website link"), destination: URL(string: "https://furfolio.app")!)
                             .font(AppFonts.footnote)
-                            .accessibilityLabel("Visit Furfolio website")
-                        Text("Furfolio is offline-first and prioritizes your data privacy and security.")
+                            .accessibilityLabel(NSLocalizedString("about_credits_website_accessibility", value: "Visit Furfolio website", comment: "Accessibility: visit website"))
+                            .accessibilityHint(NSLocalizedString("about_credits_website_hint", value: "Opens the Furfolio website in your browser.", comment: "Accessibility hint: website"))
+                        Text(NSLocalizedString("about_credits_privacy", value: "Furfolio is offline-first and prioritizes your data privacy and security.", comment: "Credits: privacy statement"))
                             .font(AppFonts.footnote)
                             .foregroundStyle(AppColors.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.top, AppSpacing.xSmall)
-                            .accessibilityLabel("Furfolio is offline first and prioritizes your data privacy and security.")
+                            .accessibilityLabel(NSLocalizedString("about_credits_privacy_accessibility", value: "Furfolio is offline first and prioritizes your data privacy and security.", comment: "Accessibility: privacy statement"))
                     }
                     .padding(.horizontal, AppSpacing.medium)
 
-                    // MARK: Developer Debug Section (Feature Flag)
-                    if showDeveloperDebugSection {
+                    // MARK: Developer / Debug Section (Role-aware)
+                    if canShowDevSection && showDeveloperDebugSection {
                         VStack(spacing: AppSpacing.medium) {
                             Divider()
                                 .background(AppColors.divider)
-                            Text("Developer Debug Section")
+                            Text(NSLocalizedString("about_debug_section_header", value: "Developer Debug Section", comment: "Debug section header"))
                                 .font(AppFonts.headline)
-                            NavigationLink("Open Source Licenses", destination: OpenSourceLicensesView())
-                                .accessibilityLabel("Navigate to Open Source Licenses")
+                            NavigationLink(NSLocalizedString("about_debug_nav_licenses", value: "Open Source Licenses", comment: "Debug: open source licenses"), destination: OpenSourceLicensesView())
+                                .accessibilityLabel(NSLocalizedString("about_debug_nav_licenses_accessibility", value: "Navigate to Open Source Licenses", comment: "Accessibility: open source licenses"))
+                                .accessibilityHint(NSLocalizedString("about_debug_nav_licenses_hint", value: "Shows open source license information.", comment: "Accessibility hint: open source licenses"))
                         }
                         .padding(.horizontal, AppSpacing.medium)
                     }
@@ -123,41 +141,59 @@ struct AboutAppView: View {
                     Spacer(minLength: AppSpacing.medium)
 
                     // MARK: Footer
-                    Text("© \(Calendar.current.component(.year, from: Date())) Furfolio. All rights reserved.")
+                    Text(String(format: NSLocalizedString("about_footer_copyright_fmt", value: "© %d Furfolio. All rights reserved.", comment: "Footer copyright"), Calendar.current.component(.year, from: Date())))
                         .font(AppFonts.caption2)
                         .foregroundStyle(AppColors.tertiary)
                         .padding(.bottom, AppSpacing.medium)
-                        .accessibilityLabel("Copyright \(Calendar.current.component(.year, from: Date())) Furfolio. All rights reserved.")
+                        .accessibilityLabel(String(format: NSLocalizedString("about_footer_copyright_accessibility_fmt", value: "Copyright %d Furfolio. All rights reserved.", comment: "Accessibility: copyright footer"), Calendar.current.component(.year, from: Date())))
                 }
                 .padding(.vertical, AppSpacing.medium)
                 .frame(maxWidth: .infinity)
                 .background(AppColors.background)
                 .ignoresSafeArea(edges: .bottom)
                 .onAppear {
-                    AboutAppView.analyticsLogger.log(event: "about_view_appear", info: Bundle.appVersionDisplay)
+                    Task {
+                        await AboutAppView.analyticsLogger.log(
+                            event: "about_view_appear",
+                            info: Bundle.appVersionDisplay,
+                            role: currentRole.rawValue,
+                            staffID: staffID,
+                            context: businessContext
+                        )
+                    }
                 }
             }
-            .navigationTitle("About Furfolio")
+            .navigationTitle(NSLocalizedString("about_nav_title", value: "About Furfolio", comment: "Navigation title: about"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         showDeveloperDebugSection.toggle()
-                        AboutAppView.analyticsLogger.log(
-                            event: showDeveloperDebugSection ? "dev_debug_section_shown" : "dev_debug_section_hidden",
-                            info: ""
-                        )
+                        Task {
+                            await AboutAppView.analyticsLogger.log(
+                                event: showDeveloperDebugSection ? "dev_debug_section_shown" : "dev_debug_section_hidden",
+                                info: "",
+                                role: currentRole.rawValue,
+                                staffID: staffID,
+                                context: businessContext
+                            )
+                        }
                     }) {
                         Image(systemName: "hammer.fill")
-                            .accessibilityLabel(showDeveloperDebugSection ? "Hide developer debug section" : "Show developer debug section")
+                            .accessibilityLabel(showDeveloperDebugSection
+                                ? NSLocalizedString("about_dev_debug_hide_label", value: "Hide developer debug section", comment: "Accessibility: hide debug section")
+                                : NSLocalizedString("about_dev_debug_show_label", value: "Show developer debug section", comment: "Accessibility: show debug section"))
+                            .accessibilityHint(NSLocalizedString("about_dev_debug_hint", value: "Toggles developer debug section visibility.", comment: "Accessibility: debug toggle hint"))
                     }
+                    .disabled(!canShowDevSection)
+                    .opacity(canShowDevSection ? 1 : 0.25)
                 }
             }
         }
     }
 }
 
-// MARK: - Feature Label (Re-usable)
+// MARK: - FeatureLabel (Tokenized/Reusable)
 private struct FeatureLabel: View {
     let text: String
     var body: some View {
@@ -169,32 +205,34 @@ private struct FeatureLabel: View {
         }
         .font(AppFonts.body)
         .accessibilityLabel(text)
+        .accessibilityHint(NSLocalizedString("about_feature_label_hint", value: "Feature available in Furfolio.", comment: "Accessibility hint: feature label"))
     }
 }
 
-// MARK: - Trust Center View Stub
+// MARK: - Trust Center & Licenses (Stubs)
+
 private struct TrustCenterView: View {
     var body: some View {
-        Text("Trust Center Coming Soon")
+        Text(NSLocalizedString("about_trust_center_coming_soon", value: "Trust Center Coming Soon", comment: "Trust center coming soon"))
             .font(AppFonts.title)
-            .navigationTitle("Privacy & Trust Center")
+            .navigationTitle(NSLocalizedString("about_nav_trust_center", value: "Privacy & Trust Center", comment: "Navigation title: trust center"))
             .navigationBarTitleDisplayMode(.inline)
+            .accessibilityLabel(NSLocalizedString("about_trust_center_coming_soon_accessibility", value: "Trust Center Coming Soon", comment: "Accessibility: trust center coming soon"))
     }
 }
-
-// MARK: - Open Source Licenses View Stub
 private struct OpenSourceLicensesView: View {
     var body: some View {
-        Text("Open Source Licenses Coming Soon")
+        Text(NSLocalizedString("about_licenses_coming_soon", value: "Open Source Licenses Coming Soon", comment: "Licenses coming soon"))
             .font(AppFonts.title)
-            .navigationTitle("Open Source Licenses")
+            .navigationTitle(NSLocalizedString("about_debug_nav_licenses", value: "Open Source Licenses", comment: "Navigation title: open source licenses"))
             .navigationBarTitleDisplayMode(.inline)
+            .accessibilityLabel(NSLocalizedString("about_licenses_coming_soon_accessibility", value: "Open Source Licenses Coming Soon", comment: "Accessibility: licenses coming soon"))
     }
 }
 
 // MARK: - Bundle Extension for Version Info
+
 extension Bundle {
-    /// Single source of truth for app version display string.
     static var appVersionDisplay: String {
         let main = Bundle.main
         if let version = main.infoDictionary?["CFBundleShortVersionString"] as? String,
@@ -205,21 +243,96 @@ extension Bundle {
     }
 }
 
-// MARK: - Preview
+// MARK: - PREVIEW / QA Diagnostics
+
 struct AboutAppView_Previews: PreviewProvider {
-    struct SpyLogger: AboutAppViewAnalyticsLogger {
-        func log(event: String, info: String) {
-            print("[AboutAppViewAnalytics] \(event): \(info)")
+    struct AnalyticsPreviewWrapper: View {
+        @State private var testMode: Bool = false
+        @State private var lastEvent: String = ""
+        @State private var logger: PreviewLogger = PreviewLogger()
+        @State private var currentRole: FurfolioRole = .owner
+
+        var body: some View {
+            VStack(spacing: 12) {
+                HStack {
+                    Toggle(isOn: $testMode) {
+                        Text("Test Analytics Mode (Console Only)")
+                    }
+                    .onChange(of: testMode) { newValue in
+                        logger.testMode = newValue
+                        AboutAppView.analyticsLogger = logger
+                    }
+                    .accessibilityLabel("Toggle test analytics mode")
+                    .accessibilityHint("When enabled, analytics events are logged to the console only for QA.")
+                    Picker("Role", selection: $currentRole) {
+                        ForEach(FurfolioRole.allCases, id: \.self) { role in
+                            Text(role.rawValue.capitalized)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .onChange(of: currentRole) { _ in
+                        AboutAppView.analyticsLogger = logger
+                    }
+                }
+                .padding(.horizontal)
+
+                AboutAppView.analyticsLogger = logger
+                AboutAppView()
+                    .onAppear {
+                        var loggerCopy = logger
+                        loggerCopy.onEvent = { event, info, role, staffID, context in
+                            DispatchQueue.main.async {
+                                lastEvent = "\(event): \(info) (\(role ?? ""))"
+                            }
+                        }
+                        logger = loggerCopy
+                        AboutAppView.analyticsLogger = logger
+                    }
+                Divider()
+                Text("Last Analytics Event: \(lastEvent)")
+                    .font(.caption)
+                    .padding(.bottom, 10)
+                    .accessibilityLabel("Last Analytics Event")
+                    .accessibilityHint("Displays the most recent analytics event for diagnostics.")
+                Button("Simulate Analytics Event") {
+                    Task {
+                        await AboutAppView.analyticsLogger.log(event: "preview_simulated_event", info: "Simulated from Preview", role: currentRole.rawValue, staffID: nil, context: "Preview")
+                    }
+                }
+                .accessibilityLabel("Simulate analytics event")
+                .accessibilityHint("Sends a test analytics event to logger.")
+                .padding(.bottom, 10)
+            }
         }
     }
     static var previews: some View {
-        AboutAppView.analyticsLogger = SpyLogger()
-        return Group {
-            AboutAppView()
+        Group {
+            AnalyticsPreviewWrapper()
                 .previewDevice("iPhone 14 Pro")
-            AboutAppView()
+            AnalyticsPreviewWrapper()
                 .previewDevice("iPad Pro (12.9-inch) (6th generation)")
                 .previewInterfaceOrientation(.landscapeLeft)
         }
+    }
+}
+
+// MARK: - Role Enum Example (should be defined elsewhere in your app)
+
+enum FurfolioRole: String, CaseIterable {
+    case owner, admin, receptionist, groomer, staff, guest, developer, unknown
+}
+
+struct PreviewLogger: AboutAppViewAnalyticsLogger {
+    var testMode: Bool = false
+    var onEvent: ((String, String, String?, String?, String?) -> Void)? = nil
+    mutating func setTestMode(_ enabled: Bool) { self.testMode = enabled }
+    func log(event: String, info: String, role: String?, staffID: String?, context: String?) async {
+        let msg = "[AboutAppViewAnalytics]\(testMode ? "[TESTMODE]" : "") \(event): \(info) [role:\(role ?? "-") staff:\(staffID ?? "-") ctx:\(context ?? "-")]"
+        if testMode {
+            print(msg)
+        } else {
+            print(msg)
+        }
+        onEvent?(event, info, role, staffID, context)
     }
 }

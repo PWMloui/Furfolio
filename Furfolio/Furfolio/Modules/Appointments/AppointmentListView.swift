@@ -12,12 +12,13 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Audit/Event Logging
 
 fileprivate struct AppointmentListAuditEvent: Codable {
     let timestamp: Date
-    let operation: String            // "listLoad", "filterChange", "appointmentTap", "reset"
+    let operation: String            // "listLoad", "filterChange", "appointmentTap", "reset", "exportCSV"
     let appointmentID: UUID?
     let service: String?
     let status: String?
@@ -73,6 +74,39 @@ fileprivate final class AppointmentListAudit {
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No appointment list actions recorded."
     }
+
+    /// Exports all audit events as a CSV string (with headers).
+    static func exportCSV() -> String {
+        var csv = "timestamp,operation,appointmentID,service,status,dateRange,tags,actor,context,detail\n"
+        let dateFormatter = ISO8601DateFormatter()
+        for event in log {
+            let ts = dateFormatter.string(from: event.timestamp)
+            let op = event.operation
+            let id = event.appointmentID?.uuidString ?? ""
+            let svc = event.service ?? ""
+            let stat = event.status ?? ""
+            let range = event.dateRange.map { "\($0.lowerBound)-\($0.upperBound)" } ?? ""
+            let tags = event.tags.joined(separator: "|")
+            let actor = event.actor ?? ""
+            let ctx = event.context ?? ""
+            let detail = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let detailEscaped = "\"\(detail)\""
+            csv += "\(ts),\(op),\(id),\(svc),\(stat),\(range),\(tags),\(actor),\(ctx),\(detailEscaped)\n"
+        }
+        return csv
+    }
+}
+
+// MARK: - Audit Admin
+
+public enum AppointmentListAuditAdmin {
+    public static var lastSummary: String { AppointmentListAudit.accessibilitySummary }
+    public static var lastJSON: String? { AppointmentListAudit.exportLastJSON() }
+    public static func recentEvents(limit: Int = 5) -> [String] {
+        AppointmentListAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    }
+    /// Export all audit events as CSV string.
+    public static func exportCSV() -> String { AppointmentListAudit.exportCSV() }
 }
 
 private extension Date {
@@ -92,6 +126,13 @@ struct AppointmentListView: View {
 
     // MARK: - Data Source
     @State private var allAppointments: [Appointment] = Appointment.sampleData()
+
+    // MARK: - CSV Export & Toast (DEV ONLY)
+    #if DEBUG
+    @State private var showAuditShare = false
+    @State private var csvURL: URL?
+    @State private var showExportToast = false
+    #endif
 
     // MARK: - Computed filtered appointments
     private var filteredAppointments: [Appointment] {
@@ -203,6 +244,33 @@ struct AppointmentListView: View {
                         )
                     }
                 }
+                #if DEBUG
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        // Export CSV to temp file and show share sheet
+                        let csv = AppointmentListAuditAdmin.exportCSV()
+                        let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("AppointmentAudit.csv")
+                        try? csv.write(to: tmpURL, atomically: true, encoding: .utf8)
+                        csvURL = tmpURL
+                        showAuditShare = true
+                        showExportToast = true
+                        // Audit the export event
+                        AppointmentListAudit.record(
+                            operation: "exportCSV",
+                            tags: ["export", "csv"],
+                            detail: "Audit log exported"
+                        )
+                        // Hide toast after 1.5s
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showExportToast = false
+                        }
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Export Audit CSV")
+                    }
+                    .accessibilityIdentifier("ExportAuditCSVButton")
+                }
+                #endif
             }
             .onAppear {
                 AppointmentListAudit.record(
@@ -211,6 +279,27 @@ struct AppointmentListView: View {
                     detail: "Appointment list loaded"
                 )
             }
+            #if DEBUG
+            // Share sheet for CSV export
+            .sheet(isPresented: $showAuditShare) {
+                if let url = csvURL {
+                    ShareSheet(activityItems: [url])
+                }
+            }
+            // Toast overlay on export
+            .overlay(
+                Group {
+                    if showExportToast {
+                        Text("Audit log exported")
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .background(Capsule().fill(Color.black.opacity(0.8)))
+                            .foregroundColor(.white)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }, alignment: .top
+            )
+            #endif
         }
     }
 }
@@ -415,10 +504,12 @@ struct DateRangePickerView: View {
     }
 }
 
-public enum AppointmentListAuditAdmin {
-    public static var lastSummary: String { AppointmentListAudit.accessibilitySummary }
-    public static var lastJSON: String? { AppointmentListAudit.exportLastJSON() }
-    public static func recentEvents(limit: Int = 5) -> [String] {
-        AppointmentListAudit.log.suffix(limit).map { $0.accessibilityLabel }
+// MARK: - DEV Utility
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
     }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

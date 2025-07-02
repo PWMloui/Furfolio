@@ -2,93 +2,60 @@
 //  QuickNoteAssistant.swift
 //  Furfolio
 //
-//  Cleaned 2025: Streamlined, Production-Ready
+//  Enhanced 2025: Audit/analytics-ready, role-aware, testable, business-compliant
 //
 
 import Foundation
 import SwiftData
 
-// MARK: - QuickNote Model
+// MARK: - Audit/Analytics Protocols
 
-@Model
-public final class QuickNote: Identifiable, ObservableObject {
-    @Attribute(.unique) public var id: UUID
-    public var content: String
-    public var createdAt: Date
-    public var updatedAt: Date
-    public var lastAccessedAt: Date
-    public var pinned: Bool
-    public var category: QuickNoteCategory
-    public var createdBy: String?
-    
-    @Relationship(deleteRule: .nullify, inverse: \DogOwner.quickNotes)
-    public weak var owner: DogOwner?
-    @Relationship(deleteRule: .nullify, inverse: \Dog.quickNotes)
-    public weak var dog: Dog?
-    @Relationship(deleteRule: .nullify, inverse: \Appointment.quickNotes)
-    public weak var appointment: Appointment?
+public protocol QuickNoteAuditLogger {
+    func log(event: QuickNoteAuditEvent)
+}
 
-    public var sortingKey: (Bool, Date) { (pinned, lastAccessedAt) }
+public enum QuickNoteAuditEvent {
+    case add(note: QuickNote, user: String, role: String?, timestamp: Date)
+    case update(note: QuickNote, user: String, role: String?, before: QuickNote, after: QuickNote, timestamp: Date)
+    case pinToggle(note: QuickNote, user: String, role: String?, before: Bool, after: Bool, timestamp: Date)
+    case delete(note: QuickNote, user: String, role: String?, before: QuickNote, timestamp: Date)
+    case error(noteID: UUID?, message: String, user: String?, role: String?, timestamp: Date)
+    // Add .access or .search for analytics if desired
+}
 
-    public init(
-        id: UUID = UUID(),
-        content: String,
-        createdAt: Date = Date(),
-        updatedAt: Date = Date(),
-        lastAccessedAt: Date = Date(),
-        pinned: Bool = false,
-        category: QuickNoteCategory = .general,
-        createdBy: String? = nil,
-        owner: DogOwner? = nil,
-        dog: Dog? = nil,
-        appointment: Appointment? = nil
-    ) {
-        self.id = id
-        self.content = content
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-        self.lastAccessedAt = lastAccessedAt
-        self.pinned = pinned
-        self.category = category
-        self.createdBy = createdBy
-        self.owner = owner
-        self.dog = dog
-        self.appointment = appointment
-    }
-    
-    public func updateContent(_ newContent: String) {
-        content = newContent
-        updatedAt = Date()
-        lastAccessedAt = Date()
-    }
-    public func togglePin() {
-        pinned.toggle()
-        updatedAt = Date()
-        lastAccessedAt = Date()
-    }
-    public func markAccessed() {
-        lastAccessedAt = Date()
-    }
+public protocol QuickNoteRoleProvider {
+    var currentUser: String? { get }
+    var currentRole: String? { get }
+}
+public struct DefaultQuickNoteRoleProvider: QuickNoteRoleProvider {
+    public var currentUser: String? { nil }
+    public var currentRole: String? { nil }
+    public init() {}
 }
 
 // MARK: - QuickNoteAssistant
 
 @MainActor
 public final class QuickNoteAssistant: ObservableObject {
+    // MARK: - Singleton & Initialization
+
     public static let shared = QuickNoteAssistant()
+
     public static func shared(with context: ModelContext) -> QuickNoteAssistant {
         QuickNoteAssistant(context: context)
     }
-    
+
     private let context: ModelContext
-    public var externalAuditHandler: ((_ action: String, _ note: QuickNote) -> Void)?
-    
+    public var testMode: Bool = false
+    public var auditLogger: QuickNoteAuditLogger?
+    public var roleProvider: QuickNoteRoleProvider = DefaultQuickNoteRoleProvider()
+
     public init(context: ModelContext = ModelContext()) {
         self.context = context
     }
-    
-    // MARK: - CRUD
-    
+
+    // MARK: - CRUD (Sync)
+
     public func addNote(
         content: String,
         owner: DogOwner? = nil,
@@ -96,35 +63,110 @@ public final class QuickNoteAssistant: ObservableObject {
         appointment: Appointment? = nil,
         pinned: Bool = false,
         category: QuickNoteCategory = .general,
-        createdBy: String? = nil
+        createdBy: String? = nil,
+        tags: [String] = []
     ) throws -> QuickNote {
-        let note = QuickNote(content: content, pinned: pinned, category: category, createdBy: createdBy, owner: owner, dog: dog, appointment: appointment)
+        let user = createdBy ?? roleProvider.currentUser ?? "Unknown"
+        let role = roleProvider.currentRole
+        let note = QuickNote(content: content, pinned: pinned, category: category, createdBy: user, tags: Array(tags.prefix(3)), owner: owner, dog: dog, appointment: appointment)
         context.insert(note)
-        try context.save()
-        auditLog("Add Note", note)
+        if !testMode {
+            try context.save()
+        }
+        auditLogger?.log(event: .add(note: note, user: user, role: role, timestamp: Date()))
         return note
     }
-    
+
     public func updateNote(_ note: QuickNote, newContent: String) throws {
+        let user = note.createdBy ?? roleProvider.currentUser ?? "Unknown"
+        let role = roleProvider.currentRole
+        let beforeSnapshot = snapshot(note)
         note.updateContent(newContent)
-        try context.save()
-        auditLog("Update Note Content", note)
+        if !testMode {
+            try context.save()
+        }
+        auditLogger?.log(event: .update(note: note, user: user, role: role, before: beforeSnapshot, after: snapshot(note), timestamp: Date()))
     }
-    
+
     public func togglePin(_ note: QuickNote) throws {
+        let user = note.createdBy ?? roleProvider.currentUser ?? "Unknown"
+        let role = roleProvider.currentRole
+        let beforePinned = note.pinned
         note.togglePin()
-        try context.save()
-        auditLog("Toggle Pin", note)
+        if !testMode {
+            try context.save()
+        }
+        auditLogger?.log(event: .pinToggle(note: note, user: user, role: role, before: beforePinned, after: note.pinned, timestamp: Date()))
     }
-    
+
     public func deleteNote(_ note: QuickNote) throws {
-        context.delete(note)
-        try context.save()
-        auditLog("Delete Note", note)
+        let user = note.createdBy ?? roleProvider.currentUser ?? "Unknown"
+        let role = roleProvider.currentRole
+        let beforeSnapshot = snapshot(note)
+        if !testMode {
+            context.delete(note)
+            try context.save()
+        }
+        auditLogger?.log(event: .delete(note: note, user: user, role: role, before: beforeSnapshot, timestamp: Date()))
     }
-    
+
+    // MARK: - CRUD (Async)
+
+    public func addNoteAsync(
+        content: String,
+        owner: DogOwner? = nil,
+        dog: Dog? = nil,
+        appointment: Appointment? = nil,
+        pinned: Bool = false,
+        category: QuickNoteCategory = .general,
+        createdBy: String? = nil,
+        tags: [String] = []
+    ) async throws -> QuickNote {
+        try await withCheckedThrowingContinuation { continuation in
+            do {
+                let note = try addNote(content: content, owner: owner, dog: dog, appointment: appointment, pinned: pinned, category: category, createdBy: createdBy, tags: tags)
+                continuation.resume(returning: note)
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    public func updateNoteAsync(_ note: QuickNote, newContent: String) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            do {
+                try updateNote(note, newContent: newContent)
+                continuation.resume()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    public func togglePinAsync(_ note: QuickNote) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            do {
+                try togglePin(note)
+                continuation.resume()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    public func deleteNoteAsync(_ note: QuickNote) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            do {
+                try deleteNote(note)
+                continuation.resume()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
     // MARK: - Fetching
-    
+
     public func fetchNotes(
         owner: DogOwner? = nil,
         dog: Dog? = nil,
@@ -138,7 +180,7 @@ public final class QuickNoteAssistant: ObservableObject {
         if let appointment { predicates.append(#Predicate { $0.appointment?.id == appointment.id }) }
         if let category { predicates.append(#Predicate { $0.category == category }) }
         let predicate = predicates.isEmpty ? nil : predicates.dropFirst().reduce(predicates.first!) { $0 && $1 }
-        
+
         let sortDescriptors: [SortDescriptor<QuickNote>] = {
             switch sortBy {
                 case .pinnedThenAccessed:
@@ -156,14 +198,43 @@ public final class QuickNoteAssistant: ObservableObject {
         let fetchDescriptor = FetchDescriptor<QuickNote>(predicate: predicate, sortBy: sortDescriptors)
         return try context.fetch(fetchDescriptor)
     }
+
     public func fetchAllNotes() throws -> [QuickNote] { try fetchNotes() }
     public func fetchPinnedNotes() throws -> [QuickNote] { try fetchNotes(sortBy: .pinnedThenAccessed).filter { $0.pinned } }
-    
-    // MARK: - Audit
-    
-    private func auditLog(_ action: String, _ note: QuickNote) {
-        print("[AuditLog] \(action), Note ID: \(note.id), User: \(note.createdBy ?? "Unknown"), Timestamp: \(Date())")
-        externalAuditHandler?(action, note)
+
+    public func searchNotes(query: String, user: String? = nil) throws -> [QuickNote] {
+        let lowercasedQuery = query.lowercased()
+        var predicates: [Predicate<QuickNote>] = []
+
+        let contentPredicate = #Predicate<QuickNote> { note in
+            note.content.lowercased().contains(lowercasedQuery) ||
+            note.tags.contains(where: { $0.lowercased().contains(lowercasedQuery) })
+        }
+        predicates.append(contentPredicate)
+        if let user { predicates.append(#Predicate { $0.createdBy == user }) }
+        let predicate = predicates.dropFirst().reduce(predicates.first!) { $0 && $1 }
+        let fetchDescriptor = FetchDescriptor<QuickNote>(predicate: predicate)
+        return try context.fetch(fetchDescriptor)
+    }
+
+    // MARK: - Helpers
+
+    private func snapshot(_ note: QuickNote) -> QuickNote {
+        QuickNote(
+            id: note.id,
+            content: note.content,
+            contentHistory: note.contentHistory,
+            createdAt: note.createdAt,
+            updatedAt: note.updatedAt,
+            lastAccessedAt: note.lastAccessedAt,
+            pinned: note.pinned,
+            category: note.category,
+            createdBy: note.createdBy,
+            tags: note.tags,
+            owner: note.owner,
+            dog: note.dog,
+            appointment: note.appointment
+        )
     }
 }
 

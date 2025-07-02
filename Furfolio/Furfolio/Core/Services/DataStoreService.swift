@@ -6,9 +6,94 @@
 //
 // Enhanced for architectural consolidation, unification, async performance, and audit trail readiness (2025-06-21).
 
+/**
+ DataStoreService
+ ----------------
+ A centralized SwiftData-backed service for managing Furfolio’s persistent data with unified CRUD, audit trail, and diagnostics.
+
+ - **Purpose**: Provides generic and model-specific CRUD operations with traceable audit logging.
+ - **Architecture**: Singleton `ObservableObject` with SwiftData `ModelContainer` and `ModelContext`.
+ - **Concurrency & Async Logging**: All operations are `async`; critical events are wrapped in `Task` blocks to log asynchronously.
+ - **Audit/Analytics Ready**: Defines protocols for async audit logging and integrates a dedicated actor for in‑memory diagnostics alongside persistent audit entries.
+ - **Diagnostics & Preview/Testability**: Exposes methods to fetch and export recent audit entries for troubleshooting.
+ */
+
 import Foundation
 import SwiftData
 import OSLog
+
+// MARK: - Analytics & Audit Protocols
+
+public protocol DataStoreAnalyticsLogger {
+    /// Log a data store event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+}
+
+public protocol DataStoreAuditLogger {
+    /// Record an audit entry asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+}
+
+public struct NullDataStoreAnalyticsLogger: DataStoreAnalyticsLogger {
+    public init() {}
+    public func log(event: String, parameters: [String: Any]?) async {}
+}
+
+public struct NullDataStoreAuditLogger: DataStoreAuditLogger {
+    public init() {}
+    public func record(_ message: String, metadata: [String: String]?) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a data store operation for diagnostics.
+public struct DataStoreServiceAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let operation: String
+    public let entity: String
+    public let detail: String?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), operation: String, entity: String, detail: String? = nil) {
+        self.id = id
+        self.timestamp = timestamp
+        self.operation = operation
+        self.entity = entity
+        self.detail = detail
+    }
+}
+
+/// Concurrency-safe actor for in-memory audit logging.
+public actor DataStoreServiceAuditManager {
+    private var buffer: [DataStoreServiceAuditEntry] = []
+    private let maxEntries = 200
+    public static let shared = DataStoreServiceAuditManager()
+
+    /// Add a new audit entry, retaining only the most recent `maxEntries`.
+    public func add(_ entry: DataStoreServiceAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [DataStoreServiceAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 // MARK: - DataStoreService (Modular, Tokenized, Auditable, Unified CRUD/Data Engine)
 
@@ -30,6 +115,9 @@ final class DataStoreService: ObservableObject {
     /// Captures critical operations for traceability, security, and regulatory adherence.
     private let auditLogger = Logger(subsystem: "com.furfolio.datastore", category: "AuditTrail")
 
+    private let analytics: DataStoreAnalyticsLogger
+    private let auditLoggerActor: DataStoreAuditLogger
+
     /// Primary context for data operations, providing a consistent environment for CRUD actions.
     /// Includes audit/error handling and event logging rationale to ensure operational reliability.
     var context: ModelContext {
@@ -42,7 +130,10 @@ final class DataStoreService: ObservableObject {
         }
     }
 
-    private init() {
+    private init(
+        analytics: DataStoreAnalyticsLogger = NullDataStoreAnalyticsLogger(),
+        auditLoggerActor: DataStoreAuditLogger = NullDataStoreAuditLogger()
+    ) {
         // Replace "FurfolioModel" with your actual model container name if different.
         // Registering all business models for modular, compliant data management.
         modelContainer = try! ModelContainer(for: [
@@ -52,6 +143,9 @@ final class DataStoreService: ObservableObject {
             OwnerActivityLog.self, Contact.self
             // Add more models as needed
         ])
+        self.analytics = analytics
+        self.auditLoggerActor = auditLoggerActor
+        self.auditLogger = Logger(subsystem: "com.furfolio.datastore", category: "AuditTrail")
     }
 
     // MARK: - Generic CRUD
@@ -60,6 +154,13 @@ final class DataStoreService: ObservableObject {
     /// Performs audit and event logging to ensure compliance and analytics tracking.
     @MainActor
     func save() async {
+        Task {
+            await analytics.log(event: "Save", parameters: nil)
+            await auditLoggerActor.record("Save operation", metadata: nil)
+            await DataStoreServiceAuditManager.shared.add(
+                DataStoreServiceAuditEntry(operation: "Save", entity: "Context", detail: nil)
+            )
+        }
         do {
             try context.save()
             auditLogger.log("Context saved successfully.")
@@ -78,6 +179,13 @@ final class DataStoreService: ObservableObject {
     /// - Returns: Array of fetched objects.
     @MainActor
     func fetchAll<T: PersistentModel>(_ type: T.Type, predicate: Predicate<T>? = nil, sort: [SortDescriptor<T>] = [], businessId: UUID? = nil) async -> [T] {
+        Task {
+            await analytics.log(event: "FetchAll", parameters: ["entity": String(describing: T.self)])
+            await auditLoggerActor.record("FetchAll operation", metadata: ["entity": String(describing: T.self)])
+            await DataStoreServiceAuditManager.shared.add(
+                DataStoreServiceAuditEntry(operation: "FetchAll", entity: String(describing: T.self), detail: nil)
+            )
+        }
         let fetchDescriptor = FetchDescriptor<T>(predicate: predicate, sortBy: sort)
         do {
             let results = try context.fetch(fetchDescriptor)
@@ -105,6 +213,13 @@ final class DataStoreService: ObservableObject {
     /// - Parameter object: The PersistentModel object to insert.
     @MainActor
     func insert<T: PersistentModel>(_ object: T) async {
+        Task {
+            await analytics.log(event: "Insert", parameters: ["entity": String(describing: T.self)])
+            await auditLoggerActor.record("Insert operation", metadata: ["entity": String(describing: T.self)])
+            await DataStoreServiceAuditManager.shared.add(
+                DataStoreServiceAuditEntry(operation: "Insert", entity: String(describing: T.self), detail: nil)
+            )
+        }
         context.insert(object)
         await save()
         await logAudit(operation: "Insert", object: object)
@@ -115,6 +230,13 @@ final class DataStoreService: ObservableObject {
     /// - Parameter object: The PersistentModel object to delete.
     @MainActor
     func delete<T: PersistentModel>(_ object: T) async {
+        Task {
+            await analytics.log(event: "Delete", parameters: ["entity": String(describing: T.self)])
+            await auditLoggerActor.record("Delete operation", metadata: ["entity": String(describing: T.self)])
+            await DataStoreServiceAuditManager.shared.add(
+                DataStoreServiceAuditEntry(operation: "Delete", entity: String(describing: T.self), detail: nil)
+            )
+        }
         context.delete(object)
         await save()
         await logAudit(operation: "Delete", object: object)
@@ -124,6 +246,13 @@ final class DataStoreService: ObservableObject {
     /// Supports audit/event logging and analytics for modification tracking.
     @MainActor
     func update() async {
+        Task {
+            await analytics.log(event: "Update", parameters: nil)
+            await auditLoggerActor.record("Update operation", metadata: nil)
+            await DataStoreServiceAuditManager.shared.add(
+                DataStoreServiceAuditEntry(operation: "Update", entity: "Context", detail: nil)
+            )
+        }
         await save()
     }
 
@@ -277,5 +406,19 @@ final class DataStoreService: ObservableObject {
     func batchImageCaching() async {
         // TODO: Implement batch image caching or prefetching logic here
         auditLogger.log("batchImageCaching called - stub implementation.")
+    }
+}
+
+// MARK: - Diagnostics
+
+public extension DataStoreService {
+    /// Fetch recent in-memory audit entries.
+    static func recentAuditEntries(limit: Int = 20) async -> [DataStoreServiceAuditEntry] {
+        await DataStoreServiceAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export in-memory audit log as JSON.
+    static func exportAuditLogJSON() async -> String {
+        await DataStoreServiceAuditManager.shared.exportJSON()
     }
 }

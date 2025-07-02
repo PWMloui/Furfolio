@@ -9,6 +9,7 @@
 
 import SwiftUI
 import SwiftData
+import AVFoundation // For VoiceOver announcements
 
 // MARK: - Audit/Event Logging
 
@@ -33,6 +34,7 @@ fileprivate struct AddChargeAuditEvent: Codable {
 fileprivate final class AddChargeAudit {
     static private(set) var log: [AddChargeAuditEvent] = []
 
+    /// Records a new audit event with given parameters.
     static func record(
         operation: String,
         owner: String? = nil,
@@ -62,14 +64,67 @@ fileprivate final class AddChargeAudit {
         if log.count > 200 { log.removeFirst() }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// Provides an accessibility summary string for the last audit event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No add charge actions recorded."
+    }
+    
+    /// ENHANCEMENT: Export audit log as CSV string with specified columns.
+    static func exportCSV() -> String {
+        let header = "timestamp,operation,owner,dog,chargeType,date,amount,paymentMethod,notes,tags,detail"
+        let csvRows = log.map { event -> String in
+            let dateFormatter = ISO8601DateFormatter()
+            let timestampStr = dateFormatter.string(from: event.timestamp)
+            let dateStr = event.date.map { dateFormatter.string(from: $0) } ?? ""
+            let tagsStr = event.tags.joined(separator: ";")
+            
+            // Escape quotes and commas in fields by wrapping in quotes and doubling internal quotes
+            func escapeCSV(_ field: String?) -> String {
+                guard let field = field else { return "" }
+                if field.contains(",") || field.contains("\"") || field.contains("\n") {
+                    let escaped = field.replacingOccurrences(of: "\"", with: "\"\"")
+                    return "\"\(escaped)\""
+                }
+                return field
+            }
+            
+            return [
+                escapeCSV(timestampStr),
+                escapeCSV(event.operation),
+                escapeCSV(event.owner),
+                escapeCSV(event.dog),
+                escapeCSV(event.chargeType),
+                escapeCSV(dateStr),
+                escapeCSV(event.amount),
+                escapeCSV(event.paymentMethod),
+                escapeCSV(event.notes),
+                escapeCSV(tagsStr),
+                escapeCSV(event.detail)
+            ].joined(separator: ",")
+        }
+        return ([header] + csvRows).joined(separator: "\n")
+    }
+    
+    /// ENHANCEMENT: Returns the most frequent charge type used in the audit log.
+    static var mostFrequentChargeType: String? {
+        let chargeTypes = log.compactMap { $0.chargeType }
+        guard !chargeTypes.isEmpty else { return nil }
+        let counts = chargeTypes.reduce(into: [:]) { counts, type in
+            counts[type, default: 0] += 1
+        }
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+    
+    /// ENHANCEMENT: Returns the total number of successful 'save' operations recorded.
+    static var totalChargesAdded: Int {
+        log.filter { $0.operation == "save" }.count
     }
 }
 
@@ -301,6 +356,30 @@ struct AddChargeView: View {
                     selectedChargeType = viewModel.chargeTypes.first ?? .fullGroom
                 }
             }
+#if DEBUG
+            // ENHANCEMENT: DEV overlay showing last 3 audit events and most frequent charge type.
+            .overlay(
+                VStack(alignment: .leading, spacing: 4) {
+                    Divider()
+                    Text("DEV AUDIT LOG (last 3 events):")
+                        .font(.caption).bold()
+                    ForEach(AddChargeAudit.log.suffix(3).reversed(), id: \.timestamp) { event in
+                        Text(event.accessibilityLabel)
+                            .font(.caption2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Text("Most Frequent Charge Type: \(AddChargeAudit.mostFrequentChargeType ?? "N/A")")
+                        .font(.caption).italic()
+                }
+                .padding(8)
+                .background(Color.black.opacity(0.6))
+                .foregroundColor(.white)
+                .cornerRadius(8)
+                .padding(),
+                alignment: .bottom
+            )
+#endif
         }
     }
 
@@ -346,6 +425,9 @@ struct AddChargeView: View {
         )
         
         if success {
+            // ENHANCEMENT: Post VoiceOver announcement on successful save.
+            let announcement = "Charge for \(dog.name) added for \(owner.ownerName)"
+            UIAccessibility.post(notification: .announcement, argument: announcement)
             dismiss()
         }
     }
@@ -356,6 +438,12 @@ struct AddChargeView: View {
 public enum AddChargeAuditAdmin {
     public static var lastSummary: String { AddChargeAudit.accessibilitySummary }
     public static var lastJSON: String? { AddChargeAudit.exportLastJSON() }
+    /// ENHANCEMENT: Expose CSV export of audit log.
+    public static var exportCSV: String { AddChargeAudit.exportCSV() }
+    /// ENHANCEMENT: Expose most frequent charge type.
+    public static var mostFrequentChargeType: String? { AddChargeAudit.mostFrequentChargeType }
+    /// ENHANCEMENT: Expose total number of charges added.
+    public static var totalChargesAdded: Int { AddChargeAudit.totalChargesAdded }
     public static func recentEvents(limit: Int = 5) -> [String] {
         AddChargeAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }

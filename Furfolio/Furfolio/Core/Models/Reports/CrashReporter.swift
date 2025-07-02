@@ -5,8 +5,76 @@
 //  Enhanced: Audit/analytics-ready, token-compliant, modular, extensible, and enterprise-ready.
 //
 
+/**
+ CrashReporter
+ -------------
+ A robust crash reporting model for Furfolio, capturing and presenting critical error data.
+
+ - **Purpose**: Records crashes, fatal errors, and serious exceptions with full context for diagnostics.
+ - **Architecture**: Uses @Model for persistence, ObservableObject for SwiftUI binding.
+ - **Concurrency & Audit**: Integrates async audit logging via `CrashReportAuditManager` actor.
+ - **Analytics Ready**: Supports injection of async audit/analytics loggers conforming to `CrashAuditLogger`.
+ - **Localization & Accessibility**: All user-facing strings are localized; UI elements include accessibility summaries.
+ - **Diagnostics & Preview/Testability**: Provides async methods to fetch and export audit entries for testing and monitoring.
+ */
+
 import Foundation
 import SwiftUI
+
+/// Represents a single audit entry for crash reporting events.
+public struct CrashReportAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let reportID: UUID
+    public let type: String
+    public let message: String
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        reportID: UUID,
+        type: String,
+        message: String
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.reportID = reportID
+        self.type = type
+        self.message = message
+    }
+}
+
+/// Concurrency-safe actor for auditing crash report events.
+public actor CrashReportAuditManager {
+    private var buffer: [CrashReportAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = CrashReportAuditManager()
+
+    /// Add a new audit entry, trimming oldest if exceeding maxEntries.
+    public func add(_ entry: CrashReportAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [CrashReportAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export audit entries as pretty-printed JSON.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+}
 
 /// Represents a logged crash, fatal error, or serious exception within the Furfolio app.
 /// This model captures critical error information for diagnostics and user support.
@@ -94,7 +162,18 @@ final class CrashReport: Identifiable, ObservableObject {
         self.deviceModel = deviceModel
 
         // Automatic audit/analytics log on creation
-        CrashReport.auditLogger?.logCrash(report: self)
+        Task {
+            if let logger = CrashReport.auditLogger {
+                await logger.logCrash(report: self)
+            }
+            await CrashReportAuditManager.shared.add(
+                CrashReportAuditEntry(
+                    reportID: id,
+                    type: type,
+                    message: message
+                )
+            )
+        }
     }
 
     // MARK: - Computed Properties
@@ -122,13 +201,14 @@ final class CrashReport: Identifiable, ObservableObject {
 
 /// Audit logger protocol for crash reports (inject for business/analytics/Trust Center compliance).
 public protocol CrashAuditLogger {
-    func logCrash(report: CrashReport)
+    /// Asynchronously logs a crash report for audit/analytics.
+    func logCrash(report: CrashReport) async
 }
 
 /// Default no-op logger (for preview/test).
 public struct NullCrashAuditLogger: CrashAuditLogger {
     public init() {}
-    public func logCrash(report: CrashReport) {}
+    public func logCrash(report: CrashReport) async {}
 }
 
 // MARK: - Example UI View (Token/Accessibility Compliant)
@@ -161,5 +241,17 @@ struct CrashReportRowView: View {
         }
         .padding(.vertical, AppSpacing.small ?? 8)
         .accessibilityElement(children: .contain)
+    }
+}
+
+public extension CrashReport {
+    /// Fetch recent crash report audit entries for diagnostics.
+    static func recentAuditEntries(limit: Int = 20) async -> [CrashReportAuditEntry] {
+        await CrashReportAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export crash report audit entries as a JSON string.
+    static func exportAuditLogJSON() async -> String {
+        await CrashReportAuditManager.shared.exportJSON()
     }
 }

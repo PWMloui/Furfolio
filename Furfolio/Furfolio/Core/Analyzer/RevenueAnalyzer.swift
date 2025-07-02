@@ -2,19 +2,94 @@
 //  RevenueAnalyzer.swift
 //  Furfolio
 //
-//  Enhanced: analytics/audit–ready, Trust Center–compliant, test/preview-injectable, token-compliant.
+//  Enhanced: analytics/audit–ready, Trust Center–compliant, test/preview-injectable, token-compliant, BI-ready.
 //
 
 import Foundation
 
+// MARK: - Audit Context (set at login/session)
+public struct RevenueAnalyzerAuditContext {
+    public static var role: String? = nil
+    public static var staffID: String? = nil
+    public static var context: String? = "RevenueAnalyzer"
+}
+
 // MARK: - Analytics/Audit Protocol
 
-public protocol RevenueAnalyticsLogger {
-    func log(event: String, info: [String: Any]?)
+public protocol RevenueAnalyticsLogger: AnyObject {
+    var testMode: Bool { get set }
+    func log(
+        event: String,
+        info: [String: Any]?,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async
+    var recentEvents: [RevenueAnalyticsEvent] { get }
 }
-public struct NullRevenueAnalyticsLogger: RevenueAnalyticsLogger {
+
+/// Revenue analytics event with full audit context.
+public struct RevenueAnalyticsEvent: Identifiable {
+    public let id = UUID()
+    public let timestamp: Date
+    public let action: String
+    public let metadata: [String: Any]?
+    public let role: String?
+    public let staffID: String?
+    public let context: String?
+    public let escalate: Bool
+}
+
+// Null logger (for previews/tests)
+public final class NullRevenueAnalyticsLogger: RevenueAnalyticsLogger {
+    public var testMode: Bool = true
+    private var buffer: [RevenueAnalyticsEvent] = []
     public init() {}
-    public func log(event: String, info: [String: Any]?) {}
+    public func log(
+        event: String,
+        info: [String: Any]?,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async {
+        let evt = RevenueAnalyticsEvent(timestamp: Date(), action: event, metadata: info, role: role, staffID: staffID, context: context, escalate: escalate)
+        if buffer.count >= 20 { buffer.removeFirst() }
+        buffer.append(evt)
+        if testMode {
+            print("[NullRevenueAnalyticsLogger] \(event) info:\(info ?? [:]) role:\(role ?? "-") staffID:\(staffID ?? "-") context:\(context ?? "-") escalate:\(escalate)")
+        }
+    }
+    public var recentEvents: [RevenueAnalyticsEvent] { buffer }
+}
+
+/// Default analytics logger with capped buffer and async/await, supports testMode for console-only logging.
+public actor DefaultRevenueAnalyticsLogger: RevenueAnalyticsLogger {
+    public var testMode: Bool = false
+    private let bufferSize = 20
+    private var buffer: [RevenueAnalyticsEvent] = []
+    public init(testMode: Bool = false) {
+        self.testMode = testMode
+    }
+    public func log(
+        event: String,
+        info: [String: Any]?,
+        role: String?,
+        staffID: String?,
+        context: String?,
+        escalate: Bool
+    ) async {
+        let evt = RevenueAnalyticsEvent(timestamp: Date(), action: event, metadata: info, role: role, staffID: staffID, context: context, escalate: escalate)
+        if buffer.count >= bufferSize { buffer.removeFirst() }
+        buffer.append(evt)
+        if testMode {
+            print("[RevenueAnalyticsLogger] \(event): \(String(describing: info)), role:\(role ?? "-"), staffID:\(staffID ?? "-"), context:\(context ?? "-"), escalate:\(escalate)")
+        } else {
+            // Production: integrate with endpoint here
+        }
+    }
+    public var recentEvents: [RevenueAnalyticsEvent] { buffer }
 }
 
 // MARK: - Trust Center Permission Protocol
@@ -28,20 +103,6 @@ public struct NullRevenueTrustCenterDelegate: RevenueTrustCenterDelegate {
 }
 
 // MARK: - RevenueEvent, RevenueAnalyzerError, PagedResult, Location, Appointment
-// (all unchanged, as in your code)
-
-/// Represents an event in revenue analytics for auditing and system transparency.
-public struct RevenueEvent {
-    public let timestamp: Date
-    public let action: String
-    public let metadata: [String: Any]?
-
-    public init(timestamp: Date = Date(), action: String, metadata: [String: Any]? = nil) {
-        self.timestamp = timestamp
-        self.action = action
-        self.metadata = metadata
-    }
-}
 
 public enum RevenueAnalyzerError: Error {
     case invalidDateRange
@@ -95,7 +156,7 @@ public final class RevenueAnalyzer {
 
     // MARK: - Instance Properties
 
-    public var auditLogHook: ((RevenueEvent) -> Void)?
+    public var auditLogHook: ((RevenueAnalyticsEvent) -> Void)?
     public let calendar: Calendar
     public let excludedChargeTypes: Set<ChargeType>
 
@@ -110,11 +171,22 @@ public final class RevenueAnalyzer {
 
     private func checkPermission(_ action: String, context: [String: Any]? = nil) -> Bool {
         let allowed = Self.trustCenterDelegate.permission(for: action, context: context)
-        Self.analyticsLogger.log(event: "trust_permission", info: [
-            "action": action,
-            "allowed": allowed,
-            "context": context ?? [:]
-        ])
+        Task {
+            let escalate = action.lowercased().contains("danger") || action.lowercased().contains("critical") || action.lowercased().contains("delete") ||
+                (context?.values.contains { "\($0)".lowercased().contains("danger") || "\($0)".lowercased().contains("critical") || "\($0)".lowercased().contains("delete") } ?? false)
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("trust_permission", value: "Trust Center Permission", comment: "Analytics: Trust Center permission check"),
+                info: [
+                    NSLocalizedString("action", value: "Action", comment: "Analytics: permission action"): action,
+                    NSLocalizedString("allowed", value: "Allowed", comment: "Analytics: permission allowed"): allowed,
+                    NSLocalizedString("context", value: "Context", comment: "Analytics: permission context"): context ?? [:]
+                ],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return allowed
     }
 
@@ -125,20 +197,33 @@ public final class RevenueAnalyzer {
         from start: Date? = nil,
         to end: Date? = nil
     ) throws -> Double {
-        guard checkPermission("totalRevenue", context: ["from": start as Any, "to": end as Any]) else {
-            throw RevenueAnalyzerError.pagingError("Permission denied")
+        guard checkPermission(NSLocalizedString("totalRevenue", value: "Total Revenue", comment: "Analytics: total revenue calculation"), context: [
+            NSLocalizedString("from", value: "From", comment: "Analytics: start date"): start as Any,
+            NSLocalizedString("to", value: "To", comment: "Analytics: end date"): end as Any
+        ]) else {
+            throw RevenueAnalyzerError.pagingError(NSLocalizedString("permission_denied", value: "Permission denied", comment: "Error: permission denied"))
         }
         try validateDateRange(start: start, end: end)
         let filtered = filterByDate(charges, from: start, to: end)
             .filter { !excludedChargeTypes.contains($0.type) }
         let total = filtered.reduce(0) { $0 + $1.amount }
-        let event = RevenueEvent(action: "totalRevenue", metadata: [
-            "from": start as Any,
-            "to": end as Any,
-            "result": total
-        ])
-        auditLogHook?(event)
-        Self.analyticsLogger.log(event: "totalRevenue", info: event.metadata)
+        let meta = [
+            NSLocalizedString("from", value: "From", comment: "Analytics: start date"): start as Any,
+            NSLocalizedString("to", value: "To", comment: "Analytics: end date"): end as Any,
+            NSLocalizedString("result", value: "Result", comment: "Analytics: result value"): total
+        ]
+        auditLogHook?(RevenueAnalyticsEvent(timestamp: Date(), action: NSLocalizedString("totalRevenue", value: "Total Revenue", comment: "Analytics: total revenue calculation"), metadata: meta, role: RevenueAnalyzerAuditContext.role, staffID: RevenueAnalyzerAuditContext.staffID, context: RevenueAnalyzerAuditContext.context, escalate: false))
+        Task {
+            let escalate = false // Adjust escalation if needed here
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("totalRevenue", value: "Total Revenue", comment: "Analytics: total revenue calculation"),
+                info: meta,
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return total
     }
 
@@ -156,10 +241,11 @@ public final class RevenueAnalyzer {
         charges: [Charge],
         days: Int = 30
     ) -> [(date: Date, total: Double)] {
-        guard checkPermission("dailyRevenue", context: ["days": days]) else { return [] }
+        guard checkPermission(NSLocalizedString("dailyRevenue", value: "Daily Revenue", comment: "Analytics: daily revenue calculation"), context: [
+            NSLocalizedString("days", value: "Days", comment: "Analytics: number of days"): days
+        ]) else { return [] }
         let today = calendar.startOfDay(for: Date())
         var results: [(Date, Double)] = []
-
         for offset in 0..<days {
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
             let sum = charges
@@ -170,7 +256,17 @@ public final class RevenueAnalyzer {
         let sortedResults = results.sorted {
             calendar.compare($0.0, to: $1.0, toGranularity: .day) == .orderedAscending
         }
-        Self.analyticsLogger.log(event: "dailyRevenue", info: ["days": days])
+        Task {
+            let escalate = false // Adjust if needed
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("dailyRevenue", value: "Daily Revenue", comment: "Analytics: daily revenue calculation"),
+                info: [NSLocalizedString("days", value: "Days", comment: "Analytics: number of days"): days],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return sortedResults
     }
 
@@ -186,7 +282,7 @@ public final class RevenueAnalyzer {
     public func revenueByService(
         charges: [Charge]
     ) -> [(service: ChargeType, total: Double)] {
-        guard checkPermission("revenueByService") else { return [] }
+        guard checkPermission(NSLocalizedString("revenueByService", value: "Revenue by Service", comment: "Analytics: revenue by service"), context: nil) else { return [] }
         let filteredCharges = charges.filter { !excludedChargeTypes.contains($0.type) }
         let grouped = Dictionary(grouping: filteredCharges) { $0.type }
         let mapped = grouped.map { (service, group) in
@@ -198,7 +294,17 @@ public final class RevenueAnalyzer {
             }
             return $0.total > $1.total
         }
-        Self.analyticsLogger.log(event: "revenueByService", info: ["count": sorted.count])
+        Task {
+            let escalate = false
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("revenueByService", value: "Revenue by Service", comment: "Analytics: revenue by service"),
+                info: [NSLocalizedString("count", value: "Count", comment: "Analytics: count of services"): sorted.count],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return sorted
     }
 
@@ -214,7 +320,9 @@ public final class RevenueAnalyzer {
         owners: [DogOwner],
         topN: Int = 3
     ) -> [(owner: DogOwner, total: Double)] {
-        guard checkPermission("topClients", context: ["topN": topN]) else { return [] }
+        guard checkPermission(NSLocalizedString("topClients", value: "Top Clients", comment: "Analytics: top clients by revenue"), context: [
+            NSLocalizedString("topN", value: "Top N", comment: "Analytics: N clients"): topN
+        ]) else { return [] }
         let filteredOwners = owners.map { owner in
             let filteredCharges = owner.charges.filter { !excludedChargeTypes.contains($0.type) }
             return (owner, filteredCharges.reduce(0) { $0 + $1.amount })
@@ -227,7 +335,17 @@ public final class RevenueAnalyzer {
                 return lhs.1 > rhs.1
             }
             .prefix(topN)
-        Self.analyticsLogger.log(event: "topClients", info: ["topN": topN])
+        Task {
+            let escalate = false
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("topClients", value: "Top Clients", comment: "Analytics: top clients by revenue"),
+                info: [NSLocalizedString("topN", value: "Top N", comment: "Analytics: N clients"): topN],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return Array(sorted)
     }
 
@@ -244,8 +362,10 @@ public final class RevenueAnalyzer {
         charges: [Charge],
         goalAmount: Double
     ) throws -> (total: Double, progress: Double) {
-        guard checkPermission("monthlyGoalProgress", context: ["goalAmount": goalAmount]) else {
-            throw RevenueAnalyzerError.pagingError("Permission denied")
+        guard checkPermission(NSLocalizedString("monthlyGoalProgress", value: "Monthly Goal Progress", comment: "Analytics: monthly goal progress"), context: [
+            NSLocalizedString("goalAmount", value: "Goal Amount", comment: "Analytics: goal amount"): goalAmount
+        ]) else {
+            throw RevenueAnalyzerError.pagingError(NSLocalizedString("permission_denied", value: "Permission denied", comment: "Error: permission denied"))
         }
         guard goalAmount > 0 else { throw RevenueAnalyzerError.invalidGoalAmount }
         let now = Date()
@@ -255,11 +375,21 @@ public final class RevenueAnalyzer {
         let monthCharges = charges.filter { !excludedChargeTypes.contains($0.type) && $0.date >= monthStart }
         let total = monthCharges.reduce(0) { $0 + $1.amount }
         let progress = min(total / goalAmount, 1.0)
-        Self.analyticsLogger.log(event: "monthlyGoalProgress", info: [
-            "goalAmount": goalAmount,
-            "total": total,
-            "progress": progress
-        ])
+        Task {
+            let escalate = false
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("monthlyGoalProgress", value: "Monthly Goal Progress", comment: "Analytics: monthly goal progress"),
+                info: [
+                    NSLocalizedString("goalAmount", value: "Goal Amount", comment: "Analytics: goal amount"): goalAmount,
+                    NSLocalizedString("total", value: "Total", comment: "Analytics: total value"): total,
+                    NSLocalizedString("progress", value: "Progress", comment: "Analytics: progress value"): progress
+                ],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return (total, progress)
     }
 
@@ -276,7 +406,9 @@ public final class RevenueAnalyzer {
         charges: [Charge],
         days: Int = 30
     ) -> Double {
-        guard checkPermission("revenueGrowth", context: ["days": days]) else { return 0 }
+        guard checkPermission(NSLocalizedString("revenueGrowth", value: "Revenue Growth", comment: "Analytics: revenue growth calculation"), context: [
+            NSLocalizedString("days", value: "Days", comment: "Analytics: number of days"): days
+        ]) else { return 0 }
         let now = Date()
         guard let periodStart = calendar.date(byAdding: .day, value: -days, to: now),
               let prevPeriodStart = calendar.date(byAdding: .day, value: -(2 * days), to: now) else {
@@ -290,10 +422,20 @@ public final class RevenueAnalyzer {
             .reduce(0) { $0 + $1.amount }
         guard previous > 0 else { return 100 }
         let growth = ((current - previous) / previous) * 100
-        Self.analyticsLogger.log(event: "revenueGrowth", info: [
-            "days": days,
-            "growthPercent": growth
-        ])
+        Task {
+            let escalate = false
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("revenueGrowth", value: "Revenue Growth", comment: "Analytics: revenue growth calculation"),
+                info: [
+                    NSLocalizedString("days", value: "Days", comment: "Analytics: number of days"): days,
+                    NSLocalizedString("growthPercent", value: "Growth Percent", comment: "Analytics: growth percentage"): growth
+                ],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return growth
     }
 
@@ -332,8 +474,91 @@ public final class RevenueAnalyzer {
         for appointments: [Appointment],
         startingAt: Location? = nil
     ) -> [Appointment] {
-        Self.analyticsLogger.log(event: "optimalRoute_stub", info: ["count": appointments.count])
-        // TODO: Route optimization (TSP/VRP). For now, stable sort by date.
+        Task {
+            let escalate = false
+            await Self.analyticsLogger.log(
+                event: NSLocalizedString("optimalRoute_stub", value: "Optimal Route (Stub)", comment: "Analytics: optimal route (stub)"),
+                info: [NSLocalizedString("count", value: "Count", comment: "Analytics: count of appointments"): appointments.count],
+                role: RevenueAnalyzerAuditContext.role,
+                staffID: RevenueAnalyzerAuditContext.staffID,
+                context: RevenueAnalyzerAuditContext.context,
+                escalate: escalate
+            )
+        }
         return appointments.sorted { $0.date < $1.date }
     }
+
+    // MARK: - Diagnostics/Buffer
+
+    public func recentAnalyticsEvents() async -> [RevenueAnalyticsEvent] {
+        await Self.analyticsLogger.recentEvents
+    }
 }
+
+#if DEBUG
+import SwiftUI
+struct RevenueAnalyzer_Previews: PreviewProvider {
+    static var previews: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(NSLocalizedString("preview_title", value: "Revenue Analyzer Preview", comment: "Preview: Title"))
+                .font(.headline)
+            Text(NSLocalizedString("preview_testmode", value: "Test Mode: ON", comment: "Preview: test mode ON"))
+                .accessibilityLabel(NSLocalizedString("preview_testmode_accessibility", value: "Test Mode is On", comment: "Accessibility: test mode"))
+            Divider()
+            DiagnosticsView()
+        }
+        .padding()
+        .onAppear {
+            Task {
+                let logger = DefaultRevenueAnalyticsLogger(testMode: true)
+                RevenueAnalyzer.analyticsLogger = logger
+                await logger.log(event: NSLocalizedString("preview_event1", value: "Preview Event 1", comment: "Preview: event 1"), info: ["foo": "bar"], role: "previewRole", staffID: "previewID", context: "RevenueAnalyzer", escalate: false)
+                await logger.log(event: NSLocalizedString("preview_event2", value: "Preview Event 2", comment: "Preview: event 2"), info: ["baz": 123], role: "previewRole", staffID: "previewID", context: "RevenueAnalyzer", escalate: false)
+            }
+        }
+    }
+    struct DiagnosticsView: View {
+        @State private var events: [RevenueAnalyticsEvent] = []
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(NSLocalizedString("diagnostics_buffer", value: "Diagnostics Buffer (last 20 events):", comment: "Preview: diagnostics buffer header"))
+                    .font(.subheadline)
+                ScrollView {
+                    ForEach(events) { event in
+                        VStack(alignment: .leading) {
+                            Text(event.action)
+                                .font(.caption)
+                            if let meta = event.metadata {
+                                Text(meta.map { "\($0.key): \($0.value)" }.joined(separator: ", "))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            HStack {
+                                Text("role: \(event.role ?? "-")")
+                                Text("staffID: \(event.staffID ?? "-")")
+                                Text("context: \(event.context ?? "-")")
+                                Text("escalate: \(event.escalate ? "YES" : "NO")")
+                            }
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            Text(event.timestamp, style: .time)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(event.action), \(event.metadata?.description ?? ""), \(event.timestamp)")
+                    }
+                }
+            }
+            .onAppear {
+                Task {
+                    if let logger = RevenueAnalyzer.analyticsLogger as? DefaultRevenueAnalyticsLogger {
+                        let recent = await logger.recentEvents
+                        events = recent
+                    }
+                }
+            }
+        }
+    }
+}
+#endif

@@ -8,6 +8,7 @@
 import Foundation
 import ActivityKit
 import SwiftUI
+import UIKit
 
 // MARK: - Audit/Event Logging
 
@@ -62,6 +63,26 @@ fileprivate final class AppointmentLiveActivityAudit {
     }
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No live activity events recorded."
+    }
+    
+    /// Exports all audit events as a CSV string (with headers).
+    static func exportAllCSV() -> String {
+        var csv = "timestamp,operation,appointmentID,status,minutesRemaining,tags,actor,context,detail\n"
+        let dateFormatter = ISO8601DateFormatter()
+        for event in log {
+            let ts = dateFormatter.string(from: event.timestamp)
+            let op = event.operation
+            let id = event.appointmentID.uuidString
+            let status = event.status ?? ""
+            let minRem = event.minutesRemaining.map { "\($0)" } ?? ""
+            let tags = event.tags.joined(separator: "|")
+            let actor = event.actor ?? ""
+            let context = event.context ?? ""
+            let detail = event.detail?.replacingOccurrences(of: "\"", with: "\"\"") ?? ""
+            let detailEscaped = "\"\(detail)\""
+            csv += "\(ts),\(op),\(id),\(status),\(minRem),\(tags),\(actor),\(context),\(detailEscaped)\n"
+        }
+        return csv
     }
 }
 
@@ -237,6 +258,13 @@ struct AppointmentLiveActivityView: View {
         .padding(AppSpacing.medium)
         .activityBackgroundTint(AppColors.background)
         .activitySystemActionForegroundColor(context.state.status.color)
+        // --- Accessibility enhancements ---
+        .onAppear {
+            UIAccessibility.post(notification: .announcement, argument: "Appointment status: \(context.state.status.label), \(context.state.minutesRemaining ?? 0) minutes remaining")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(context.attributes.dogName), \(context.attributes.serviceType)")
+        .accessibilityValue("\(context.state.status.label), \(context.state.minutesRemaining ?? 0) minutes remaining")
     }
 }
 
@@ -248,4 +276,28 @@ public enum AppointmentLiveActivityAuditAdmin {
     public static func recentEvents(limit: Int = 5) -> [String] {
         AppointmentLiveActivityAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }
+    /// Export all audit events as CSV string.
+    public static func exportCSV() -> String { AppointmentLiveActivityAudit.exportAllCSV() }
+    /// For analytics/testing: get all events as readable strings.
+    public static func allEvents() -> [String] {
+        AppointmentLiveActivityAudit.log.map { $0.accessibilityLabel }
+    }
 }
+
+// MARK: - DEV Audit Preview Utility
+
+#if DEBUG
+struct AppointmentLiveActivityAuditPreview: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recent Live Activity Audits").bold()
+            ForEach(AppointmentLiveActivityAuditAdmin.recentEvents(limit: 5), id: \.self) { entry in
+                Text(entry)
+                    .font(.caption)
+                    .padding(.vertical, 2)
+            }
+        }
+        .padding()
+    }
+}
+#endif

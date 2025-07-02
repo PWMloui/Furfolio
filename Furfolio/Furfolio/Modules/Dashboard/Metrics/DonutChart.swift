@@ -1,5 +1,3 @@
-
-
 //
 //  DonutChart.swift
 //  Furfolio
@@ -26,6 +24,8 @@ fileprivate struct DonutChartAuditEvent: Codable {
 fileprivate final class DonutChartAudit {
     static private(set) var log: [DonutChartAuditEvent] = []
 
+    /// Records a new audit event, appending it to the log and trimming if necessary.
+    /// Also posts a VoiceOver announcement if any event has more than five segments.
     static func record(
         segmentCount: Int,
         segments: [String],
@@ -41,13 +41,52 @@ fileprivate final class DonutChartAudit {
         )
         log.append(event)
         if log.count > 40 { log.removeFirst() }
+        
+        // Accessibility: Post VoiceOver announcement if any event has more than five segments
+        if log.contains(where: { $0.segmentCount > 5 }) {
+            DispatchQueue.main.async {
+                UIAccessibility.post(notification: .announcement, argument: "Donut chart has more than five segments.")
+            }
+        }
     }
 
+    /// Exports the last audit event as a pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Exports all audit events as CSV string with columns: timestamp,segmentCount,segments,total,tags
+    static func exportCSV() -> String {
+        let header = "timestamp,segmentCount,segments,total,tags"
+        let rows = log.map { event in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let segmentsStr = "\"\(event.segments.joined(separator: ";"))\""
+            let tagsStr = "\"\(event.tags.joined(separator: ";"))\""
+            return "\(timestampStr),\(event.segmentCount),\(segmentsStr),\(event.total),\(tagsStr)"
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+    
+    /// Computes the average segment count across all audit events.
+    static var averageSegmentCount: Double {
+        guard !log.isEmpty else { return 0 }
+        let totalSegments = log.reduce(0) { $0 + $1.segmentCount }
+        return Double(totalSegments) / Double(log.count)
+    }
+    
+    /// Determines the most frequent segment label appearing across all audit events.
+    static var mostFrequentSegment: String {
+        var frequency: [String: Int] = [:]
+        for event in log {
+            for segment in event.segments {
+                frequency[segment, default: 0] += 1
+            }
+        }
+        return frequency.max(by: { $0.value < $1.value })?.key ?? "None"
+    }
+    
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No donut chart events recorded."
     }
@@ -108,6 +147,34 @@ public struct DonutChart: View {
                         .foregroundColor(.primary)
                         .accessibilityIdentifier("DonutChart-CenterText")
                 }
+                #if DEBUG
+                // DEV overlay showing audit info for debugging purposes
+                VStack {
+                    Spacer()
+                    VStack(spacing: 4) {
+                        Text("Audit Events (last 3):")
+                            .font(.caption.bold())
+                            .foregroundColor(.secondary)
+                        ForEach(DonutChartAudit.log.suffix(3).reversed(), id: \.timestamp) { event in
+                            Text(event.accessibilityLabel)
+                                .font(.caption2.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .foregroundColor(.secondary)
+                        }
+                        Text(String(format: "Average Segment Count: %.2f", DonutChartAudit.averageSegmentCount))
+                            .font(.caption2.monospaced())
+                            .foregroundColor(.secondary)
+                        Text("Most Frequent Segment: \(DonutChartAudit.mostFrequentSegment)")
+                            .font(.caption2.monospaced())
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(6)
+                    .background(Color.black.opacity(0.1))
+                    .cornerRadius(8)
+                    .padding(.bottom, 4)
+                }
+                #endif
             }
             .frame(width: size, height: size)
         }
@@ -159,6 +226,12 @@ private struct DonutSegmentShape: Shape {
 public enum DonutChartAuditAdmin {
     public static var lastSummary: String { DonutChartAudit.accessibilitySummary }
     public static var lastJSON: String? { DonutChartAudit.exportLastJSON() }
+    /// Exposes CSV export of audit logs
+    public static func exportCSV() -> String { DonutChartAudit.exportCSV() }
+    /// Exposes average segment count across all audit events
+    public static var averageSegmentCount: Double { DonutChartAudit.averageSegmentCount }
+    /// Exposes most frequent segment label across all audit events
+    public static var mostFrequentSegment: String { DonutChartAudit.mostFrequentSegment }
     public static func recentEvents(limit: Int = 5) -> [String] {
         DonutChartAudit.recentEvents(limit: limit)
     }

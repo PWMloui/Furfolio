@@ -6,61 +6,96 @@
 //
 
 import Foundation
+import SwiftUI
 
-// MARK: - Audit/Event Logging for Validation
+// MARK: - Analytics & Audit Protocols
 
-fileprivate struct FormValidatorAuditEvent: Codable {
-    let timestamp: Date
-    let operation: String                // e.g. "validateField", "validateObject"
-    let field: String?
-    let value: String?
-    let error: String?
-    let tags: [String]
-    let actor: String?
-    let context: String?
-    var accessibilityLabel: String {
+public protocol FormValidatorAnalyticsLogger {
+    /// Log a validation event asynchronously.
+    func log(event: String, field: String?, value: String?, error: String?, tags: [String]) async
+}
+
+public protocol FormValidatorAuditLogger {
+    /// Record a validation audit entry asynchronously.
+    func record(event: String, field: String?, value: String?, error: String?, tags: [String]) async
+}
+
+public struct NullFormValidatorAnalyticsLogger: FormValidatorAnalyticsLogger {
+    public init() {}
+    public func log(event: String, field: String?, value: String?, error: String?, tags: [String]) async {}
+}
+
+public struct NullFormValidatorAuditLogger: FormValidatorAuditLogger {
+    public init() {}
+    public func record(event: String, field: String?, value: String?, error: String?, tags: [String]) async {}
+}
+
+// MARK: - Audit Entry & Manager
+
+/// A record of a form validation event.
+public struct FormValidatorAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let field: String?
+    public let value: String?
+    public let error: String?
+    public let tags: [String]
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        event: String,
+        field: String? = nil,
+        value: String? = nil,
+        error: String? = nil,
+        tags: [String]
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.field = field
+        self.value = value
+        self.error = error
+        self.tags = tags
+    }
+
+    public var accessibilityLabel: String {
         let dateStr = DateFormatter.localizedString(from: timestamp, dateStyle: .short, timeStyle: .short)
         let status = error == nil ? "✅" : "❌"
         let fieldStr = field ?? ""
         let msg = error ?? ""
-        return "\(status) \(operation) \(fieldStr.isEmpty ? "" : "\"\(fieldStr)\" ")at \(dateStr)\(msg.isEmpty ? "" : ": \(msg)")"
+        return "\(status) \(event) \(fieldStr.isEmpty ? "" : "\"\(fieldStr)\" ")at \(dateStr)\(msg.isEmpty ? "" : ": \(msg)")"
     }
 }
 
-fileprivate final class FormValidatorAudit {
-    static private(set) var log: [FormValidatorAuditEvent] = []
+/// Actor for concurrency-safe logging of validation events.
+public actor FormValidatorAuditManager {
+    private var buffer: [FormValidatorAuditEntry] = []
+    private let maxEntries = 1000
+    public static let shared = FormValidatorAuditManager()
 
-    static func record(
-        operation: String,
-        field: String? = nil,
-        value: String? = nil,
-        error: String? = nil,
-        tags: [String] = [],
-        actor: String? = nil,
-        context: String? = nil
-    ) {
-        let event = FormValidatorAuditEvent(
-            timestamp: Date(),
-            operation: operation,
-            field: field,
-            value: value,
-            error: error,
-            tags: tags,
-            actor: actor,
-            context: context
-        )
-        log.append(event)
-        if log.count > 1000 { log.removeFirst() }
+    public func add(_ entry: FormValidatorAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
     }
 
-    static func exportLastJSON() -> String? {
-        guard let last = log.last else { return nil }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
+    public func recent(limit: Int = 20) -> [FormValidatorAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    public func exportLastJSON() -> String? {
+        guard let last = buffer.last else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    static var accessibilitySummary: String {
-        log.last?.accessibilityLabel ?? "No validation events recorded."
+    public var accessibilitySummary: String {
+        recent(limit: 1).first?.accessibilityLabel ?? "No validation events recorded."
     }
 }
 
@@ -106,10 +141,30 @@ enum FormValidator {
     ) -> ValidationResult {
         let isValid = value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         if !isValid {
-            FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: error, tags: ["required"], actor: actor, context: context)
+            Task {
+                await FormValidatorAuditManager.shared.add(
+                    FormValidatorAuditEntry(
+                        event: "validateField",
+                        field: field,
+                        value: value,
+                        error: error,
+                        tags: ["required"]
+                    )
+                )
+            }
             return .invalid(error)
         }
-        FormValidatorAudit.record(operation: "validateField", field: field, value: value, tags: ["required"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateField",
+                    field: field,
+                    value: value,
+                    error: nil,
+                    tags: ["required"]
+                )
+            )
+        }
         return .valid
     }
 
@@ -125,15 +180,45 @@ enum FormValidator {
         let count = value?.count ?? 0
         if count < min {
             let msg = error ?? String(format: Messages.lengthMin, min)
-            FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: msg, tags: ["length", "min"], actor: actor, context: context)
+            Task {
+                await FormValidatorAuditManager.shared.add(
+                    FormValidatorAuditEntry(
+                        event: "validateField",
+                        field: field,
+                        value: value,
+                        error: msg,
+                        tags: ["length", "min"]
+                    )
+                )
+            }
             return .invalid(msg)
         }
         if count > max {
             let msg = error ?? String(format: Messages.lengthMax, max + 1)
-            FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: msg, tags: ["length", "max"], actor: actor, context: context)
+            Task {
+                await FormValidatorAuditManager.shared.add(
+                    FormValidatorAuditEntry(
+                        event: "validateField",
+                        field: field,
+                        value: value,
+                        error: msg,
+                        tags: ["length", "max"]
+                    )
+                )
+            }
             return .invalid(msg)
         }
-        FormValidatorAudit.record(operation: "validateField", field: field, value: value, tags: ["length"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateField",
+                    field: field,
+                    value: value,
+                    error: nil,
+                    tags: ["length"]
+                )
+            )
+        }
         return .valid
     }
 
@@ -146,11 +231,31 @@ enum FormValidator {
     ) -> ValidationResult {
         if let v = value, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if !StringUtils.isValidEmail(v) {
-                FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: error, tags: ["email"], actor: actor, context: context)
+                Task {
+                    await FormValidatorAuditManager.shared.add(
+                        FormValidatorAuditEntry(
+                            event: "validateField",
+                            field: field,
+                            value: value,
+                            error: error,
+                            tags: ["email"]
+                        )
+                    )
+                }
                 return .invalid(error)
             }
         }
-        FormValidatorAudit.record(operation: "validateField", field: field, value: value, tags: ["email"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateField",
+                    field: field,
+                    value: value,
+                    error: nil,
+                    tags: ["email"]
+                )
+            )
+        }
         return .valid
     }
 
@@ -163,11 +268,31 @@ enum FormValidator {
     ) -> ValidationResult {
         if let v = value, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if !StringUtils.isValidPhone(v) {
-                FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: error, tags: ["phone"], actor: actor, context: context)
+                Task {
+                    await FormValidatorAuditManager.shared.add(
+                        FormValidatorAuditEntry(
+                            event: "validateField",
+                            field: field,
+                            value: value,
+                            error: error,
+                            tags: ["phone"]
+                        )
+                    )
+                }
                 return .invalid(error)
             }
         }
-        FormValidatorAudit.record(operation: "validateField", field: field, value: value, tags: ["phone"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateField",
+                    field: field,
+                    value: value,
+                    error: nil,
+                    tags: ["phone"]
+                )
+            )
+        }
         return .valid
     }
 
@@ -182,15 +307,45 @@ enum FormValidator {
     ) -> ValidationResult {
         guard let v = value, let num = T(v) else {
             let msg = error ?? Messages.invalidValue
-            FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: msg, tags: ["range"], actor: actor, context: context)
+            Task {
+                await FormValidatorAuditManager.shared.add(
+                    FormValidatorAuditEntry(
+                        event: "validateField",
+                        field: field,
+                        value: value,
+                        error: msg,
+                        tags: ["range"]
+                    )
+                )
+            }
             return .invalid(msg)
         }
         if num < min || num > max {
             let msg = error ?? String(format: Messages.rangeError, String(describing: min), String(describing: max))
-            FormValidatorAudit.record(operation: "validateField", field: field, value: value, error: msg, tags: ["range"], actor: actor, context: context)
+            Task {
+                await FormValidatorAuditManager.shared.add(
+                    FormValidatorAuditEntry(
+                        event: "validateField",
+                        field: field,
+                        value: value,
+                        error: msg,
+                        tags: ["range"]
+                    )
+                )
+            }
             return .invalid(msg)
         }
-        FormValidatorAudit.record(operation: "validateField", field: field, value: value, tags: ["range"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateField",
+                    field: field,
+                    value: value,
+                    error: nil,
+                    tags: ["range"]
+                )
+            )
+        }
         return .valid
     }
 
@@ -208,7 +363,17 @@ enum FormValidator {
             email(email, error: Messages.ownerEmailInvalid, field: "ownerEmail", actor: actor, context: context),
             phone(phone, error: Messages.ownerPhoneInvalid, field: "ownerPhone", actor: actor, context: context)
         ].filter { !$0.isValid }
-        FormValidatorAudit.record(operation: "validateObject", field: "DogOwner", tags: ["object", "DogOwner"], actor: actor, context: context, error: results.first?.message)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "DogOwner",
+                    value: nil,
+                    error: results.first?.message,
+                    tags: ["object", "DogOwner"]
+                )
+            )
+        }
         return results
     }
 
@@ -222,7 +387,17 @@ enum FormValidator {
             required(name, error: Messages.dogNameRequired, field: "dogName", actor: actor, context: context),
             required(breed, error: Messages.dogBreedRequired, field: "dogBreed", actor: actor, context: context)
         ].filter { !$0.isValid }
-        FormValidatorAudit.record(operation: "validateObject", field: "Dog", tags: ["object", "Dog"], actor: actor, context: context, error: results.first?.message)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "Dog",
+                    value: nil,
+                    error: results.first?.message,
+                    tags: ["object", "Dog"]
+                )
+            )
+        }
         return results
     }
 
@@ -238,7 +413,17 @@ enum FormValidator {
         if dog == nil { results.append(.invalid(Messages.appointmentDogRequired)) }
         if owner == nil { results.append(.invalid(Messages.appointmentOwnerRequired)) }
         let err = results.first?.message
-        FormValidatorAudit.record(operation: "validateObject", field: "Appointment", tags: ["object", "Appointment"], actor: actor, context: context, error: err)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "Appointment",
+                    value: nil,
+                    error: err,
+                    tags: ["object", "Appointment"]
+                )
+            )
+        }
         return results
     }
 
@@ -253,7 +438,17 @@ enum FormValidator {
             range(amount, min: 1.0, max: 9999.0, error: Messages.chargeAmountRange, field: "chargeAmount", actor: actor, context: context),
             type == nil ? .invalid(Messages.chargeTypeRequired) : .valid
         ].filter { !$0.isValid }
-        FormValidatorAudit.record(operation: "validateObject", field: "Charge", tags: ["object", "Charge"], actor: actor, context: context, error: results.first?.message)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "Charge",
+                    value: nil,
+                    error: results.first?.message,
+                    tags: ["object", "Charge"]
+                )
+            )
+        }
         return results
     }
 
@@ -261,28 +456,65 @@ enum FormValidator {
 
     static func validateBusiness(actor: String? = nil, context: String? = nil) -> [ValidationResult] {
         // TODO: Implement business validations
-        FormValidatorAudit.record(operation: "validateObject", field: "Business", tags: ["object", "Business"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "Business",
+                    value: nil,
+                    error: nil,
+                    tags: ["object", "Business"]
+                )
+            )
+        }
         return []
     }
 
     static func validateInventory(actor: String? = nil, context: String? = nil) -> [ValidationResult] {
         // TODO: Implement inventory validations
-        FormValidatorAudit.record(operation: "validateObject", field: "Inventory", tags: ["object", "Inventory"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "Inventory",
+                    value: nil,
+                    error: nil,
+                    tags: ["object", "Inventory"]
+                )
+            )
+        }
         return []
     }
 
     static func validateExpense(actor: String? = nil, context: String? = nil) -> [ValidationResult] {
         // TODO: Implement expense validations
-        FormValidatorAudit.record(operation: "validateObject", field: "Expense", tags: ["object", "Expense"], actor: actor, context: context)
+        Task {
+            await FormValidatorAuditManager.shared.add(
+                FormValidatorAuditEntry(
+                    event: "validateObject",
+                    field: "Expense",
+                    value: nil,
+                    error: nil,
+                    tags: ["object", "Expense"]
+                )
+            )
+        }
         return []
     }
 
     // MARK: - Audit/Admin Accessors
 
-    static var lastAuditSummary: String { FormValidatorAudit.accessibilitySummary }
-    static var lastAuditJSON: String? { FormValidatorAudit.exportLastJSON() }
-    static func recentAuditEvents(limit: Int = 5) -> [String] {
-        FormValidatorAudit.log.suffix(limit).map { $0.accessibilityLabel }
+    static var lastAuditSummary: String {
+        await FormValidatorAuditManager.shared.accessibilitySummary
+    }
+
+    static func lastAuditJSON() async -> String? {
+        await FormValidatorAuditManager.shared.exportLastJSON()
+    }
+
+    static func recentAuditEvents(limit: Int = 5) async -> [String] {
+        await FormValidatorAuditManager.shared.recent(limit: limit)
+            .map { $0.accessibilityLabel }
     }
 }
 

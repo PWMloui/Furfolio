@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Audit/Event Logging
 
@@ -24,6 +25,7 @@ fileprivate struct LoyaltyTagAuditEvent: Codable {
 fileprivate final class LoyaltyTagAudit {
     static private(set) var log: [LoyaltyTagAuditEvent] = []
 
+    /// Records a loyalty tag appearance event, appends to log, trims log, and posts VoiceOver announcement.
     static func record(
         badgeType: String,
         context: String,
@@ -38,16 +40,59 @@ fileprivate final class LoyaltyTagAudit {
         )
         log.append(event)
         if log.count > 200 { log.removeFirst() }
+        
+        // Accessibility: Post VoiceOver announcement when badge appears
+        let announcement = "Loyalty tag \(badgeType) displayed."
+        UIAccessibility.post(notification: .announcement, argument: announcement)
     }
 
+    /// Exports the most recent audit event as pretty-printed JSON string.
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// Accessibility summary for the last audit event.
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No loyalty tag audit events recorded."
+    }
+    
+    /// Exports all audit events as CSV string with columns: timestamp,operation,badgeType,context,tags.
+    /// Tags are joined by semicolon to avoid CSV conflicts.
+    static func exportCSV() -> String {
+        let header = "timestamp,operation,badgeType,context,tags"
+        let rows = log.map { event in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let tagsStr = event.tags.joined(separator: ";")
+            // Escape commas or quotes in fields if needed
+            func escape(_ field: String) -> String {
+                if field.contains(",") || field.contains("\"") {
+                    let escaped = field.replacingOccurrences(of: "\"", with: "\"\"")
+                    return "\"\(escaped)\""
+                }
+                return field
+            }
+            return [
+                escape(timestampStr),
+                escape(event.operation),
+                escape(event.badgeType),
+                escape(event.context),
+                escape(tagsStr)
+            ].joined(separator: ",")
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+    
+    /// Returns the badgeType that appears most frequently in the audit log, or nil if no events.
+    static var mostFrequentBadgeType: String? {
+        let freq = Dictionary(grouping: log, by: { $0.badgeType }).mapValues { $0.count }
+        return freq.max(by: { $0.value < $1.value })?.key
+    }
+    
+    /// Returns total number of badge appearance events recorded.
+    static var totalBadgeShows: Int {
+        return log.count
     }
 }
 
@@ -121,6 +166,38 @@ struct LoyaltyTagView: View {
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .contain)
+        #if DEBUG
+        // DEV summary overlay: shows last 3 audit events and most frequent badge
+        .overlay(
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                Text("Audit Summary (Last 3):")
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                ForEach(Array(LoyaltyTagAudit.log.suffix(3).reversed()), id: \.timestamp) { event in
+                    Text(event.accessibilityLabel)
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.8))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if let mostFrequent = LoyaltyTagAudit.mostFrequentBadgeType {
+                    Text("Most Frequent Badge: \(mostFrequent)")
+                        .font(.caption2.italic())
+                        .foregroundColor(.yellow)
+                } else {
+                    Text("Most Frequent Badge: None")
+                        .font(.caption2.italic())
+                        .foregroundColor(.yellow)
+                }
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.7))
+            .cornerRadius(8)
+            .padding([.horizontal, .bottom], 8),
+            alignment: .bottom
+        )
+        #endif
     }
 
     /// A reusable tag label view
@@ -152,6 +229,12 @@ struct LoyaltyTagView: View {
 public enum LoyaltyTagAuditAdmin {
     public static var lastSummary: String { LoyaltyTagAudit.accessibilitySummary }
     public static var lastJSON: String? { LoyaltyTagAudit.exportLastJSON() }
+    /// Exposes CSV export of all audit events.
+    public static var exportCSV: String { LoyaltyTagAudit.exportCSV() }
+    /// Returns the most frequent badge type from audit log.
+    public static var mostFrequentBadgeType: String? { LoyaltyTagAudit.mostFrequentBadgeType }
+    /// Returns total number of badge appearance events.
+    public static var totalBadgeShows: Int { LoyaltyTagAudit.totalBadgeShows }
     public static func recentEvents(limit: Int = 5) -> [String] {
         LoyaltyTagAudit.log.suffix(limit).map { $0.accessibilityLabel }
     }

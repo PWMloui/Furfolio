@@ -5,18 +5,83 @@
 //  Enhanced: Analytics/audit-ready, token-compliant, modular, accessible, testable, business/enterprise-ready.
 //
 
+/**
+ OnboardingProgressIndicator
+ ----------------------------
+ A SwiftUI view that visually represents and tracks a user’s progress through onboarding steps.
+
+ - **Architecture**: SwiftUI `View` with customizable styling tokens and MVVM-compatible `onProgressChange` callback.
+ - **Concurrency & Async Logging**: Wraps analytics and audit calls in async `Task` for non-blocking execution.
+ - **Audit/Analytics Ready**: Defines async protocols and integrates a centralized audit manager for diagnostics.
+ - **Localization**: Accessibility labels and hints are localized.
+ - **Accessibility**: Provides detailed VoiceOver labels, values, and traits per step.
+ - **Diagnostics**: Exposes async methods to retrieve and export recent audit entries.
+ - **Preview/Testability**: Includes multiple SwiftUI preview configurations with mock async loggers.
+ */
+
 import SwiftUI
 
 // MARK: - Centralized Analytics + Audit Logging
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Record a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
+}
+
+/// A record of a progress indicator audit event.
+public struct ProgressIndicatorAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let step: Int
+    public let totalSteps: Int
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), step: Int, totalSteps: Int) {
+        self.id = id
+        self.timestamp = timestamp
+        self.step = step
+        self.totalSteps = totalSteps
+    }
+}
+
+/// Manages concurrency-safe audit logging for progress indicator events.
+public actor ProgressIndicatorAuditManager {
+    private var buffer: [ProgressIndicatorAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = ProgressIndicatorAuditManager()
+
+    /// Add a new audit entry, retaining only the most recent `maxEntries`.
+    public func add(_ entry: ProgressIndicatorAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [ProgressIndicatorAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
 }
 
 // MARK: - OnboardingProgressIndicator View
@@ -98,13 +163,30 @@ struct OnboardingProgressIndicator: View {
             .accessibilityHint(Text("Indicates your progress through the onboarding steps."))
             .onChange(of: safeCurrentStep) { newValue in
                 onProgressChange?(newValue)
-                analytics.log(event: "onboarding_progress_changed", parameters: [
-                    "step": newValue,
-                    "total": totalSteps
-                ])
-                audit.record("Progress indicator moved to step \(newValue + 1) of \(totalSteps)", metadata: nil)
+                Task {
+                    await analytics.log(event: "onboarding_progress_changed", parameters: [
+                        "step": newValue,
+                        "total": totalSteps
+                    ])
+                    await audit.record("Progress indicator moved to step \(newValue + 1) of \(totalSteps)", metadata: nil)
+                    await ProgressIndicatorAuditManager.shared.add(
+                        ProgressIndicatorAuditEntry(step: newValue, totalSteps: totalSteps)
+                    )
+                }
             }
         }
+    }
+}
+
+public extension OnboardingProgressIndicator {
+    /// Fetches recent audit entries for diagnostics.
+    func recentAuditEntries(limit: Int = 20) async -> [ProgressIndicatorAuditEntry] {
+        await ProgressIndicatorAuditManager.shared.recent(limit: limit)
+    }
+
+    /// Export the audit log as a JSON string.
+    func exportAuditLogJSON() async -> String {
+        await ProgressIndicatorAuditManager.shared.exportJSON()
     }
 }
 
@@ -112,17 +194,17 @@ struct OnboardingProgressIndicator: View {
 
 #Preview {
     struct MockAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String: Any]?) {
+        func log(event: String, parameters: [String: Any]?) async {
             print("[Analytics] \(event): \(parameters ?? [:])")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
 
     struct MockAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String: String]?) {
+        func record(_ message: String, metadata: [String: String]?) async {
             print("[Audit] \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     return Group {

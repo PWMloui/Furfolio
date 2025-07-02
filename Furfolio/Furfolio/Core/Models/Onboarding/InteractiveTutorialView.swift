@@ -4,30 +4,94 @@
 //
 //  Enhanced: Fully tokenized, analytics/audit-ready, modular, previewable, and accessible.
 //
+/**
+ InteractiveTutorialView
+ -----------------------
+ A SwiftUI view presenting a step-by-step tutorial in Furfolio.
+
+ - **Architecture**: MVVM-capable, configurable via dependency injection of analytics and audit loggers.
+ - **Concurrency & Analytics/Audit**: Uses async/await for non-blocking analytics and audit logging via protocols and actors.
+ - **Diagnostics**: Tutorial start, navigation, and completion events are recorded for diagnostics.
+ - **Localization**: All UI text uses `LocalizedStringKey` or `NSLocalizedString`.
+ - **Accessibility**: Progress indicators and navigation buttons include accessibility labels and hints.
+ - **Preview/Testability**: Includes mock preview implementations for analytics and audit protocols.
+ */
 
 import SwiftUI
 
 // MARK: - TutorialAnalytics Protocol (Legacy Stub)
 
 public protocol TutorialAnalyticsLogger {
-    func log(event: String, step: Int?)
+    /// Log a tutorial event asynchronously.
+    func log(event: String, step: Int?) async
 }
 
 public struct NullTutorialAnalyticsLogger: TutorialAnalyticsLogger {
     public init() {}
-    public func log(event: String, step: Int?) {}
+    public func log(event: String, step: Int?) async {}
 }
 
 // MARK: - Centralized Logging Protocols
 
 public protocol AnalyticsServiceProtocol {
-    func log(event: String, parameters: [String: Any]?)
-    func screenView(_ name: String)
+    /// Log an analytics event asynchronously.
+    func log(event: String, parameters: [String: Any]?) async
+    /// Log a screen view asynchronously.
+    func screenView(_ name: String) async
 }
 
 public protocol AuditLoggerProtocol {
-    func record(_ message: String, metadata: [String: String]?)
-    func recordSensitive(_ action: String, userId: String)
+    /// Record an audit message asynchronously.
+    func record(_ message: String, metadata: [String: String]?) async
+    /// Record a sensitive audit action asynchronously.
+    func recordSensitive(_ action: String, userId: String) async
+}
+
+/// A record of a tutorial audit event.
+public struct TutorialAuditEntry: Identifiable, Codable {
+    public let id: UUID
+    public let timestamp: Date
+    public let event: String
+    public let step: Int?
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), event: String, step: Int?) {
+        self.id = id
+        self.timestamp = timestamp
+        self.event = event
+        self.step = step
+    }
+}
+
+/// Manages concurrency-safe audit logging of tutorial events.
+public actor TutorialAuditManager {
+    private var buffer: [TutorialAuditEntry] = []
+    private let maxEntries = 100
+    public static let shared = TutorialAuditManager()
+
+    /// Add an audit entry, keeping only the most recent `maxEntries`.
+    public func add(_ entry: TutorialAuditEntry) {
+        buffer.append(entry)
+        if buffer.count > maxEntries {
+            buffer.removeFirst(buffer.count - maxEntries)
+        }
+    }
+
+    /// Fetch recent audit entries up to the specified limit.
+    public func recent(limit: Int = 20) -> [TutorialAuditEntry] {
+        Array(buffer.suffix(limit))
+    }
+
+    /// Export all audit entries as a JSON string.
+    public func exportJSON() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(buffer),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
 }
 
 // MARK: - Tutorial Step
@@ -174,8 +238,12 @@ struct InteractiveTutorialView: View {
                     Button(action: {
                         withAnimation {
                             currentStep -= 1
-                            analytics.log(event: "tutorial_back", parameters: ["step": currentStep])
-                            audit.record("User navigated back to tutorial step \(currentStep)", metadata: nil)
+                            Task {
+                                await analytics.log(event: "tutorial_back", parameters: ["step": currentStep])
+                                await audit.record("User navigated back to tutorial step \(currentStep)", metadata: nil)
+                                let entry = TutorialAuditEntry(event: "Back to step", step: currentStep)
+                                await TutorialAuditManager.shared.add(entry)
+                            }
                         }
                     }) {
                         Text(LocalizedStringKey("Back"))
@@ -191,8 +259,12 @@ struct InteractiveTutorialView: View {
                     Button(action: {
                         withAnimation {
                             currentStep += 1
-                            analytics.log(event: "tutorial_next", parameters: ["step": currentStep])
-                            audit.record("User advanced to tutorial step \(currentStep)", metadata: nil)
+                            Task {
+                                await analytics.log(event: "tutorial_next", parameters: ["step": currentStep])
+                                await audit.record("User advanced to tutorial step \(currentStep)", metadata: nil)
+                                let entry = TutorialAuditEntry(event: "Next to step", step: currentStep)
+                                await TutorialAuditManager.shared.add(entry)
+                            }
                         }
                     }) {
                         Text(LocalizedStringKey("Next"))
@@ -203,9 +275,13 @@ struct InteractiveTutorialView: View {
                     .accessibilityHint(Text("Navigates to the next tutorial step"))
                 } else {
                     Button(action: {
-                        analytics.log(event: "tutorial_complete", parameters: ["step": currentStep])
-                        audit.record("User completed tutorial", metadata: nil)
-                        dismiss()
+                        Task {
+                            await analytics.log(event: "tutorial_complete", parameters: ["step": currentStep])
+                            await audit.record("User completed tutorial", metadata: nil)
+                            let entry = TutorialAuditEntry(event: "Tutorial completed", step: currentStep)
+                            await TutorialAuditManager.shared.add(entry)
+                            dismiss()
+                        }
                     }) {
                         Text(LocalizedStringKey("Get Started"))
                     }
@@ -229,8 +305,12 @@ struct InteractiveTutorialView: View {
         .cornerRadius(cornerRadius)
         .accessibilityElement(children: .contain)
         .onAppear {
-            analytics.log(event: "tutorial_start", parameters: ["step": 0])
-            audit.record("User started tutorial", metadata: nil)
+            Task {
+                await analytics.log(event: "tutorial_start", parameters: ["step": 0])
+                await audit.record("User started tutorial", metadata: nil)
+                let entry = TutorialAuditEntry(event: "User started tutorial", step: 0)
+                await TutorialAuditManager.shared.add(entry)
+            }
         }
     }
 }
@@ -239,17 +319,17 @@ struct InteractiveTutorialView: View {
 
 struct InteractiveTutorialView_Previews: PreviewProvider {
     struct MockAnalytics: AnalyticsServiceProtocol {
-        func log(event: String, parameters: [String : Any]?) {
+        func log(event: String, parameters: [String : Any]?) async {
             print("Mock Analytics Event: \(event), params: \(parameters ?? [:])")
         }
-        func screenView(_ name: String) {}
+        func screenView(_ name: String) async {}
     }
 
     struct MockAudit: AuditLoggerProtocol {
-        func record(_ message: String, metadata: [String : String]?) {
+        func record(_ message: String, metadata: [String : String]?) async {
             print("Mock Audit: \(message)")
         }
-        func recordSensitive(_ action: String, userId: String) {}
+        func recordSensitive(_ action: String, userId: String) async {}
     }
 
     static var previews: some View {

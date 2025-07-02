@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Charts
+import AVFoundation
 
 // MARK: - Audit/Event Logging
 
@@ -25,6 +26,7 @@ fileprivate struct ServiceMixChartAuditEvent: Codable {
 fileprivate final class ServiceMixChartAudit {
     static private(set) var log: [ServiceMixChartAuditEvent] = []
 
+    /// Records a new audit event and triggers accessibility announcement if segmentCount > 5
     static func record(
         segmentCount: Int,
         services: [String],
@@ -40,18 +42,64 @@ fileprivate final class ServiceMixChartAudit {
         )
         log.append(event)
         if log.count > 40 { log.removeFirst() }
+        
+        // Accessibility enhancement:
+        // If any event has more than 5 segments, post a VoiceOver announcement.
+        if segmentCount > 5 {
+            let announcement = "Chart shows more than five service segments."
+            DispatchQueue.main.async {
+                UIAccessibility.post(notification: .announcement, argument: announcement)
+            }
+        }
     }
 
+    /// Exports the last audit event as pretty-printed JSON string
     static func exportLastJSON() -> String? {
         guard let last = log.last else { return nil }
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         return (try? encoder.encode(last)).flatMap { String(data: $0, encoding: .utf8) }
     }
+    
+    /// Exports all audit events as CSV string with columns: timestamp,segmentCount,services,valueRange,tags
+    static func exportCSV() -> String {
+        let header = "timestamp,segmentCount,services,valueRange,tags"
+        let rows = log.map { event -> String in
+            let timestampStr = ISO8601DateFormatter().string(from: event.timestamp)
+            let servicesStr = event.services.map { $0.replacingOccurrences(of: "\"", with: "\"\"") }.joined(separator: ";")
+            let valueRangeStr = event.valueRange.replacingOccurrences(of: "\"", with: "\"\"")
+            let tagsStr = event.tags.map { $0.replacingOccurrences(of: "\"", with: "\"\"") }.joined(separator: ";")
+            // Quote fields that may contain commas or semicolons
+            return "\"\(timestampStr)\",\(event.segmentCount),\"\(servicesStr)\",\"\(valueRangeStr)\",\"\(tagsStr)\""
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+    
+    /// Returns accessibility label of last event or a default message
     static var accessibilitySummary: String {
         log.last?.accessibilityLabel ?? "No service mix chart events recorded."
     }
+    
+    /// Returns recent audit event accessibility labels, limited by count
     static func recentEvents(limit: Int = 5) -> [String] {
         log.suffix(limit).map { $0.accessibilityLabel }
+    }
+    
+    /// Computes average segment count across all audit events
+    static var averageSegmentCount: Double {
+        guard !log.isEmpty else { return 0.0 }
+        let total = log.reduce(0) { $0 + $1.segmentCount }
+        return Double(total) / Double(log.count)
+    }
+    
+    /// Finds the most frequent service string across all audit events
+    static var mostFrequentService: String {
+        var frequency: [String: Int] = [:]
+        for event in log {
+            for service in event.services {
+                frequency[service, default: 0] += 1
+            }
+        }
+        return frequency.max(by: { $0.value < $1.value })?.key ?? "N/A"
     }
 }
 
@@ -158,6 +206,32 @@ struct ServiceMixChart: View {
                 valueRange: valueRange
             )
         }
+        #if DEBUG
+        // DEV overlay showing last 3 audit events, average segment count, and most frequent service
+        .overlay(
+            VStack(alignment: .leading, spacing: 4) {
+                Text("DEV Audit Info")
+                    .font(.caption)
+                    .bold()
+                ForEach(ServiceMixChartAudit.recentEvents(limit: 3), id: \.self) { eventLabel in
+                    Text(eventLabel)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text(String(format: "Average Segment Count: %.2f", ServiceMixChartAudit.averageSegmentCount))
+                    .font(.caption2)
+                Text("Most Frequent Service: \(ServiceMixChartAudit.mostFrequentService)")
+                    .font(.caption2)
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.6))
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            .padding()
+            , alignment: .bottom
+        )
+        #endif
     }
 }
 
@@ -168,6 +242,21 @@ public enum ServiceMixChartAuditAdmin {
     public static var lastJSON: String? { ServiceMixChartAudit.exportLastJSON() }
     public static func recentEvents(limit: Int = 5) -> [String] {
         ServiceMixChartAudit.recentEvents(limit: limit)
+    }
+    
+    /// Exposes CSV export of all audit events
+    public static func exportCSV() -> String {
+        ServiceMixChartAudit.exportCSV()
+    }
+    
+    /// Exposes average segment count across all audit events
+    public static var averageSegmentCount: Double {
+        ServiceMixChartAudit.averageSegmentCount
+    }
+    
+    /// Exposes most frequent service across all audit events
+    public static var mostFrequentService: String {
+        ServiceMixChartAudit.mostFrequentService
     }
 }
 
